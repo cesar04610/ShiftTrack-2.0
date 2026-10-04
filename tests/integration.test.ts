@@ -104,6 +104,7 @@ before(async () => {
     other,
     `Otra ${other}`,
   ]);
+  await sql.query('UPDATE branches SET register_count=3 WHERE id=$1', [branch]);
   const hash = (
     await sql.query(
       "SELECT p.hash FROM password_credentials p JOIN users u ON u.id=p.user_id WHERE username='ana'",
@@ -134,6 +135,116 @@ after(async () => {
   await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
   await sql.end();
   await pool.end();
+});
+test('cajas online: selección válida, ocupación concurrente y liberación al salir', async () => {
+  const firstToken = (await issueSession(employee)).access_token;
+  const secondToken = (await issueSession(second)).access_token;
+  const responses = await Promise.all([
+    call('/registers/select', { register_number: 3 }, firstToken),
+    call('/registers/select', { register_number: 3 }, secondToken),
+  ]);
+  a.deepEqual(responses.map((r) => r.status).sort(), [200, 409]);
+  const winner = responses[0].status === 200 ? firstToken : secondToken;
+  const loser = winner === firstToken ? secondToken : firstToken;
+  a.equal((await call('/registers/select', { register_number: 4 }, loser)).status, 400);
+  a.equal((await call('/registers/heartbeat', { register_number: 3 }, winner)).status, 200);
+  const granted = await call(
+    '/devices/user-grants',
+    {
+      device_id: device,
+      password: 'ShiftTrack-demo-2026!',
+      public_key: pair.publicKey.export({ format: 'jwk' }),
+    },
+    winner,
+  );
+  a.equal(granted.status, 200);
+  a.equal(granted.body.body.register_number, 3);
+  a.ok(!granted.body.body.allowed_commands.some((t: string) => t.startsWith('supplier.')));
+  a.equal((await call('/auth/logout', {}, winner)).status, 200);
+  a.equal((await call('/registers/select', { register_number: 3 }, loser)).status, 200);
+  await transaction(branch, async (db) => {
+    await db.query(
+      "UPDATE register_leases SET expires_at=now()-interval '1 second' WHERE register_number=3",
+    );
+  });
+  a.equal(
+    (await call('/registers/heartbeat', { register_number: 3 }, loser)).body.code,
+    'REGISTER_LOST',
+  );
+  a.equal((await call('/registers/select', { register_number: 3 }, loser)).status, 200);
+  await call('/auth/logout', {}, loser);
+});
+test('eliminar sucursal exige dueño y contraseña, revoca acceso y conserva historial', async () => {
+  const invalid = await call('/branches', {
+    name: 'Inválida',
+    register_count: 2,
+    supplier_register: 3,
+  });
+  a.equal(invalid.status, 400);
+  const created = await call('/branches', {
+    name: `Historial ${randomUUID()}`,
+    register_count: 3,
+    supplier_register: 3,
+  });
+  a.equal(created.status, 201);
+  const id = created.body.id,
+    username = `archive-${randomUUID()}`;
+  const account = await call('/users', {
+    username,
+    name: 'Historial',
+    role: 'employee',
+    branch_id: id,
+    password: 'ShiftTrack-demo-2026!',
+  });
+  a.equal(account.status, 201);
+  const employeeSession = await token(username);
+  const recordId = randomUUID();
+  await sql.query(
+    'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,CURRENT_DATE,now())',
+    [id, recordId, account.body.id],
+  );
+  a.equal(
+    (await call(`/branches/${id}/deactivate`, { password: 'ShiftTrack-demo-2026!' }, adminToken))
+      .status,
+    403,
+  );
+  a.equal((await call(`/branches/${id}/deactivate`, { password: 'wrong' })).status, 401);
+  a.equal((await call('/auth/me', undefined, employeeSession)).status, 200);
+  a.equal(
+    (await call(`/branches/${id}/deactivate`, { password: 'ShiftTrack-demo-2026!' })).status,
+    200,
+  );
+  a.equal((await sql.query('SELECT active FROM branches WHERE id=$1', [id])).rows[0].active, false);
+  a.equal((await sql.query('SELECT id FROM clock_records WHERE id=$1', [recordId])).rowCount, 1);
+  a.equal(
+    (
+      await sql.query('SELECT user_id FROM password_credentials WHERE user_id=$1', [
+        account.body.id,
+      ])
+    ).rowCount,
+    1,
+  );
+  a.equal((await call('/auth/me', undefined, employeeSession)).status, 401);
+  a.equal(
+    (await call('/auth/login', { username, password: 'ShiftTrack-demo-2026!' }, '')).status,
+    401,
+  );
+  a.ok(!(await call('/branches')).body.some((b: any) => b.id === id));
+  a.ok((await call('/branches?include_archived=true')).body.some((b: any) => b.id === id));
+  const history = await call(`/snapshot?branch_id=${id}`);
+  a.equal(history.status, 200);
+  a.ok(history.body.clock.some((r: any) => r.id === recordId));
+  a.equal(
+    (
+      await call('/treasury/opening', {
+        branch_id: id,
+        cash_cents: '0',
+        bank_cents: '0',
+        supplier_cents: '0',
+      })
+    ).body.code,
+    'BRANCH_INACTIVE',
+  );
 });
 test('equipo de otra sucursal deniega concesión offline sin invalidar la sesión online', async () => {
   const body = {

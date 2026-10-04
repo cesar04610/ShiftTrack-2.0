@@ -1,16 +1,20 @@
-import { pool, transaction,verifyRuntimeRole } from '../api/src/db.js';
+import { pool, transaction, verifyRuntimeRole } from '../api/src/db.js';
 import { generateTasks } from '../api/src/modules.js';
 import { localTime } from '../../packages/domain/index.js';
 import { randomUUID } from 'node:crypto';
 import { notify, dispatchMail } from './mail.js';
 export async function tick() {
   await verifyRuntimeRole();
-  const branches = (await pool.query('SELECT id,timezone FROM branches')).rows;
+  const branches = (await pool.query('SELECT id,timezone FROM branches WHERE active')).rows;
   let generated = 0,
     alerts = 0;
   for (const branch of branches) {
     const date = localTime(new Date(), branch.timezone).date;
     await transaction(branch.id, async (db) => {
+      const current = (
+        await db.query('SELECT active FROM branches WHERE id=$1 FOR SHARE', [branch.id])
+      ).rows[0];
+      if (!current?.active) return;
       generated += await generateTasks(db, branch.id, date);
       const settings = (await db.query('SELECT * FROM alert_settings')).rows[0] || {
         absence_tolerance_minutes: 15,
@@ -38,7 +42,7 @@ export async function tick() {
               branch.id,
               randomUUID(),
               'absence',
-              `Sin fichaje recibido: ${s.name}. Aviso provisional; puede haber capturas pendientes.`,
+              `Sin registro de entrada recibido: ${s.name}. Aviso provisional; puede haber capturas pendientes.`,
               s.id,
             ],
           );
@@ -49,12 +53,12 @@ export async function tick() {
               branch.id,
               `absence:${s.id}`,
               'ShiftTrack · Ausencia provisional',
-              `Sin fichaje recibido: ${s.name}. Puede haber capturas pendientes. Fecha ${date}; horario ${s.start_time}–${s.end_time}.`,
+              `Sin registro de entrada recibido: ${s.name}. Puede haber capturas pendientes. Fecha ${date}; horario ${s.start_time}–${s.end_time}.`,
             );
         } else if (present) {
           await db.query(
             "UPDATE alerts SET resolved=true,message=$2 WHERE type='absence' AND source_key=$1",
-            [s.id, `Fichaje recibido: ${s.name}. Aviso provisional resuelto.`],
+            [s.id, `Registro de entrada recibido: ${s.name}. Aviso provisional resuelto.`],
           );
         }
         const end = Number(s.end_time.slice(0, 2)) * 60 + Number(s.end_time.slice(3, 5));

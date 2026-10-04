@@ -74,6 +74,11 @@ export async function processCommand(c: Command, deviceId: string) {
     const b = (await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [c.branch_id]))
       .rows[0];
     assert(b, 'NOT_FOUND', 'Sucursal no encontrada.', 404);
+    assert(
+      b.active,
+      'REQUIRES_ADMIN_REVIEW',
+      'La sucursal fue eliminada; conserva la captura para revisión.',
+    );
     const hash = digest(canonical(c));
     const existing = (
       await db.query('SELECT * FROM processed_operations WHERE id=$1', [c.operation_id])
@@ -307,7 +312,7 @@ export async function processCommand(c: Command, deviceId: string) {
           ])
         ).rowCount,
         'CLOCK_REQUIRED',
-        'Registra tu fichaje del día antes del corte.',
+        'Registra tu registro de entrada del día antes del corte.',
       );
       const amounts = cutAmounts(p.sales_cents, p.card_cents, p.declared_cents);
       if (p.schedule_id)

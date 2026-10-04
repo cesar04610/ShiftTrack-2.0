@@ -5,7 +5,7 @@ export async function verifyRuntimeRole() {
   const role = (
     await pool.query(
       `SELECT r.rolsuper,r.rolbypassrls,EXISTS(SELECT 1 FROM pg_tables t WHERE t.schemaname='public' AND t.tableowner=current_user) owns_tables,
-       to_regclass('public.auth_sessions') IS NOT NULL AND to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.server_keys') IS NOT NULL schema_ready
+       to_regclass('public.register_leases') IS NOT NULL AND to_regclass('public.auth_sessions') IS NOT NULL AND to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.server_keys') IS NOT NULL schema_ready
        FROM pg_roles r WHERE r.rolname=current_user`,
     )
   ).rows[0];
@@ -40,7 +40,7 @@ export async function transaction<T>(
     db.release();
   }
 }
-export async function context(user: User, requested?: string) {
+export async function context(user: User, requested?: string, readOnly = false) {
   const branch = user.role === 'superadmin' ? requested : user.branch_id;
   assert(branch, 'BRANCH_REQUIRED', 'Selecciona una sucursal.', 400);
   assert(
@@ -51,6 +51,12 @@ export async function context(user: User, requested?: string) {
   );
   const row = (await pool.query('SELECT * FROM branches WHERE id=$1', [branch])).rows[0];
   assert(row, 'NOT_FOUND', 'Sucursal no encontrada.', 404);
+  assert(
+    row.active || (readOnly && user.role === 'superadmin'),
+    'BRANCH_INACTIVE',
+    'Esta sucursal fue eliminada y solo conserva su historial.',
+    403,
+  );
   return row;
 }
 export function admin(user: User) {

@@ -45,6 +45,14 @@ Exclusivamente con la base local de desarrollo: `cesar` (dueño), `admin` (admin
 
 Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el turno explícitamente antes del relevo. Si quedó un turno de otro día, se exige conteo de reconciliación antes de nuevos movimientos.
 
+## Sucursales y cajas
+
+El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se renueva cada 30 segundos; cerrar sesión la libera y una desconexión la deja caducar en dos minutos. La caja de proveedores también exige el equipo designado. Los equipos de apoyo no obtienen sus permisos por seleccionar su número.
+
+El acceso offline se prepara para la caja seleccionada y dura ocho horas. Sin conexión se permite la última caja preparada y se advierte que su ocupación no puede comprobarse. Tras un login offline, al reconectar se pueden enviar los pendientes; antes de nuevas capturas online se requiere volver a iniciar sesión para reservar la caja. Los cortes quedan vinculados a la caja firmada en la concesión.
+
+Eliminar una sucursal exige superadministrador y su contraseña actual. Se desactiva, revoca sesiones y equipos, detiene sus procesos y conserva usuarios, movimientos y fotografías. Un turno de proveedores abierto debe cerrarse primero. El dueño puede consultar el historial desde Configuración. Las capturas previas que lleguen después quedan para revisión.
+
 ## Pruebas
 
 Con PostgreSQL en ejecución:

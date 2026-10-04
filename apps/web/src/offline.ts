@@ -111,6 +111,95 @@ async function activateWriter() {
       .catch(reject);
   });
 }
+let onlineCredentials: { user: User; password: string } | null = null;
+async function prepareEmployee(user: User, password: string) {
+  const device = await getDevice();
+  const username = user.username;
+  await activateWriter();
+  const pair = await crypto.subtle.generateKey(curve, true, ['sign', 'verify']);
+  try {
+    const grant = await request('/devices/user-grants', {
+      device_id: device.id,
+      password,
+      public_key: await crypto.subtle.exportKey('jwk', pair.publicKey),
+    });
+    const serverKey = await crypto.subtle.importKey('jwk', grant.server_public_key, curve, false, [
+      'verify',
+    ]);
+    assert(
+      await crypto.subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        serverKey,
+        bytes(grant.signature),
+        encoding.encode(canonical(grant.body)),
+      ),
+      'BAD_GRANT',
+      'No se pudo verificar la autorización del servidor.',
+    );
+    const salt = crypto.getRandomValues(new Uint8Array(16)),
+      iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await passwordKey(password, salt),
+      jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encoding.encode(JSON.stringify({ key: jwk, check: 'shifttrack-v1' })),
+    );
+    session = {
+      username,
+      user,
+      grant,
+      salt: b64(salt),
+      iv: b64(iv),
+      encrypted: b64(encrypted),
+      lastWall: Date.now(),
+      offset: Date.parse(grant.body.issued_at) - Date.now(),
+    };
+    await db.users.put(session);
+    privateKey = pair.privateKey;
+    clockAnchor = { server: Date.parse(grant.body.issued_at), mono: performance.now() };
+    await db.meta.put({ id: 'wall-highwater', value: Date.now() });
+    await navigator.storage?.persist();
+  } catch (e) {
+    // A valid online session does not require an offline grant on this device.
+    if (
+      e instanceof ApiError &&
+      (e.code === 'DEVICE_NOT_ASSIGNED' || e.code === 'DEVICE_BRANCH_MISMATCH')
+    ) {
+      session = null;
+      privateKey = null;
+      releaseWriter?.();
+      releaseWriter = null;
+    } else throw e;
+  }
+}
+export function preparedRegister(): number | undefined {
+  return session?.grant.body.register_number ?? undefined;
+}
+export async function selectRegister(registerNumber: number, connected: boolean) {
+  if (!connected) {
+    assert(
+      session && privateKey && preparedRegister() === registerNumber,
+      'REGISTER_NOT_PREPARED',
+      'Sin conexión solo puedes usar la caja que preparaste al iniciar sesión con Internet.',
+    );
+    await trustedNow();
+    return { prepared: true };
+  }
+  await request('/registers/select', { register_number: registerNumber });
+  if (onlineCredentials) {
+    const credentials = onlineCredentials;
+    await prepareEmployee(credentials.user, credentials.password);
+    onlineCredentials = null;
+  } else
+    assert(
+      !session || preparedRegister() === registerNumber,
+      'REGISTER_NOT_PREPARED',
+      'Inicia sesión de nuevo para preparar otra caja.',
+    );
+  return { prepared: !!session };
+}
+
 export async function login(username: string, password: string) {
   username = username.trim().toLowerCase();
   try {
@@ -118,69 +207,9 @@ export async function login(username: string, password: string) {
       device = await getDevice();
     const user = result.user as User;
     clockAnchor = { server: Date.parse(result.server_time), mono: performance.now() };
-    if (user.role === 'employee') {
-      await activateWriter();
-      const pair = await crypto.subtle.generateKey(curve, true, ['sign', 'verify']);
-      try {
-        const grant = await request('/devices/user-grants', {
-          device_id: device.id,
-          password,
-          public_key: await crypto.subtle.exportKey('jwk', pair.publicKey),
-        });
-        const serverKey = await crypto.subtle.importKey(
-          'jwk',
-          grant.server_public_key,
-          curve,
-          false,
-          ['verify'],
-        );
-        assert(
-          await crypto.subtle.verify(
-            { name: 'ECDSA', hash: 'SHA-256' },
-            serverKey,
-            bytes(grant.signature),
-            encoding.encode(canonical(grant.body)),
-          ),
-          'BAD_GRANT',
-          'No se pudo verificar la autorización del servidor.',
-        );
-        const salt = crypto.getRandomValues(new Uint8Array(16)),
-          iv = crypto.getRandomValues(new Uint8Array(12));
-        const key = await passwordKey(password, salt),
-          jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-        const encrypted = await crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv },
-          key,
-          encoding.encode(JSON.stringify({ key: jwk, check: 'shifttrack-v1' })),
-        );
-        session = {
-          username,
-          user,
-          grant,
-          salt: b64(salt),
-          iv: b64(iv),
-          encrypted: b64(encrypted),
-          lastWall: Date.now(),
-          offset: Date.parse(grant.body.issued_at) - Date.now(),
-        };
-        await db.users.put(session);
-        privateKey = pair.privateKey;
-        clockAnchor = { server: Date.parse(grant.body.issued_at), mono: performance.now() };
-        await db.meta.put({ id: 'wall-highwater', value: Date.now() });
-        await navigator.storage?.persist();
-      } catch (e) {
-        // A valid online session does not require an offline grant on this device.
-        if (
-          e instanceof ApiError &&
-          (e.code === 'DEVICE_NOT_ASSIGNED' || e.code === 'DEVICE_BRANCH_MISMATCH')
-        ) {
-          session = null;
-          privateKey = null;
-          releaseWriter?.();
-          releaseWriter = null;
-        } else throw e;
-      }
-    }
+    onlineCredentials = user.role === 'employee' ? { user, password } : null;
+    session = null;
+    privateKey = null;
     return { user, prepared: !!session, offline: false };
   } catch (e) {
     if (!(e instanceof ApiError && e.code === 'NETWORK')) {
@@ -260,6 +289,7 @@ export function expiresAt() {
   return session?.grant.body.expires_at as string | undefined;
 }
 export async function logout() {
+  onlineCredentials = null;
   privateKey = null;
   session = null;
   clockAnchor = null;

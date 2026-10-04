@@ -434,7 +434,7 @@ modules.post('/alerts/:id/seen', async (req, res) => {
 modules.get('/reports/export', async (req, res) => {
   const user = await identity(req.headers.authorization);
   admin(user);
-  const b = await context(user, req.query.branch_id as string);
+  const b = await context(user, req.query.branch_id as string, true);
   const book = new ExcelJS.Workbook();
   await transaction(b.id, async (db) => {
     for (const [table, label] of [
@@ -465,7 +465,7 @@ modules.get('/reports/export', async (req, res) => {
 modules.get('/analytics', async (req, res) => {
   const user = await identity(req.headers.authorization);
   admin(user);
-  const b = await context(user, req.query.branch_id as string);
+  const b = await context(user, req.query.branch_id as string, true);
   res.json(
     await transaction(b.id, async (db) => ({
       spending: (

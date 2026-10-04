@@ -104,7 +104,7 @@ media.post('/upload', async (req, res) => {
 });
 media.get('/:id/content', async (req, res) => {
   const user = await identity(req.headers.authorization),
-    b = await context(user, req.query.branch_id as string);
+    b = await context(user, req.query.branch_id as string, true);
   const object = await transaction(b.id, async (db) => {
     const row = (
       await db.query(

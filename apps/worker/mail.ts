@@ -36,7 +36,7 @@ export async function notify(
 }
 export async function dispatchMail() {
   if (!smtpConfigured()) return { sent: 0, failed: 0 };
-  const branches = (await pool.query('SELECT id FROM branches')).rows,
+  const branches = (await pool.query('SELECT id FROM branches WHERE active')).rows,
     transport = smtp();
   let sent = 0,
     failed = 0;

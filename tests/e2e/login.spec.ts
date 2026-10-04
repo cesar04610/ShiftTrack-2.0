@@ -25,7 +25,7 @@ test('empleado creado por administrador entra online desde un equipo de otra suc
   for (const name of [`Equipo ${suffix}`, `Empleado ${suffix}`]) {
     const response = await page.request.post(`${apiBase}/api/v1/branches`, {
       headers: ownerHeaders,
-      data: { name },
+      data: { name, register_count: 2, supplier_register: 1 },
     });
     expect(response.ok()).toBeTruthy();
     branches.push(await response.json());
@@ -63,7 +63,6 @@ test('empleado creado por administrador entra online desde un equipo de otra suc
   await page.getByLabel('Sucursal').selectOption(branches[0].id);
   await page.getByRole('button', { name: 'Configuración', exact: true }).click();
   await page.getByLabel('Nombre del equipo', { exact: true }).fill('Equipo otra sucursal');
-  await page.getByLabel('Caja de proveedores', { exact: true }).last().fill('1');
   await page.getByRole('button', { name: 'Registrar este equipo', exact: true }).click();
   await expect(
     page.getByText('La sucursal ya tiene equipo designado.', { exact: false }),
@@ -71,6 +70,8 @@ test('empleado creado por administrador entra online desde un equipo de otra suc
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
 
   await signIn(page, employeeUsername);
+  await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
   await expect(
     page.getByText('Este equipo aún no tiene tu acceso offline preparado.', { exact: false }),
@@ -80,6 +81,8 @@ test('empleado creado por administrador entra online desde un equipo de otra suc
   const otherPage = await context.newPage();
   await otherPage.goto('/');
   await signIn(otherPage, employeeUsername);
+  await otherPage.getByLabel('Selecciona tu caja', { exact: true }).selectOption('2');
+  await otherPage.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
   await expect(
     otherPage.getByRole('heading', { name: 'Horario', exact: true, level: 1 }),
   ).toBeVisible();

@@ -8,6 +8,13 @@ async function signIn(page: Page, username: string) {
   await page.getByLabel('Contraseña', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toBeVisible();
+  if (username !== 'cesar') {
+    await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('2');
+    await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Horario', exact: true, level: 1 }),
+    ).toBeVisible();
+  }
 }
 async function nav(page: Page, name: string) {
   await page.getByRole('button', { name, exact: true }).click();
@@ -29,7 +36,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   const headers = { Authorization: `Bearer ${initial.access_token}` };
   const created = await page.request.post(`${apiBase}/api/v1/branches`, {
     headers,
-    data: { name: branchName },
+    data: { name: branchName, register_count: 3, supplier_register: 2 },
   });
   expect(created.ok()).toBeTruthy();
   const branch = await created.json();
@@ -64,7 +71,6 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await page.getByLabel('Sucursal').selectOption(branch.id);
   await nav(page, 'Configuración');
   await page.getByLabel('Nombre del equipo', { exact: true }).fill('Computadora piloto');
-  await page.getByLabel('Caja de proveedores', { exact: true }).last().fill('2');
   await page.getByRole('button', { name: 'Registrar este equipo' }).click();
   await expect(
     page.getByText('La sucursal ya tiene equipo designado.', { exact: false }),

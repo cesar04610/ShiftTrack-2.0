@@ -97,8 +97,12 @@ app.get('/api/v1/branches', async (req, res) => {
   res.json(
     (
       await pool.query(
-        'SELECT id,name,timezone,supplier_register,device_id,assignment_epoch,initialized FROM branches WHERE ($1::boolean OR id=$2)',
-        [u.role === 'superadmin', u.branch_id],
+        'SELECT id,name,timezone,register_count,supplier_register,device_id,assignment_epoch,initialized,active FROM branches WHERE ($1::boolean OR id=$2) AND (active OR $3::boolean)',
+        [
+          u.role === 'superadmin',
+          u.branch_id,
+          u.role === 'superadmin' && req.query.include_archived === 'true',
+        ],
       )
     ).rows,
   );
@@ -110,9 +114,16 @@ app.post('/api/v1/branches', async (req, res) => {
     .object({
       name: z.string().trim().min(1).max(100),
       timezone: z.string().default('America/Mazatlan'),
-      supplier_register: z.number().int().positive().default(1),
+      register_count: z.number().int().min(1).max(100),
+      supplier_register: z.number().int().positive(),
     })
     .parse(req.body);
+  assert(
+    b.supplier_register <= b.register_count,
+    'INVALID_REGISTER',
+    'La caja de proveedores debe estar entre 1 y la cantidad de cajas.',
+    400,
+  );
   try {
     new Intl.DateTimeFormat('es', { timeZone: b.timezone });
   } catch {
@@ -123,12 +134,131 @@ app.post('/api/v1/branches', async (req, res) => {
     .json(
       (
         await pool.query(
-          'INSERT INTO branches(id,name,timezone,supplier_register) VALUES($1,$2,$3,$4) RETURNING id,name',
-          [randomUUID(), b.name, b.timezone, b.supplier_register],
+          'INSERT INTO branches(id,name,timezone,register_count,supplier_register) VALUES($1,$2,$3,$4,$5) RETURNING id,name',
+          [randomUUID(), b.name, b.timezone, b.register_count, b.supplier_register],
         )
       ).rows[0],
     );
 });
+app.post(
+  '/api/v1/branches/:id/deactivate',
+  rateLimit({ windowMs: 15 * 60_000, limit: 10 }),
+  async (req, res) => {
+    const user = await identity(req.headers.authorization);
+    owner(user);
+    const id = z.uuid().parse(req.params.id);
+    const { password } = z.object({ password: z.string().min(1).max(256) }).parse(req.body);
+    await transaction(id, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(70204611)');
+      const credential = (
+        await db.query(
+          'SELECT u.active,u.auth_version,p.hash FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE u.id=$1 FOR SHARE OF u,p',
+          [user.id],
+        )
+      ).rows[0];
+      assert(
+        credential?.active && credential.auth_version === user.auth_version,
+        'UNAUTHENTICATED',
+        'Inicia sesión de nuevo.',
+        401,
+      );
+      assert(
+        await argon2.verify(credential.hash, password),
+        'INVALID_CREDENTIALS',
+        'Contraseña incorrecta. La sucursal no fue eliminada.',
+        401,
+      );
+      const branch = (await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [id]))
+        .rows[0];
+      assert(branch, 'NOT_FOUND', 'Sucursal no encontrada.', 404);
+      assert(
+        !branch.active_shift,
+        'OPEN_SHIFT',
+        'Cierra el turno de proveedores antes de eliminar la sucursal.',
+        409,
+      );
+      if (branch.active) {
+        await db.query('UPDATE branches SET active=false WHERE id=$1', [id]);
+        await db.query('UPDATE users SET auth_version=auth_version+1 WHERE branch_id=$1', [id]);
+        await db.query(
+          'DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM users WHERE branch_id=$1)',
+          [id],
+        );
+        await db.query('UPDATE devices SET active=false WHERE branch_id=$1', [id]);
+        await db.query(
+          'DELETE FROM device_sessions WHERE device_id IN (SELECT id FROM devices WHERE branch_id=$1)',
+          [id],
+        );
+        await audit(db, id, user, 'branch.deactivate', { name: branch.name });
+      }
+    });
+    res.json({ ok: true });
+  },
+);
+async function reserveRegister(req: express.Request, heartbeat = false) {
+  const user = await identity(req.headers.authorization);
+  assert(
+    user.role === 'employee',
+    'FORBIDDEN',
+    'Solo empleados seleccionan una caja de trabajo.',
+    403,
+  );
+  const { register_number } = z
+    .object({ register_number: z.number().int().min(1).max(100) })
+    .parse(req.body);
+  const sessionHash = digest(req.headers.authorization!.slice(7));
+  return transaction(user.branch_id!, async (db) => {
+    const branch = (
+      await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [user.branch_id])
+    ).rows[0];
+    assert(branch?.active, 'BRANCH_INACTIVE', 'Esta sucursal fue eliminada.', 403);
+    assert(
+      register_number <= branch.register_count,
+      'INVALID_REGISTER',
+      'Elige una de las cajas configuradas en tu sucursal.',
+      400,
+    );
+    const validSession = (
+      await db.query(
+        'SELECT token_hash FROM auth_sessions WHERE token_hash=$1 AND expires_at>now() FOR SHARE',
+        [sessionHash],
+      )
+    ).rowCount;
+    assert(validSession, 'UNAUTHENTICATED', 'La sesión venció.', 401);
+    await db.query('DELETE FROM register_leases WHERE expires_at<=now()');
+    const held = (
+      await db.query('SELECT * FROM register_leases WHERE register_number=$1', [register_number])
+    ).rows[0];
+    assert(
+      !held || held.session_hash === sessionHash,
+      'REGISTER_OCCUPIED',
+      `La caja ${register_number} ya está ocupada. Selecciona otra caja.`,
+      409,
+    );
+    if (heartbeat)
+      assert(
+        held?.session_hash === sessionHash,
+        'REGISTER_LOST',
+        'La reserva de caja venció. Selecciona tu caja nuevamente.',
+        409,
+      );
+    await db.query('DELETE FROM register_leases WHERE session_hash=$1 AND register_number<>$2', [
+      sessionHash,
+      register_number,
+    ]);
+    const lease = (
+      await db.query(
+        "INSERT INTO register_leases(branch_id,register_number,session_hash,user_id,expires_at) VALUES($1,$2,$3,$4,now()+interval '2 minutes') ON CONFLICT(branch_id,register_number) DO UPDATE SET expires_at=EXCLUDED.expires_at RETURNING register_number,expires_at",
+        [user.branch_id, register_number, sessionHash, user.id],
+      )
+    ).rows[0];
+    return lease;
+  });
+}
+app.post('/api/v1/registers/select', async (req, res) => res.json(await reserveRegister(req)));
+app.post('/api/v1/registers/heartbeat', async (req, res) =>
+  res.json(await reserveRegister(req, true)),
+);
 app.post('/api/v1/devices/register', async (req, res) => {
   const u = await identity(req.headers.authorization);
   owner(u);
@@ -152,6 +282,12 @@ app.post('/api/v1/devices/register', async (req, res) => {
       !body.supplier_enabled || !locked.device_id,
       'DEVICE_ALREADY_ASSIGNED',
       'Ya hay un equipo designado. La sustitución requiere reconciliar sus pendientes.',
+    );
+    assert(
+      !body.supplier_enabled || body.supplier_register === locked.supplier_register,
+      'INVALID_REGISTER',
+      'Usa la caja de proveedores configurada en la sucursal.',
+      400,
     );
     await db.query('INSERT INTO devices(id,branch_id,name,public_key) VALUES($1,$2,$3,$4)', [
       body.id,
@@ -180,7 +316,17 @@ app.post('/api/v1/devices/user-grants', async (req, res) => {
     })
     .parse(req.body);
   await checkPassword(u.username, b.password);
-  res.json(await issueGrant(u, b.device_id, b.public_key));
+  const selected = await transaction(
+    u.branch_id!,
+    async (db) =>
+      (
+        await db.query(
+          'SELECT register_number FROM register_leases WHERE session_hash=$1 AND expires_at>now()',
+          [digest(req.headers.authorization!.slice(7))],
+        )
+      ).rows[0]?.register_number ?? null,
+  );
+  res.json(await issueGrant(u, b.device_id, b.public_key, selected));
 });
 app.post(
   '/api/v1/devices/challenge',
@@ -258,7 +404,7 @@ app.post('/api/v1/sync/push', async (req, res) => {
 });
 app.get('/api/v1/snapshot', async (req, res) => {
   const user = await identity(req.headers.authorization),
-    b = await context(user, req.query.branch_id as string);
+    b = await context(user, req.query.branch_id as string, true);
   res.json(
     await transaction(b.id, async (db) => {
       const select = async (table: string, own = false) =>
@@ -372,7 +518,7 @@ app.post('/api/v1/users/:id/deactivate', async (req, res) => {
 });
 app.post('/api/v1/clock/:action', async (req, res) => {
   const u = await identity(req.headers.authorization);
-  assert(u.role === 'employee', 'FORBIDDEN', 'El fichaje es del empleado.', 403);
+  assert(u.role === 'employee', 'FORBIDDEN', 'El registro de entrada es del empleado.', 403);
   const b = await context(u, req.body.branch_id),
     date = localTime(new Date(), b.timezone).date;
   await transaction(b.id, async (db) => {

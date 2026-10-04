@@ -68,7 +68,7 @@ export async function revokeSession(header?: string) {
 export async function identity(header?: string): Promise<User> {
   const user = (
     await pool.query(
-      'SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active AND s.auth_version=u.auth_version',
+      "SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active AND s.auth_version=u.auth_version AND (u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active))",
       [digest(sessionToken(header))],
     )
   ).rows[0];
@@ -78,15 +78,20 @@ export async function identity(header?: string): Promise<User> {
 export async function checkPassword(username: string, password: string) {
   const row = (
     await pool.query(
-      'SELECT u.*,p.hash FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE username=$1',
+      "SELECT u.*,p.hash,(u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active)) AS branch_active FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE username=$1",
       [username.trim().toLowerCase()],
     )
   ).rows[0];
   // A dummy hash keeps the costly password check present for unknown names too.
   const hash = row?.hash ?? (await dummyHash);
   const valid = await argon2.verify(hash, password);
-  assert(valid && row?.active, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos.', 401);
-  const { hash: _, ...user } = row;
+  assert(
+    valid && row?.active && row?.branch_active,
+    'INVALID_CREDENTIALS',
+    'Usuario o contraseña incorrectos.',
+    401,
+  );
+  const { hash: _, branch_active: __, ...user } = row;
   return user as User;
 }
 const dummyHash = argon2.hash(randomBytes(32));
@@ -102,7 +107,12 @@ export function verifySignature(body: unknown, signature: string, jwk: object) {
     return false;
   }
 }
-export async function issueGrant(user: User, deviceId: string, publicKey: object) {
+export async function issueGrant(
+  user: User,
+  deviceId: string,
+  publicKey: object,
+  registerNumber?: number | null,
+) {
   const device = (
     await pool.query(
       'SELECT d.*,b.assignment_epoch,b.device_id AS assigned_device FROM devices d JOIN branches b ON b.id=d.branch_id WHERE d.id=$1',
@@ -117,11 +127,14 @@ export async function issueGrant(user: User, deviceId: string, publicKey: object
     'Este equipo está registrado en otra sucursal. Usa un equipo de tu sucursal para preparar el acceso offline.',
     403,
   );
+  const branch = (await pool.query('SELECT * FROM branches WHERE id=$1', [user.branch_id])).rows[0];
+  assert(branch?.active, 'BRANCH_INACTIVE', 'Esta sucursal fue eliminada.', 403);
   const id = randomUUID(),
     issued = new Date(),
     expires = new Date(issued.getTime() + 8 * 3600_000);
   const body = {
     grant_id: id,
+    ...(registerNumber !== undefined ? { register_number: registerNumber } : {}),
     user_id: user.id,
     branch_id: device.branch_id,
     device_id: device.id,
@@ -130,7 +143,10 @@ export async function issueGrant(user: User, deviceId: string, publicKey: object
     issued_at: issued.toISOString(),
     expires_at: expires.toISOString(),
     allowed_commands: offlineTypes.filter(
-      (t) => !t.startsWith('supplier.') || device.assigned_device === device.id,
+      (t) =>
+        !t.startsWith('supplier.') ||
+        (device.assigned_device === device.id &&
+          (registerNumber === undefined || registerNumber === branch.supplier_register)),
     ),
     public_key: publicKey,
   };
@@ -192,6 +208,20 @@ export async function validateCommand(command: Command, deviceId: string) {
     'FORBIDDEN',
     'Operación no autorizada.',
     403,
+  );
+  if (grant.body.register_number != null && command.type === 'cut.create')
+    assert(
+      Number(command.payload.register_number) === grant.body.register_number,
+      'FORBIDDEN',
+      'El corte debe corresponder a tu caja seleccionada.',
+      403,
+    );
+  const branch = (await pool.query('SELECT active FROM branches WHERE id=$1', [command.branch_id]))
+    .rows[0];
+  assert(
+    branch?.active,
+    'REQUIRES_ADMIN_REVIEW',
+    'La sucursal fue eliminada; conserva la captura para revisión.',
   );
   const occurred = Date.parse(command.occurred_at);
   assert(

@@ -28,7 +28,7 @@ import {
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
-import { request, ApiError, download, imageUrl } from './api';
+import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import {
   login,
   logout,
@@ -39,6 +39,8 @@ import {
   getDevice,
   db,
   expiresAt,
+  selectRegister,
+  preparedRegister,
   type Pending,
 } from './offline';
 type Field = {
@@ -49,6 +51,7 @@ type Field = {
   value?: string;
   optional?: boolean;
   placeholder?: string;
+  onChange?: (value: string) => void;
 };
 function Form({
   fields,
@@ -111,6 +114,7 @@ function Form({
                 name={f.name}
                 type={f.type || 'text'}
                 defaultValue={f.value}
+                onChange={(e) => f.onChange?.(e.target.value)}
                 placeholder={f.placeholder}
                 required={!f.optional}
                 step={f.type === 'number' ? '0.01' : undefined}
@@ -199,7 +203,7 @@ const adminNav = [
 ] as const;
 const employeeNav = [
   ['Horario', CalendarDays],
-  ['Fichaje', Timer],
+  ['Registro de entradas', Timer],
   ['Tareas', ClipboardCheck],
   ['Proveedores', ShoppingBag],
   ['Caja proveedores', Wallet],
@@ -215,6 +219,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null),
     [branches, setBranches] = useState<any[]>([]),
     [branchId, setBranchId] = useState(''),
+    [registerNumber, setRegisterNumber] = useState<number | null>(null),
+    [allBranches, setAllBranches] = useState<any[]>([]),
+    [deletingBranch, setDeletingBranch] = useState<any>(null),
+    [newRegisterCount, setNewRegisterCount] = useState(1),
     [data, setData] = useState<any>(null),
     [page, setPage] = useState('Inicio'),
     [pending, setPending] = useState<Pending[]>([]),
@@ -271,8 +279,31 @@ export default function App() {
       clearInterval(interval);
     };
   }, [user, branchId]);
+  useEffect(() => {
+    if (user?.role === 'superadmin' && page === 'Configuración')
+      request('/branches?include_archived=true').then(setAllBranches).catch(notify);
+  }, [user, page, branchId]);
+  useEffect(() => {
+    if (user?.role !== 'employee' || !registerNumber || !online || !hasOnlineSession()) return;
+    const renew = async () => {
+      try {
+        await request('/registers/heartbeat', { register_number: registerNumber });
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'NETWORK') setOnline(false);
+        else {
+          setRegisterNumber(null);
+          setMessage((e as Error).message);
+        }
+      }
+    };
+    renew();
+    const interval = setInterval(renew, 30_000);
+    return () => clearInterval(interval);
+  }, [user, registerNumber, online]);
   async function signIn(values: Record<string, string>) {
     const result = await login(values.username, values.password);
+    setRegisterNumber(null);
+    setData(null);
     setUser(result.user);
     setPrepared(result.prepared);
     setDeviceId((await getDevice()).id);
@@ -292,6 +323,7 @@ export default function App() {
   }
   async function signOut() {
     await logout();
+    setRegisterNumber(null);
     setUser(null);
     setData(null);
     setPrepared(false);
@@ -303,6 +335,10 @@ export default function App() {
     setMessage('Guardado en la nube.');
   }
   async function command(type: Command['type'], values: Record<string, string>, photo?: Blob) {
+    if (online && !hasOnlineSession())
+      throw new Error(
+        'Inicia sesión nuevamente con conexión para validar tu caja antes de capturar nuevos movimientos. Tus pendientes se conservan.',
+      );
     await enqueue(type, values, user!, branchId, photo);
     await refresh(false);
     setMessage('Guardado en este equipo — pendiente de sincronizar.');
@@ -349,10 +385,12 @@ export default function App() {
     : employeeNav.filter(
         ([label]) =>
           !['Proveedores', 'Caja proveedores'].includes(label) ||
-          data?.branch.device_id === deviceId,
+          (prepared &&
+            registerNumber === data?.branch.supplier_register &&
+            data?.branch.device_id === deviceId),
       );
   const b = data?.branch,
-    deviceReady = prepared && b?.device_id;
+    deviceReady = prepared && registerNumber === b?.supplier_register && b?.device_id === deviceId;
   const treasury = data?.treasury || [],
     cash = treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
     bank = treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
@@ -368,7 +406,7 @@ export default function App() {
     Cortes: 'Ventas, efectivo contado y diferencias.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
-    Fichaje: 'Registra tu entrada y salida del día.',
+    'Registro de entradas': 'Registra tu entrada y salida del día.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
     Configuración: 'Sucursales y equipo designado para proveedores.',
     Reportes: 'Consulta la actividad registrada de esta sucursal.',
@@ -472,6 +510,7 @@ export default function App() {
             )}
           </div>
           <div className="topbar-right">
+            {!isAdmin && registerNumber && <strong>Caja {registerNumber}</strong>}
             <span className={`connection ${online ? '' : 'offline'}`}>
               {online ? <Wifi size={15} /> : <WifiOff size={15} />}{' '}
               {online ? 'Conectado' : 'Sin conexión'}
@@ -491,7 +530,7 @@ export default function App() {
           <div className="page-heading">
             <div>
               <span className="eyebrow">{isAdmin ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}</span>
-              <h1>{page}</h1>
+              <h1>{!isAdmin && !registerNumber ? 'Selecciona la caja en la que estás' : page}</h1>
               <p>{meta[page]}</p>
             </div>
             <span className="date-label">
@@ -509,6 +548,12 @@ export default function App() {
               </button>
             </div>
           )}
+          {b?.active === false && (
+            <div className="notice">
+              Esta sucursal fue eliminada. Estás consultando su historial; no se permiten nuevas
+              operaciones.
+            </div>
+          )}
           {(b?.pause_token || b?.local_paused) && (
             <div className="notice">
               Caja proveedores detenida para corrección administrativa. Sincroniza para confirmar
@@ -521,11 +566,17 @@ export default function App() {
               conservan.
             </div>
           )}
-          {!isAdmin && !prepared && (
+          {!isAdmin && !!registerNumber && online && !hasOnlineSession() && (
+            <div className="notice">
+              Recuperaste la conexión. Los pendientes pueden sincronizarse; inicia sesión de nuevo
+              para validar la ocupación de tu caja antes de registrar nuevos movimientos.
+            </div>
+          )}
+          {!isAdmin && !!registerNumber && !prepared && (
             <div className="notice">
               Este equipo aún no tiene tu acceso offline preparado. Puedes consultar horarios y
-              fichar con conexión. Para habilitar las capturas operativas, usa un equipo registrado
-              por el dueño en tu misma sucursal.
+              registrar tu entrada con conexión. Para habilitar las capturas operativas, usa un
+              equipo registrado por el dueño en tu misma sucursal.
             </div>
           )}
           {pending.length > 0 && (
@@ -565,7 +616,52 @@ export default function App() {
               <p>No incluye claves de acceso. Conserva también los datos de este navegador.</p>
             </details>
           )}
-          {!data && page !== 'Configuración' ? (
+          {!isAdmin && !registerNumber ? (
+            <Card title="Caja de trabajo">
+              <p>
+                {online
+                  ? 'Selecciona tu caja. Si otra sesión ya la ocupa, el sistema te pedirá elegir otra.'
+                  : 'Sin conexión no se puede comprobar si otra persona ocupa la caja. Solo puedes usar la última caja que preparaste con Internet.'}
+              </p>
+              <Form
+                fields={[
+                  {
+                    name: 'register_number',
+                    label: 'Selecciona tu caja',
+                    options: online
+                      ? Array.from(
+                          {
+                            length:
+                              b?.register_count ||
+                              branches.find((x) => x.id === branchId)?.register_count ||
+                              1,
+                          },
+                          (_, i) => ({
+                            value: String(i + 1),
+                            label: `Caja ${i + 1}${i + 1 === b?.supplier_register ? ' · Proveedores' : ''}`,
+                          }),
+                        )
+                      : preparedRegister()
+                        ? [
+                            {
+                              value: String(preparedRegister()),
+                              label: `Caja ${preparedRegister()}`,
+                            },
+                          ]
+                        : [],
+                  },
+                ]}
+                label="Entrar a esta caja"
+                onSubmit={async (v) => {
+                  const number = Number(v.register_number);
+                  const result = await selectRegister(number, online);
+                  setRegisterNumber(number);
+                  setPrepared(result.prepared);
+                  await refresh(online);
+                }}
+              />
+            </Card>
+          ) : !data && page !== 'Configuración' ? (
             <Card title="Preparando datos">
               <p>Conecta para descargar la información de tu sucursal.</p>
             </Card>
@@ -731,7 +827,7 @@ export default function App() {
                   </Card>
                 </>
               )}
-              {page === 'Fichaje' && (
+              {page === 'Registro de entradas' && (
                 <>
                   <Card title="Mi turno de hoy">
                     <div className="clock-display">
@@ -762,7 +858,7 @@ export default function App() {
                       </div>
                     </div>
                   </Card>
-                  <Card title="Mis fichajes">
+                  <Card title="Mis registros de entrada y salida">
                     <Table
                       headers={['Fecha', 'Entrada', 'Salida', 'Horas']}
                       rows={data.clock.map((r: any) => [
@@ -1223,12 +1319,6 @@ export default function App() {
                       </p>
                       <Form
                         fields={[
-                          {
-                            name: 'register_number',
-                            label: 'Número de caja',
-                            type: 'number',
-                            value: String(b.supplier_register),
-                          },
                           { name: 'sales', label: 'Ventas totales · MXN', type: 'number' },
                           {
                             name: 'schedule_id',
@@ -1252,7 +1342,7 @@ export default function App() {
                         onSubmit={(v) =>
                           command('cut.create', {
                             id: crypto.randomUUID(),
-                            register_number: v.register_number,
+                            register_number: String(registerNumber),
                             schedule_id: v.schedule_id || '',
                             sales_cents: parseMoney(v.sales),
                             card_cents: parseMoney(v.card),
@@ -1401,7 +1491,7 @@ export default function App() {
                     />
                   </Card>
                   <Card
-                    title="Horarios sin fichaje recibido"
+                    title="Horarios sin registro de entrada recibido"
                     subtitle="La ausencia de un registro no confirma ausencia física; puede haber pendientes sin sincronizar."
                   >
                     <Table
@@ -1558,15 +1648,96 @@ export default function App() {
                 <>
                   {user.role === 'superadmin' ? (
                     <>
+                      <Card title="Sucursales">
+                        <Table
+                          headers={['Sucursal', 'Cajas', 'Proveedores', 'Estado', '']}
+                          rows={allBranches.map((branch) => [
+                            branch.name,
+                            branch.register_count,
+                            `Caja ${branch.supplier_register}`,
+                            branch.active ? 'Activa' : 'Eliminada · historial conservado',
+                            branch.active ? (
+                              <button
+                                className="secondary"
+                                onClick={() => setDeletingBranch(branch)}
+                              >
+                                Eliminar sucursal
+                              </button>
+                            ) : (
+                              <button
+                                className="secondary"
+                                onClick={() => {
+                                  setBranches((prev) =>
+                                    prev.some((x) => x.id === branch.id) ? prev : [...prev, branch],
+                                  );
+                                  setBranchId(branch.id);
+                                  setPage('Reportes');
+                                }}
+                              >
+                                Ver historial
+                              </button>
+                            ),
+                          ])}
+                        />
+                      </Card>
+                      {deletingBranch && (
+                        <Card title={`Eliminar sucursal ${deletingBranch.name}`}>
+                          <p>
+                            ¿Realmente quieres eliminar esta sucursal? Se bloqueará el acceso de sus
+                            usuarios y equipos. Sus movimientos, usuarios y fotografías se
+                            conservarán como historial.
+                          </p>
+                          <Form
+                            fields={[
+                              {
+                                name: 'password',
+                                label: 'Tu contraseña de superadministrador',
+                                type: 'password',
+                              },
+                            ]}
+                            label="Confirmar eliminación"
+                            onSubmit={async (v) => {
+                              await request(`/branches/${deletingBranch.id}/deactivate`, {
+                                password: v.password,
+                              });
+                              const list = await request('/branches');
+                              setBranches(list);
+                              setAllBranches(await request('/branches?include_archived=true'));
+                              if (branchId === deletingBranch.id) {
+                                setData(null);
+                                setBranchId(list[0]?.id || '');
+                              }
+                              setDeletingBranch(null);
+                              setMessage('Sucursal eliminada. Su historial se conserva.');
+                            }}
+                          />
+                          <button className="secondary" onClick={() => setDeletingBranch(null)}>
+                            Cancelar
+                          </button>
+                        </Card>
+                      )}
                       <Card title="Crear sucursal">
                         <Form
                           fields={[
                             { name: 'name', label: 'Nombre de sucursal' },
                             { name: 'timezone', label: 'Zona horaria', value: 'America/Mazatlan' },
                             {
+                              name: 'register_count',
+                              label: 'Cantidad de cajas',
+                              type: 'number',
+                              value: '1',
+                              onChange: (value) =>
+                                setNewRegisterCount(
+                                  Math.max(1, Math.min(100, Math.floor(Number(value)) || 1)),
+                                ),
+                            },
+                            {
                               name: 'supplier_register',
                               label: 'Caja de proveedores',
-                              type: 'number',
+                              options: Array.from({ length: newRegisterCount }, (_, i) => ({
+                                value: String(i + 1),
+                                label: `Caja ${i + 1}`,
+                              })),
                               value: '1',
                             },
                           ]}
@@ -1574,19 +1745,22 @@ export default function App() {
                           onSubmit={async (v) => {
                             await request('/branches', {
                               ...v,
+                              register_count: Number(v.register_count),
                               supplier_register: Number(v.supplier_register),
                             });
                             const list = await request('/branches');
                             setBranches(list);
+                            setAllBranches(await request('/branches?include_archived=true'));
                             if (!branchId) setBranchId(list[0]?.id || '');
+                            setNewRegisterCount(1);
                             setMessage('Sucursal creada.');
                           }}
                         />
                       </Card>
                       <Card title="Equipo designado para proveedores">
                         <p>
-                          Registra esta computadora en la sucursal seleccionada. La caja puede ser
-                          1, 2 o cualquier número de caja de la sucursal.
+                          Registra esta computadora en la sucursal seleccionada. La caja de
+                          proveedores configurada es la número {b?.supplier_register}.
                         </p>
                         {b?.device_id ? (
                           <div className="notice">
@@ -1601,12 +1775,6 @@ export default function App() {
                                 label: 'Nombre del equipo',
                                 placeholder: 'Computadora mostrador',
                               },
-                              {
-                                name: 'supplier_register',
-                                label: 'Caja de proveedores',
-                                type: 'number',
-                                value: '1',
-                              },
                             ]}
                             label="Registrar este equipo"
                             onSubmit={async (v) => {
@@ -1615,7 +1783,7 @@ export default function App() {
                                 id: device.id,
                                 public_key: device.public_key,
                                 name: v.name,
-                                supplier_register: Number(v.supplier_register),
+                                supplier_register: b.supplier_register,
                               });
                             }}
                           />

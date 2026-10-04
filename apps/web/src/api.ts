@@ -15,6 +15,9 @@ function storeToken(token?: string) {
     /* No guardar contraseñas ni recurrir a localStorage. */
   }
 }
+export function hasOnlineSession() {
+  return !!accessToken;
+}
 export class ApiError extends Error {
   constructor(
     public code: string,
