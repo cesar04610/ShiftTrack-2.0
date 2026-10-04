@@ -52,7 +52,7 @@ export async function tick() {
               db,
               branch.id,
               `absence:${s.id}`,
-              'ShiftTrack · Ausencia provisional',
+              'Mostrador · Ausencia provisional',
               `Sin registro de entrada recibido: ${s.name}. Puede haber capturas pendientes. Fecha ${date}; horario ${s.start_time}–${s.end_time}.`,
             );
         } else if (present) {
@@ -81,7 +81,7 @@ export async function tick() {
               db,
               branch.id,
               `missing_cut:${s.id}`,
-              'ShiftTrack · Corte pendiente',
+              'Mostrador · Corte pendiente',
               `${s.name}: corte del horario ${s.start_time}–${s.end_time}, fecha ${date}. Aviso provisional.`,
             );
         } else if (hasCut)
@@ -106,7 +106,7 @@ export async function tick() {
           db,
           branch.id,
           `task_summary:${date}`,
-          'ShiftTrack · Resumen de tareas',
+          'Mostrador · Resumen de tareas',
           `Fecha ${date}: ${summary.completed} de ${summary.total} tareas completadas. Los dispositivos desconectados pueden tener capturas pendientes.`,
         );
       }

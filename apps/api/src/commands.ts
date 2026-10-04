@@ -100,8 +100,7 @@ export async function processCommand(c: Command, deviceId: string) {
     ).rows[0];
     assert(
       actor?.active &&
-        actor.role === 'employee' &&
-        actor.branch_id === c.branch_id &&
+        (actor.role === 'superadmin' || actor.branch_id === c.branch_id) &&
         actor.auth_version === actor.granted_auth_version,
       'REQUIRES_ADMIN_REVIEW',
       'La identidad cambió durante el envío. Conserva la captura.',
@@ -268,13 +267,7 @@ export async function processCommand(c: Command, deviceId: string) {
             'INSERT INTO alerts(branch_id,id,type,message,source_key) VALUES($1,$2,$3,$4,$5)',
             [b.id, randomUUID(), 'supplier_anomaly', message, p.id],
           );
-          await notify(
-            db,
-            b.id,
-            `supplier_anomaly:${p.id}`,
-            'ShiftTrack · Compra inusual',
-            message,
-          );
+          await notify(db, b.id, `supplier_anomaly:${p.id}`, 'Mostrador · Compra inusual', message);
         }
       } else if (c.type === 'supplier.balance.add') {
         const amount = cents(p.amount_cents);

@@ -142,14 +142,14 @@ export async function issueGrant(
     )
   ).rows[0];
   assert(device?.active, 'DEVICE_NOT_ASSIGNED', 'Este equipo no está registrado.', 403);
-  assert(user.role === 'employee', 'FORBIDDEN', 'Solo empleados preparan acceso operativo.', 403);
   assert(
-    user.branch_id === device.branch_id,
+    user.role === 'superadmin' || user.branch_id === device.branch_id,
     'DEVICE_BRANCH_MISMATCH',
     'Este equipo está registrado en otra sucursal. Usa un equipo de tu sucursal para preparar el acceso offline.',
     403,
   );
-  const branch = (await pool.query('SELECT * FROM branches WHERE id=$1', [user.branch_id])).rows[0];
+  const branch = (await pool.query('SELECT * FROM branches WHERE id=$1', [device.branch_id]))
+    .rows[0];
   assert(branch?.active, 'BRANCH_INACTIVE', 'Esta sucursal fue eliminada.', 403);
   const id = randomUUID(),
     issued = new Date(),

@@ -7,6 +7,8 @@ async function signIn(page: Page, username: string) {
   await page.getByLabel('Contraseña', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cerrar sesión', exact: true })).toBeVisible();
+  if (username === 'cesar')
+    await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
 }
 async function selectBox(page: Page, number: number) {
   await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption(String(number));
@@ -37,6 +39,7 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   expect(created.status()).toBe(201);
   const branch = await created.json();
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
+  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   const first = `lupe-${suffix}`,
     second = `jenny-${suffix}`;
   for (const username of [first, second]) {
@@ -97,6 +100,7 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
+  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await page.getByRole('button', { name: 'Configuración', exact: true }).click();
   await page
     .getByRole('row')

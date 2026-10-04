@@ -30,6 +30,7 @@ import {
 } from '../../../packages/domain/index.js';
 import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
+import ScheduleBoard from './ScheduleBoard';
 import {
   login,
   logout,
@@ -41,6 +42,7 @@ import {
   db,
   expiresAt,
   selectRegister,
+  leaveRegister,
   preparedRegister,
   type Pending,
 } from './offline';
@@ -194,10 +196,9 @@ const adminNav = [
   ['Inicio', LayoutDashboard],
   ['Usuarios', Users],
   ['Horarios', CalendarDays],
-  ['Tareas', ClipboardCheck],
+  ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
   ['Alertas', BarChart3],
-  ['Caja proveedores', Wallet],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
   ['Configuración', Settings],
@@ -222,6 +223,8 @@ export default function App() {
     [branches, setBranches] = useState<any[]>([]),
     [branchId, setBranchId] = useState(''),
     [registerNumber, setRegisterNumber] = useState<number | null>(null),
+    [registerChosen, setRegisterChosen] = useState(false),
+    [adminMenuOpen, setAdminMenuOpen] = useState(true),
     [allBranches, setAllBranches] = useState<any[]>([]),
     [deletingBranch, setDeletingBranch] = useState<any>(null),
     [newRegisterCount, setNewRegisterCount] = useState(1),
@@ -303,22 +306,31 @@ export default function App() {
       request(`/registers?branch_id=${branchId}`).then(setOccupiedRegisters).catch(notify);
   }, [user, page, branchId]);
   useEffect(() => {
-    if (user?.role !== 'employee' || !registerNumber || !online || !hasOnlineSession()) return;
+    if (!user || !registerNumber || !online || !hasOnlineSession()) return;
+    let cancelled = false;
     const renew = async () => {
       try {
-        await request('/registers/heartbeat', { register_number: registerNumber });
+        await request('/registers/heartbeat', {
+          register_number: registerNumber,
+          branch_id: branchId,
+        });
       } catch (e) {
+        if (cancelled) return;
         if (e instanceof ApiError && e.code === 'NETWORK') setOnline(false);
         else {
           setRegisterNumber(null);
+          setRegisterChosen(false);
           setMessage((e as Error).message);
         }
       }
     };
     renew();
     const interval = setInterval(renew, 30_000);
-    return () => clearInterval(interval);
-  }, [user, registerNumber, online]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, branchId, registerNumber, online]);
   async function signIn(values: Record<string, string>) {
     let result;
     try {
@@ -330,12 +342,13 @@ export default function App() {
     }
     setLoginBranches([]);
     setRegisterNumber(null);
+    setRegisterChosen(false);
     setData(null);
     setUser(result.user);
     setPrepared(result.prepared);
     setDeviceId((await getDevice()).id);
     setOnline(!result.offline);
-    setPage(result.user.role === 'employee' ? 'Horario' : 'Inicio');
+    setPage('Horario');
     let list;
     if (result.offline) {
       const cached = (await db.caches.get(`branches:${result.user.id}`))?.value;
@@ -366,6 +379,8 @@ export default function App() {
       throw new Error(
         'Inicia sesión nuevamente con conexión para validar tu caja antes de capturar nuevos movimientos. Tus pendientes se conservan.',
       );
+    if (!registerNumber || !prepared)
+      throw new Error('Selecciona una caja con conexión para registrar movimientos.');
     await enqueue(type, values, user!, branchId, photo);
     await refresh(false);
     setMessage('Registro guardado correctamente.');
@@ -380,7 +395,7 @@ export default function App() {
             <Store size={30} />
           </div>
           <h1>
-            ShiftTrack <span>2.0</span>
+            Mostrador <span>2.0</span>
           </h1>
           <p>Tu operación, en orden.</p>
         </div>
@@ -419,17 +434,21 @@ export default function App() {
     );
   const isAdmin = user.role !== 'employee',
     employeeOptions = (data?.users || [])
-      .filter((u: any) => u.role === 'employee' && u.active)
+      .filter((u: any) => u.active)
       .map((u: any) => ({ value: u.id, label: u.name }));
-  const nav = isAdmin
-    ? adminNav
-    : employeeNav.filter(
-        ([label]) =>
-          !['Proveedores', 'Caja proveedores'].includes(label) ||
-          (prepared && registerNumber === data?.branch.supplier_register),
-      );
+  const nav = employeeNav.filter(
+    ([label]) =>
+      label !== 'Caja proveedores' ||
+      isAdmin ||
+      (prepared && registerNumber === data?.branch.supplier_register),
+  );
+  const managementNav = adminNav.filter(
+    ([label]) => label !== 'Alertas' || user.role === 'superadmin',
+  );
+  const isManagementPage = managementNav.some(([label]) => label === page);
   const b = data?.branch,
-    deviceReady = prepared && registerNumber === b?.supplier_register;
+    deviceReady = prepared && registerNumber === b?.supplier_register,
+    canCapture = prepared && registerNumber != null;
   const treasury = data?.treasury || [],
     cash = treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
     bank = treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
@@ -440,6 +459,7 @@ export default function App() {
     Horarios: 'Organiza los turnos de tu equipo.',
     Horario: 'Consulta tus próximos turnos.',
     Tareas: 'Lo que hay que hacer, en un solo lugar.',
+    'Gestionar tareas': 'Asigna tareas y revisa el trabajo del equipo.',
     Proveedores: 'Directorio y pagos de proveedores.',
     'Caja proveedores': 'Registra pagos y consulta los tickets de proveedores.',
     Cortes: 'Ventas, efectivo contado y diferencias.',
@@ -474,28 +494,62 @@ export default function App() {
           </div>
           <div>
             <strong>
-              ShiftTrack <em>2.0</em>
+              Mostrador <em>2.0</em>
             </strong>
             <small>{isAdmin ? 'Panel administrativo' : 'Mi espacio de trabajo'}</small>
           </div>
         </div>
-        <p className="nav-caption">OPERACIÓN</p>
-        <nav>
-          {nav.map(([label, Icon]) => (
-            <button
-              key={label}
-              className={page === label ? 'selected' : ''}
-              onClick={() => {
-                setPage(label);
-                setMobile(false);
-                setMessage('');
-              }}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
-        </nav>
+        <div className="sidebar-menus">
+          <p className="nav-caption">OPERACIÓN</p>
+          <nav>
+            {nav.map(([label, Icon]) => (
+              <button
+                key={label}
+                className={page === label ? 'selected' : ''}
+                onClick={() => {
+                  setPage(label);
+                  setMobile(false);
+                  setMessage('');
+                }}
+              >
+                <Icon size={18} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          {isAdmin && (
+            <>
+              <button
+                className="admin-menu-toggle"
+                aria-expanded={adminMenuOpen}
+                onClick={() => setAdminMenuOpen(!adminMenuOpen)}
+              >
+                <Settings size={18} />{' '}
+                {user.role === 'superadmin'
+                  ? 'Menú de súper administrador'
+                  : 'Menú de administrador'}
+              </button>
+              {adminMenuOpen && (
+                <nav aria-label="Administración">
+                  {managementNav.map(([label, Icon]) => (
+                    <button
+                      key={label}
+                      className={page === label ? 'selected' : ''}
+                      onClick={() => {
+                        setPage(label);
+                        setMobile(false);
+                        setMessage('');
+                      }}
+                    >
+                      <Icon size={18} />
+                      {label}
+                    </button>
+                  ))}
+                </nav>
+              )}
+            </>
+          )}
+        </div>
         <div className="sidebar-bottom">
           <button onClick={() => setPage('Contraseña')}>
             <KeyRound size={17} />
@@ -535,9 +589,26 @@ export default function App() {
               <select
                 aria-label="Sucursal"
                 value={branchId}
+                disabled={busy}
                 onChange={(e) => {
-                  setBranchId(e.target.value);
-                  setData(null);
+                  const next = e.target.value;
+                  if (!online) {
+                    setMessage('Conecta a Internet para cambiar de sucursal.');
+                    return;
+                  }
+                  setBusy(true);
+                  leaveRegister(branchId, true)
+                    .then(() => {
+                      setRegisterNumber(null);
+                      setRegisterChosen(false);
+                      setPrepared(false);
+                      setBranchId(next);
+                      setData(null);
+                      setAddingSupplier(false);
+                      setMessage('');
+                    })
+                    .catch(notify)
+                    .finally(() => setBusy(false));
                 }}
               >
                 {branches.map((x) => (
@@ -551,7 +622,26 @@ export default function App() {
             )}
           </div>
           <div className="topbar-right">
-            {!isAdmin && registerNumber && <strong>Caja {registerNumber}</strong>}
+            {registerNumber && <strong>Caja {registerNumber}</strong>}
+            {isAdmin && registerChosen && (
+              <button
+                className="text-button"
+                disabled={busy || !online}
+                onClick={() => {
+                  setBusy(true);
+                  leaveRegister(branchId, online)
+                    .then(() => {
+                      setRegisterNumber(null);
+                      setRegisterChosen(false);
+                      setPrepared(false);
+                    })
+                    .catch(notify)
+                    .finally(() => setBusy(false));
+                }}
+              >
+                {registerNumber ? 'Cambiar caja' : 'Seleccionar caja'}
+              </button>
+            )}
             <span className={`connection ${online ? '' : 'offline'}`}>
               {online ? <Wifi size={15} /> : <WifiOff size={15} />}{' '}
               {online ? 'Conectado' : 'Sin conexión'}
@@ -570,8 +660,10 @@ export default function App() {
         <main>
           <div className="page-heading">
             <div>
-              <span className="eyebrow">{isAdmin ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}</span>
-              <h1>{!isAdmin && !registerNumber ? 'Selecciona la caja en la que estás' : page}</h1>
+              <span className="eyebrow">
+                {isManagementPage ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}
+              </span>
+              <h1>{!registerChosen ? 'Selecciona la caja en la que estás' : page}</h1>
               <p>{meta[page]}</p>
             </div>
             <span className="date-label">
@@ -607,13 +699,13 @@ export default function App() {
               conservan.
             </div>
           )}
-          {!isAdmin && !!registerNumber && online && !hasOnlineSession() && (
+          {!!registerNumber && online && !hasOnlineSession() && (
             <div className="notice">
               Recuperaste la conexión. Los pendientes pueden sincronizarse; inicia sesión de nuevo
               para validar la ocupación de tu caja antes de registrar nuevos movimientos.
             </div>
           )}
-          {!isAdmin && !!registerNumber && !prepared && (
+          {!!registerNumber && !prepared && (
             <div className="notice">
               Este equipo aún no tiene tu acceso offline preparado. Puedes consultar horarios y
               registrar tu entrada con conexión. Para habilitar las capturas operativas, usa un
@@ -647,7 +739,7 @@ export default function App() {
                   a.href = URL.createObjectURL(
                     new Blob([JSON.stringify(pending, null, 2)], { type: 'application/json' }),
                   );
-                  a.download = 'shifttrack-pendientes.json';
+                  a.download = 'mostrador-pendientes.json';
                   a.click();
                   URL.revokeObjectURL(a.href);
                 }}
@@ -657,7 +749,7 @@ export default function App() {
               <p>No incluye claves de acceso. Conserva también los datos de este navegador.</p>
             </details>
           )}
-          {!isAdmin && !registerNumber ? (
+          {!registerChosen ? (
             <Card title="Caja de trabajo">
               <p>
                 {online
@@ -695,13 +787,27 @@ export default function App() {
                 label="Entrar a esta caja"
                 onSubmit={async (v) => {
                   const number = Number(v.register_number);
-                  const result = await selectRegister(number, online);
+                  const result = await selectRegister(number, online, branchId);
                   setRegisterNumber(number);
+                  setRegisterChosen(true);
                   setPrepared(result.prepared);
                   setDeviceId((await getDevice(branchId)).id);
                   await refresh(online);
                 }}
               />
+              {isAdmin && (
+                <button
+                  className="secondary continue-without-register"
+                  disabled={busy}
+                  onClick={() => {
+                    setRegisterChosen(true);
+                    setRegisterNumber(null);
+                    setPrepared(false);
+                  }}
+                >
+                  Continuar sin caja
+                </button>
+              )}
             </Card>
           ) : (!data || data.branch.id !== branchId) && page !== 'Configuración' ? (
             <Card title="Preparando datos">
@@ -873,7 +979,17 @@ export default function App() {
               )}
               {(page === 'Horarios' || page === 'Horario') && (
                 <>
-                  {isAdmin && (
+                  {isAdmin && page === 'Horarios' && (
+                    <ScheduleBoard
+                      key={branchId}
+                      users={data.users}
+                      schedules={data.schedules}
+                      date={date}
+                      online={online}
+                      onSave={(v) => mutate('/schedules/board', v)}
+                    />
+                  )}
+                  {isAdmin && page === 'Horarios' && (
                     <Card title="Programar turno">
                       <Form
                         fields={[
@@ -886,7 +1002,7 @@ export default function App() {
                       />
                     </Card>
                   )}
-                  {isAdmin && (
+                  {isAdmin && page === 'Horarios' && (
                     <Card title="Copiar semana">
                       <Form
                         fields={[
@@ -898,15 +1014,19 @@ export default function App() {
                       />
                     </Card>
                   )}
-                  <Card title={isAdmin ? 'Horarios del equipo' : 'Mi horario'}>
+                  <Card title={page === 'Horarios' ? 'Horarios del equipo' : 'Mi horario'}>
                     <Table
                       headers={['Fecha', 'Empleado', 'Entrada', 'Salida']}
-                      rows={data.schedules.map((s: any) => [
-                        s.business_date.slice(0, 10),
-                        isAdmin ? data.users.find((u: any) => u.id === s.user_id)?.name : user.name,
-                        s.start_time.slice(0, 5),
-                        s.end_time.slice(0, 5),
-                      ])}
+                      rows={data.schedules
+                        .filter((s: any) => page === 'Horarios' || s.user_id === user.id)
+                        .map((s: any) => [
+                          s.business_date.slice(0, 10),
+                          page === 'Horarios'
+                            ? data.users.find((u: any) => u.id === s.user_id)?.name
+                            : user.name,
+                          s.start_time.slice(0, 5),
+                          s.end_time.slice(0, 5),
+                        ])}
                     />
                   </Card>
                 </>
@@ -917,11 +1037,11 @@ export default function App() {
                     <div className="clock-display">
                       <Timer size={42} />
                       <h2>
-                        {data.clock.some((r: any) => !r.clock_out)
+                        {data.clock.some((r: any) => r.user_id === user.id && !r.clock_out)
                           ? 'Tu turno está en curso'
                           : 'Listo para registrar tu turno'}
                       </h2>
-                      <p>Entrada y salida dentro del mismo día de la sucursal.</p>
+                      <p>El turno se clasifica según tu hora de entrada.</p>
                       <div className="button-row">
                         <button
                           className="primary"
@@ -943,23 +1063,26 @@ export default function App() {
                   <Card title="Mis registros de entrada y salida">
                     <Table
                       headers={['Fecha', 'Entrada', 'Salida', 'Horas']}
-                      rows={data.clock.map((r: any) => [
-                        r.business_date.slice(0, 10),
-                        time(r.clock_in, b.timezone),
-                        r.clock_out ? time(r.clock_out, b.timezone) : 'En curso',
-                        r.clock_out
-                          ? ((Date.parse(r.clock_out) - Date.parse(r.clock_in)) / 3600000).toFixed(
-                              2,
-                            )
-                          : '—',
-                      ])}
+                      rows={data.clock
+                        .filter((r: any) => r.user_id === user.id)
+                        .map((r: any) => [
+                          r.business_date.slice(0, 10),
+                          time(r.clock_in, b.timezone),
+                          r.clock_out ? time(r.clock_out, b.timezone) : 'En curso',
+                          r.clock_out
+                            ? (
+                                (Date.parse(r.clock_out) - Date.parse(r.clock_in)) /
+                                3600000
+                              ).toFixed(2)
+                            : '—',
+                        ])}
                     />
                   </Card>
                 </>
               )}
-              {page === 'Tareas' && (
+              {(page === 'Tareas' || page === 'Gestionar tareas') && (
                 <>
-                  {isAdmin && (
+                  {isAdmin && page === 'Gestionar tareas' && (
                     <Card title="Asignar tarea">
                       <Form
                         fields={[
@@ -979,7 +1102,7 @@ export default function App() {
                       />
                     </Card>
                   )}
-                  {isAdmin && (
+                  {isAdmin && page === 'Gestionar tareas' && (
                     <div className="grid">
                       <Card title="Catálogo de tareas">
                         <Form
@@ -1044,63 +1167,70 @@ export default function App() {
                     </div>
                   )}
                   <div className="tasks-list">
-                    {data.tasks.length ? (
-                      data.tasks.map((t: any) => (
-                        <Card
-                          key={t.id}
-                          title={t.title}
-                          subtitle={`${t.due_date.slice(0, 10)} · Prioridad ${t.priority}`}
-                        >
-                          <div className="task-state">
-                            {t.completed_at ? (
-                              <span className="badge">
-                                <Check size={14} />
-                                Completada
-                              </span>
-                            ) : (
-                              <span className="badge amber-badge">Pendiente</span>
+                    {data.tasks.some(
+                      (t: any) => page === 'Gestionar tareas' || t.user_id === user.id,
+                    ) ? (
+                      data.tasks
+                        .filter((t: any) => page === 'Gestionar tareas' || t.user_id === user.id)
+                        .map((t: any) => (
+                          <Card
+                            key={t.id}
+                            title={t.title}
+                            subtitle={`${t.due_date.slice(0, 10)} · Prioridad ${t.priority}`}
+                          >
+                            <div className="task-state">
+                              {t.completed_at ? (
+                                <span className="badge">
+                                  <Check size={14} />
+                                  Completada
+                                </span>
+                              ) : (
+                                <span className="badge amber-badge">Pendiente</span>
+                              )}
+                              {isAdmin && page === 'Gestionar tareas' && (
+                                <span>{data.users.find((u: any) => u.id === t.user_id)?.name}</span>
+                              )}
+                            </div>
+                            {t.note && <p>{t.note}</p>}
+                            {page === 'Tareas' &&
+                              t.user_id === user.id &&
+                              canCapture &&
+                              !t.completed_at && (
+                                <PhotoForm
+                                  onSubmit={(note, photo) =>
+                                    command('task.complete', { id: t.id, note }, photo)
+                                  }
+                                />
+                              )}
+                            {isAdmin && page === 'Gestionar tareas' && t.completed_at && (
+                              <button
+                                className="text-button"
+                                onClick={() => mutate(`/tasks/${t.id}/revert`, {}).catch(notify)}
+                              >
+                                Reabrir tarea
+                              </button>
                             )}
-                            {isAdmin && (
-                              <span>{data.users.find((u: any) => u.id === t.user_id)?.name}</span>
+                            {t.media_id && (
+                              <button
+                                className="text-button"
+                                onClick={async () => {
+                                  try {
+                                    const local = await db.media.get(t.media_id);
+                                    const url = local
+                                      ? URL.createObjectURL(local.blob)
+                                      : await imageUrl(t.media_id, branchId);
+                                    const win = window.open(url, '_blank', 'noopener');
+                                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                  } catch (e) {
+                                    notify(e);
+                                  }
+                                }}
+                              >
+                                Ver fotografía
+                              </button>
                             )}
-                          </div>
-                          {t.note && <p>{t.note}</p>}
-                          {!isAdmin && !t.completed_at && (
-                            <PhotoForm
-                              onSubmit={(note, photo) =>
-                                command('task.complete', { id: t.id, note }, photo)
-                              }
-                            />
-                          )}
-                          {isAdmin && t.completed_at && (
-                            <button
-                              className="text-button"
-                              onClick={() => mutate(`/tasks/${t.id}/revert`, {}).catch(notify)}
-                            >
-                              Reabrir tarea
-                            </button>
-                          )}
-                          {t.media_id && (
-                            <button
-                              className="text-button"
-                              onClick={async () => {
-                                try {
-                                  const local = await db.media.get(t.media_id);
-                                  const url = local
-                                    ? URL.createObjectURL(local.blob)
-                                    : await imageUrl(t.media_id, branchId);
-                                  const win = window.open(url, '_blank', 'noopener');
-                                  setTimeout(() => URL.revokeObjectURL(url), 60000);
-                                } catch (e) {
-                                  notify(e);
-                                }
-                              }}
-                            >
-                              Ver fotografía
-                            </button>
-                          )}
-                        </Card>
-                      ))
+                          </Card>
+                        ))
                     ) : (
                       <Card title="Tareas">
                         <Empty text="No hay tareas asignadas." />
@@ -1111,6 +1241,12 @@ export default function App() {
               )}
               {page === 'Caja proveedores' && (
                 <>
+                  {!deviceReady && (
+                    <div className="notice">
+                      Para registrar pagos y tickets, selecciona la caja de proveedores de esta
+                      sucursal.
+                    </div>
+                  )}
                   {isAdmin && (
                     <div className="supplier-actions">
                       <SupplierImport
@@ -1125,7 +1261,7 @@ export default function App() {
                       />
                     </div>
                   )}
-                  {!isAdmin && (
+                  {deviceReady && (
                     <div className="supplier-actions">
                       <button className="secondary" onClick={() => setAddingSupplier(true)}>
                         Agregar proveedores
@@ -1148,7 +1284,7 @@ export default function App() {
                       </section>
                     </div>
                   )}
-                  {!isAdmin && (
+                  {deviceReady && (
                     <Card title="Registrar pago">
                       <Form
                         fields={[
@@ -1289,7 +1425,7 @@ export default function App() {
                         money(t.amount_cents),
                         t.voided ? 'Anulado' : 'Registrado',
                         t.note,
-                        !isAdmin && !t.voided && t.actor_user_id === user.id ? (
+                        deviceReady && !t.voided && t.actor_user_id === user.id ? (
                           <Form
                             fields={[{ name: 'reason', label: 'Motivo' }]}
                             label="Anular"
@@ -1303,7 +1439,7 @@ export default function App() {
                   </Card>
                 </>
               )}
-              {page === 'Caja proveedores' && !isAdmin && (
+              {page === 'Caja proveedores' && deviceReady && (
                 <>
                   <div className="stats">
                     <Stat
@@ -1432,7 +1568,10 @@ export default function App() {
               )}
               {(page === 'Mi corte' || page === 'Cortes') && (
                 <>
-                  {!isAdmin && (
+                  {page === 'Mi corte' && !canCapture && (
+                    <div className="notice">Selecciona una caja para registrar tu corte.</div>
+                  )}
+                  {page === 'Mi corte' && canCapture && (
                     <Card title="Capturar mi corte">
                       <p>
                         El corte corresponde a tu registro de entrada. Mañana: desde las 05:00 hasta
@@ -1465,14 +1604,16 @@ export default function App() {
                   <Card title="Cortes registrados">
                     <Table
                       headers={['Fecha', 'Turno', 'Ventas', 'Tarjeta', 'Contado', 'Diferencia']}
-                      rows={data.cuts.map((c: any) => [
-                        c.business_date.slice(0, 10),
-                        c.label,
-                        money(c.sales_cents),
-                        money(c.card_cents),
-                        money(c.declared_cents),
-                        money(c.difference_cents || c.difference || '0'),
-                      ])}
+                      rows={data.cuts
+                        .filter((c: any) => page === 'Cortes' || c.user_id === user.id)
+                        .map((c: any) => [
+                          c.business_date.slice(0, 10),
+                          c.label,
+                          money(c.sales_cents),
+                          money(c.card_cents),
+                          money(c.declared_cents),
+                          money(c.difference_cents || c.difference || '0'),
+                        ])}
                     />
                   </Card>
                 </>
@@ -1578,7 +1719,7 @@ export default function App() {
                     onClick={() =>
                       download(
                         `/reports/export?branch_id=${branchId}`,
-                        'shifttrack-reportes.xlsx',
+                        'mostrador-reportes.xlsx',
                       ).catch(notify)
                     }
                   >
@@ -1939,8 +2080,8 @@ export default function App() {
             </>
           )}
           <footer className="app-footer">
-            ShiftTrack 2.0 · {b?.name || 'Selecciona una sucursal'}
-            {!isAdmin && prepared && (
+            Mostrador 2.0 · {b?.name || 'Selecciona una sucursal'}
+            {prepared && (
               <span>Acceso offline preparado · Caja {registerNumber || preparedRegister()}</span>
             )}
           </footer>

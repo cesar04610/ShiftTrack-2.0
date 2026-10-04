@@ -69,6 +69,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await page.goto('/');
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal').selectOption(branch.id);
+  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await nav(page, 'Configuración');
   await nav(page, 'Caja general');
   await page.getByLabel('Efectivo total · MXN').fill('10000');

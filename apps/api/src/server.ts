@@ -1,3 +1,4 @@
+import { schedules } from './schedules.js';
 import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -240,19 +241,24 @@ app.post(
 );
 async function reserveRegister(req: express.Request, heartbeat = false) {
   const user = await identity(req.headers.authorization);
-  assert(
-    user.role === 'employee',
-    'FORBIDDEN',
-    'Solo empleados seleccionan una caja de trabajo.',
-    403,
-  );
+  const selectedBranch = await context(user, req.body.branch_id, req.body.register_number === null);
+  if (req.body.register_number === null) {
+    admin(user);
+    await transaction(selectedBranch.id, async (db) => {
+      await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [selectedBranch.id]);
+      await db.query('DELETE FROM register_leases WHERE session_hash=$1', [
+        digest(req.headers.authorization!.slice(7)),
+      ]);
+    });
+    return { register_number: null, device_id: null };
+  }
   const { register_number } = z
     .object({ register_number: z.number().int().min(1).max(100) })
     .parse(req.body);
   const sessionHash = digest(req.headers.authorization!.slice(7));
-  return transaction(user.branch_id!, async (db) => {
+  return transaction(selectedBranch.id, async (db) => {
     const branch = (
-      await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [user.branch_id])
+      await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [selectedBranch.id])
     ).rows[0];
     assert(branch?.active, 'BRANCH_INACTIVE', 'Esta sucursal fue eliminada.', 403);
     assert(
@@ -274,6 +280,12 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     const held = (
       await db.query('SELECT * FROM register_leases WHERE register_number=$1', [register_number])
     ).rows[0];
+    assert(
+      !heartbeat || held?.session_hash === sessionHash,
+      'REGISTER_RELEASED',
+      'Tu caja fue liberada. Selecciona una caja para continuar.',
+      409,
+    );
     // Reclaim only this user's prior session on the same enrolled browser/device.
     // A late close notification can only revoke its old token, never the replacement.
     let recovered = false;
@@ -291,7 +303,7 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
       ).rows[0];
       if (
         previousDevice?.active &&
-        previousDevice.branch_id === user.branch_id &&
+        previousDevice.branch_id === selectedBranch.id &&
         previousDevice.public_key.x === req.body.public_key.x &&
         previousDevice.public_key.y === req.body.public_key.y
       ) {
@@ -322,7 +334,7 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
         .parse(req.body);
       const existing = (await db.query('SELECT * FROM devices WHERE id=$1', [enrollment.device_id]))
         .rows[0];
-      if (existing?.active && existing.branch_id === user.branch_id) {
+      if (existing?.active && existing.branch_id === selectedBranch.id) {
         assert(
           existing.public_key.x === enrollment.public_key.x &&
             existing.public_key.y === enrollment.public_key.y,
@@ -335,7 +347,7 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
         deviceId = existing ? randomUUID() : enrollment.device_id;
         await db.query('INSERT INTO devices(id,branch_id,name,public_key) VALUES($1,$2,$3,$4)', [
           deviceId,
-          user.branch_id,
+          selectedBranch.id,
           `Caja ${register_number} · ${user.username}`,
           enrollment.public_key,
         ]);
@@ -344,7 +356,7 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     const lease = (
       await db.query(
         'INSERT INTO register_leases(branch_id,register_number,session_hash,user_id,expires_at,device_id) VALUES($1,$2,$3,$4,NULL,$5) ON CONFLICT(branch_id,register_number) DO UPDATE SET expires_at=NULL,device_id=EXCLUDED.device_id RETURNING register_number,expires_at,device_id',
-        [user.branch_id, register_number, sessionHash, user.id, deviceId],
+        [selectedBranch.id, register_number, sessionHash, user.id, deviceId],
       )
     ).rows[0];
     return lease;
@@ -453,8 +465,19 @@ app.post('/api/v1/devices/user-grants', async (req, res) => {
     })
     .parse(req.body);
   await checkPassword(u.username, b.password, undefined, u.id);
+  const grantBranch = await context(u, req.body.branch_id);
+  const grantDevice = (
+    await pool.query('SELECT branch_id FROM devices WHERE id=$1 AND active', [b.device_id])
+  ).rows[0];
+  assert(grantDevice, 'DEVICE_NOT_ASSIGNED', 'Este equipo no está registrado.', 403);
+  assert(
+    grantDevice.branch_id === grantBranch.id,
+    'DEVICE_BRANCH_MISMATCH',
+    'Este equipo está registrado en otra sucursal. Usa un equipo de tu sucursal para preparar el acceso offline.',
+    403,
+  );
   const selected = await transaction(
-    u.branch_id!,
+    grantBranch.id,
     async (db) =>
       (
         await db.query(
@@ -463,6 +486,13 @@ app.post('/api/v1/devices/user-grants', async (req, res) => {
         )
       ).rows[0]?.register_number ?? null,
   );
+  if (u.role !== 'employee')
+    assert(
+      selected != null,
+      'REGISTER_REQUIRED',
+      'Selecciona una caja para preparar el acceso operativo.',
+      400,
+    );
   res.json(await issueGrant(u, b.device_id, b.public_key, selected));
 });
 app.post(
@@ -583,7 +613,7 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.users = (
           await db.query(
             'SELECT id,username,name,role,branch_id,active,deleted_at FROM users WHERE branch_id=$1 OR role=$2',
-            [b.id, user.role === 'superadmin' ? 'superadmin' : 'none'],
+            [b.id, 'superadmin'],
           )
         ).rows;
         result.treasury = await select('treasury_entries');
@@ -591,10 +621,14 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.catalog = await select('task_catalog');
         result.assignments = await select('task_assignments');
         result.corrections = await select('supplier_corrections');
-        result.alerts = await select('alerts');
+        result.alerts = user.role === 'superadmin' ? await select('alerts') : [];
         result.categories = await select('expense_categories');
-        result.alert_settings = (await db.query('SELECT * FROM alert_settings')).rows[0];
-        result.notifications = await select('notification_outbox');
+        result.alert_settings =
+          user.role === 'superadmin'
+            ? (await db.query('SELECT * FROM alert_settings')).rows[0]
+            : null;
+        result.notifications =
+          user.role === 'superadmin' ? await select('notification_outbox') : [];
       }
       return result;
     }),
@@ -719,7 +753,6 @@ app.post('/api/v1/users/:id/delete', async (req, res) => {
 });
 app.post('/api/v1/clock/:action', async (req, res) => {
   const u = await identity(req.headers.authorization);
-  assert(u.role === 'employee', 'FORBIDDEN', 'El registro de entrada es del empleado.', 403);
   const b = await context(u, req.body.branch_id),
     date = shiftBusinessDate(new Date(), b.timezone);
   await transaction(b.id, async (db) => {
@@ -755,31 +788,7 @@ app.post('/api/v1/clock/:action', async (req, res) => {
   });
   res.json({ ok: true });
 });
-app.post('/api/v1/schedules', async (req, res) => {
-  const u = await identity(req.headers.authorization);
-  admin(u);
-  const b = await context(u, req.body.branch_id);
-  const p = z
-    .object({
-      user_id: z.uuid(),
-      business_date: z.iso.date(),
-      start_time: z.string().regex(/^\d{2}:\d{2}$/),
-      end_time: z.string().regex(/^\d{2}:\d{2}$/),
-    })
-    .parse(req.body);
-  await transaction(b.id, async (db) => {
-    await employee(db, b.id, p.user_id);
-    await db.query('INSERT INTO schedules VALUES($1,$2,$3,$4,$5,$6)', [
-      b.id,
-      randomUUID(),
-      p.user_id,
-      p.business_date,
-      p.start_time,
-      p.end_time,
-    ]);
-  });
-  res.status(201).json({ ok: true });
-});
+app.use('/api/v1/schedules', schedules);
 app.post('/api/v1/tasks', async (req, res) => {
   const u = await identity(req.headers.authorization);
   admin(u);
@@ -901,12 +910,12 @@ async function employee(db: any, branch: string, id: string) {
   assert(
     (
       await db.query(
-        "SELECT id FROM users WHERE id=$1 AND branch_id=$2 AND active AND role='employee'",
+        "SELECT id FROM users WHERE id=$1 AND (branch_id=$2 OR role='superadmin') AND active",
         [id, branch],
       )
     ).rowCount,
     'NOT_FOUND',
-    'Empleado no disponible en la sucursal.',
+    'Persona no disponible en la sucursal.',
     404,
   );
 }
@@ -951,6 +960,6 @@ if (process.env.NODE_ENV !== 'test') {
   await prepareMediaStorage();
   await verifyRuntimeRole();
   app.listen(Number(process.env.PORT || 8080), '0.0.0.0', () =>
-    console.log('API ShiftTrack disponible.'),
+    console.log('API Mostrador disponible.'),
   );
 }

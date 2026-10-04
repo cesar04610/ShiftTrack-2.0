@@ -74,6 +74,7 @@ test('Jenny trabaja en dos sucursales online y offline; eliminarla conserva hist
   ).toBeTruthy();
   await login(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(accounts[0].branch);
+  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await page.getByRole('button', { name: 'Usuarios', exact: true }).click();
   const row = page.getByRole('row').filter({ hasText: username });
   await expect(row).toContainText('Inactivo');

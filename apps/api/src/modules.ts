@@ -12,7 +12,7 @@ async function member(db: pg.PoolClient, branch: string, id: string) {
   assert(
     (
       await db.query(
-        "SELECT id FROM users WHERE id=$1 AND branch_id=$2 AND role='employee' AND active",
+        "SELECT id FROM users WHERE id=$1 AND (branch_id=$2 OR role='superadmin') AND active",
         [id, branch],
       )
     ).rowCount,
@@ -384,7 +384,7 @@ modules.post('/expense-categories', async (req, res) => {
 });
 modules.post('/alerts/settings', async (req, res) => {
   const user = await identity(req.headers.authorization);
-  admin(user);
+  owner(user);
   const b = await context(user, req.body.branch_id);
   const p = z
     .object({
@@ -420,7 +420,7 @@ modules.post('/alerts/settings', async (req, res) => {
 });
 modules.post('/notifications/:id/retry', async (req, res) => {
   const user = await identity(req.headers.authorization);
-  admin(user);
+  owner(user);
   const b = await context(user, req.body.branch_id);
   const p = z.object({ reason: z.string().trim().min(3).max(1000) }).parse(req.body);
   await transaction(b.id, async (db) => {
@@ -441,7 +441,7 @@ modules.post('/notifications/:id/retry', async (req, res) => {
 });
 modules.post('/alerts/:id/seen', async (req, res) => {
   const user = await identity(req.headers.authorization);
-  admin(user);
+  owner(user);
   const b = await context(user, req.body.branch_id);
   await transaction(b.id, async (db) => {
     await db.query('UPDATE alerts SET seen=true WHERE id=$1', [z.uuid().parse(req.params.id)]);

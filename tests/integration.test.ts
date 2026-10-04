@@ -167,7 +167,7 @@ test('cajas online: selección válida, ocupación concurrente y liberación al 
       "UPDATE register_leases SET expires_at=now()-interval '1 second' WHERE register_number=3",
     );
   });
-  a.equal((await call('/registers/heartbeat', { register_number: 3 }, loser)).status, 200);
+  a.equal((await call('/registers/heartbeat', { register_number: 3 }, loser)).status, 409);
   a.equal((await call('/registers/select', { register_number: 3 }, loser)).status, 200);
   await call('/auth/logout', {}, loser);
 });
@@ -430,7 +430,7 @@ test('equipo de otra sucursal deniega concesión offline sin invalidar la sesió
   );
   const admin = await call('/devices/user-grants', body, adminToken);
   a.equal(admin.status, 403);
-  a.equal(admin.body.code, 'FORBIDDEN');
+  a.equal(admin.body.code, 'DEVICE_BRANCH_MISMATCH');
 });
 test('sesión propia y ámbito de sucursal; RLS sin contexto no filtra datos ajenos', async () => {
   a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, employeeToken)).status, 403);

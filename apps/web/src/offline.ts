@@ -119,7 +119,8 @@ async function activateWriter() {
   });
 }
 let onlineCredentials: { user: User; password: string } | null = null;
-async function prepareEmployee(user: User, password: string) {
+async function prepareEmployee(user: User, password: string, branchId = user.branch_id!) {
+  user = { ...user, branch_id: branchId };
   const device = await getDevice(user.branch_id!);
   const username = user.username;
   await activateWriter();
@@ -127,6 +128,7 @@ async function prepareEmployee(user: User, password: string) {
   try {
     const grant = await request('/devices/user-grants', {
       device_id: device.id,
+      branch_id: branchId,
       password,
       public_key: await crypto.subtle.exportKey('jwk', pair.publicKey),
     });
@@ -185,7 +187,11 @@ async function prepareEmployee(user: User, password: string) {
 export function preparedRegister(): number | undefined {
   return session?.grant.body.register_number ?? undefined;
 }
-export async function selectRegister(registerNumber: number, connected: boolean) {
+export async function selectRegister(
+  registerNumber: number,
+  connected: boolean,
+  requestedBranch?: string,
+) {
   if (!connected) {
     assert(
       session && privateKey && preparedRegister() === registerNumber,
@@ -195,13 +201,14 @@ export async function selectRegister(registerNumber: number, connected: boolean)
     await trustedNow();
     return { prepared: true };
   }
-  const branchId = onlineCredentials?.user.branch_id || session?.user.branch_id;
+  const branchId = requestedBranch || onlineCredentials?.user.branch_id || session?.user.branch_id;
   const device = await getDevice(branchId || undefined);
   const alreadyWriter = !!releaseWriter;
   await activateWriter();
   try {
     const lease = await request('/registers/select', {
       register_number: registerNumber,
+      branch_id: branchId,
       device_id: device.id,
       public_key: device.public_key,
     });
@@ -209,8 +216,8 @@ export async function selectRegister(registerNumber: number, connected: boolean)
       await db.meta.put({ id: `device:${branchId}`, value: { ...device, id: lease.device_id } });
     if (onlineCredentials) {
       const credentials = onlineCredentials;
-      await prepareEmployee(credentials.user, credentials.password);
-      onlineCredentials = null;
+      await prepareEmployee(credentials.user, credentials.password, branchId || undefined);
+      if (credentials.user.role === 'employee') onlineCredentials = null;
     } else
       assert(
         !session || preparedRegister() === registerNumber,
@@ -227,6 +234,14 @@ export async function selectRegister(registerNumber: number, connected: boolean)
   }
 }
 
+export async function leaveRegister(branchId: string, connected: boolean) {
+  if (connected) await request('/registers/select', { branch_id: branchId, register_number: null });
+  privateKey = null;
+  session = null;
+  releaseWriter?.();
+  releaseWriter = null;
+}
+
 export async function login(username: string, password: string, branchId?: string) {
   username = username.trim().toLowerCase();
   try {
@@ -234,7 +249,7 @@ export async function login(username: string, password: string, branchId?: strin
       device = await getDevice();
     const user = result.user as User;
     clockAnchor = { server: Date.parse(result.server_time), mono: performance.now() };
-    onlineCredentials = user.role === 'employee' ? { user, password } : null;
+    onlineCredentials = { user, password };
     session = null;
     privateKey = null;
     return { user, prepared: !!session, offline: false };

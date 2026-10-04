@@ -1,4 +1,4 @@
-# ShiftTrack 2.0
+# Mostrador 2.0
 
 Aplicación web y API en Railway con PostgreSQL, sesiones propias y fotografías privadas en un volumen persistente. Implementación inicial basada en los documentos de `docs/`, con referencia funcional a `cesar04610/shifttrack` en `2cf7a06afcce071fbdc02e7e4aeff2a738bca090`.
 
@@ -97,3 +97,7 @@ La migración 005 agrega sesiones sin cambiar usuarios ni datos financieros. No 
 En producción se exige un volumen montado real; no se admiten fotografías en el disco efímero del contenedor. La imagen prepara la carpeta del volumen y luego ejecuta la API como usuario `node`. Configurar una sola réplica para ese volumen. Los respaldos del volumen y de SQL deben verificarse antes de operar dinero real.
 
 El correo requiere SMTP configurado en el servidor y habilitación por sucursal. Por defecto hay un intento automático; las entregas inciertas quedan para revisión. Los reintentos adicionales son configurables, sin promesa de entrega exactamente una vez. El inventario de API y el contrato de comandos están en `docs/openapi.json`; se regeneran con `npm run contracts`.
+
+Mostrador 2.0 ofrece la operación diaria a empleados, administradores y súper administradores. Las cuentas administrativas pueden continuar sin caja o seleccionar una para registrar cortes; los pagos requieren la caja de proveedores. El menú de gestión conserva Usuarios, Horarios, Gestionar tareas, Reportes, Cortes, Caja general y Configuración; Alertas está reservado al súper administrador.
+
+En Horarios, la pizarra semanal permite arrastrar fichas del personal activo, incluidos administradores y súper administradores, o seleccionar una persona y pulsar Asignar aquí. Mañana: 07:30–15:00 (medio turno 12:00–15:00). Tarde: 15:00–21:30 (medio turno 18:30–21:30). Seleccionar una ficha asignada permite cambiar entre turno completo y medio turno; arrastrarla a otra casilla mueve el horario. Requiere conexión y rechaza horarios superpuestos sin duplicar fichas. Los horarios anteriores y la captura manual se conservan.

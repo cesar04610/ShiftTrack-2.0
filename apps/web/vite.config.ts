@@ -9,8 +9,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'prompt',
       manifest: {
-        name: 'ShiftTrack 2.0',
-        short_name: 'ShiftTrack',
+        name: 'Mostrador 2.0',
+        short_name: 'Mostrador',
         lang: 'es',
         theme_color: '#111827',
         background_color: '#f3f4f6',
