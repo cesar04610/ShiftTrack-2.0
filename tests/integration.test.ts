@@ -5,14 +5,14 @@ import sharp from 'sharp';
 import ExcelJS from 'exceljs';
 import { SMTPServer } from 'smtp-server';
 import pg from 'pg';
-import { canonical, type Command } from '../packages/domain/index.js';
-if (!process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.NODE_ENV === 'production')
-  throw Error('Las pruebas requieren Firebase Auth Emulator y base local.');
+import { canonical, localTime, type Command } from '../packages/domain/index.js';
+if (process.env.NODE_ENV === 'production' || !process.env.MIGRATION_DATABASE_URL)
+  throw Error('Las pruebas requieren la base local de desarrollo.');
 process.env.NODE_ENV = 'test';
 const { app } = await import('../apps/api/src/server.js');
 const { pool, transaction } = await import('../apps/api/src/db.js');
 const { processCommand } = await import('../apps/api/src/commands.js');
-const { issueGrant } = await import('../apps/api/src/security.js');
+const { issueGrant, issueSession, validateCommand } = await import('../apps/api/src/security.js');
 const sql = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
 let server: ReturnType<typeof app.listen>,
   base: string,
@@ -40,20 +40,17 @@ async function call(path: string, body?: unknown, token = ownerToken) {
   return { status: response.status, body: await response.json() };
 }
 async function token(username: string) {
-  const { body } = await call('/auth/login', { username, password: 'ShiftTrack-demo-2026!' }, '');
-  a.ok(body.custom_token);
-  const response = await fetch(
-    `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-only-key`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: body.custom_token, returnSecureToken: true }),
-    },
+  const { status, body } = await call(
+    '/auth/login',
+    { username, password: 'ShiftTrack-demo-2026!' },
+    '',
   );
-  const json: any = await response.json();
-  a.ok(json.idToken, JSON.stringify(json));
-  return json.idToken;
+  a.equal(status, 200);
+  a.match(body.access_token, /^[A-Za-z0-9_-]{43}$/);
+  a.ok(body.expires_at);
+  return body.access_token as string;
 }
+
 function command(
   type: Command['type'],
   payload: Record<string, string>,
@@ -138,7 +135,7 @@ after(async () => {
   await sql.end();
   await pool.end();
 });
-test('Firebase login y ámbito de sucursal; RLS sin contexto no filtra datos ajenos', async () => {
+test('sesión propia y ámbito de sucursal; RLS sin contexto no filtra datos ajenos', async () => {
   a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, employeeToken)).status, 403);
   a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, adminToken)).status, 403);
   a.equal((await pool.query('SELECT * FROM treasury_entries')).rowCount, 0);
@@ -159,6 +156,114 @@ test('Firebase login y ámbito de sucursal; RLS sin contexto no filtra datos aje
     403,
   );
   a.equal((await call('/branches', { name: 'Prohibida' }, adminToken)).status, 403);
+});
+test('sesiones opacas: hash en SQL, vencimiento, cierre individual y credenciales genéricas', async () => {
+  const id = randomUUID(),
+    username = `session-${id}`;
+  const hash = (
+    await sql.query(
+      "SELECT hash FROM password_credentials WHERE user_id=(SELECT id FROM users WHERE username='ana')",
+    )
+  ).rows[0].hash;
+  await sql.query(
+    "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Sesiones','employee',$3)",
+    [id, username, branch],
+  );
+  await sql.query('INSERT INTO password_credentials VALUES($1,$2)', [id, hash]);
+  const login = await call('/auth/login', { username, password: 'ShiftTrack-demo-2026!' }, '');
+  const first = login.body.access_token,
+    second = await token(username);
+  a.equal(login.status, 200);
+  const row = (
+    await sql.query('SELECT * FROM auth_sessions WHERE token_hash=$1', [
+      createHash('sha256').update(first).digest('hex'),
+    ])
+  ).rows[0];
+  a.equal(row.user_id, id);
+  a.equal(+row.expires_at - +row.issued_at, 8 * 3600_000);
+  a.notEqual(row.token_hash, first);
+  a.equal((await call('/auth/me', undefined, first)).body.id, id);
+  a.equal((await call('/auth/logout', {}, first)).status, 200);
+  a.equal((await call('/auth/me', undefined, first)).status, 401);
+  a.equal((await call('/auth/me', undefined, second)).status, 200);
+  await sql.query(
+    "UPDATE auth_sessions SET issued_at=now()-interval '9 hours',expires_at=now()-interval '1 hour' WHERE token_hash=$1",
+    [createHash('sha256').update(second).digest('hex')],
+  );
+  a.equal((await call('/auth/me', undefined, second)).status, 401);
+  a.equal((await call('/auth/me', undefined, randomUUID())).status, 401);
+  const wrong = await call('/auth/login', { username, password: 'incorrecta' }, '');
+  const unknown = await call(
+    '/auth/login',
+    { username: `absent-${id}`, password: 'incorrecta' },
+    '',
+  );
+  a.equal(wrong.status, 401);
+  a.deepEqual(wrong.body, unknown.body);
+});
+test('cambiar contraseña revoca todas las sesiones y conserva concesiones para revisión', async () => {
+  const id = randomUUID(),
+    username = `password-${id}`;
+  const hash = (
+    await sql.query(
+      "SELECT hash FROM password_credentials WHERE user_id=(SELECT id FROM users WHERE username='ana')",
+    )
+  ).rows[0].hash;
+  const user = (
+    await sql.query(
+      "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Cambio contraseña','employee',$3) RETURNING *",
+      [id, username, branch],
+    )
+  ).rows[0];
+  await sql.query('INSERT INTO password_credentials VALUES($1,$2)', [id, hash]);
+  const first = await token(username),
+    second = await token(username);
+  const localGrant = await issueGrant(user, device, pair.publicKey.export({ format: 'jwk' }));
+  const pending = command(
+    'shortage.create',
+    { id: randomUUID(), description: 'Pendiente', amount_cents: '100' },
+    user,
+    localGrant,
+  );
+  a.equal(
+    (
+      await call(
+        '/auth/change-password',
+        { old_password: 'incorrecta', password: 'Nueva-contrasena-2026!' },
+        first,
+      )
+    ).status,
+    401,
+  );
+  a.equal((await call('/auth/me', undefined, second)).status, 200);
+  a.equal(
+    (
+      await call(
+        '/auth/change-password',
+        { old_password: 'ShiftTrack-demo-2026!', password: 'Nueva-contrasena-2026!' },
+        first,
+      )
+    ).status,
+    200,
+  );
+  a.equal((await call('/auth/me', undefined, first)).status, 401);
+  a.equal((await call('/auth/me', undefined, second)).status, 401);
+  a.equal((await sql.query('SELECT 1 FROM auth_sessions WHERE user_id=$1', [id])).rowCount, 0);
+  a.equal(
+    (await call('/auth/login', { username, password: 'ShiftTrack-demo-2026!' }, '')).status,
+    401,
+  );
+  const fresh = await call('/auth/login', { username, password: 'Nueva-contrasena-2026!' }, '');
+  a.equal(fresh.status, 200);
+  a.equal((await call('/auth/me', undefined, fresh.body.access_token)).status, 200);
+  await a.rejects(validateCommand(pending, device), (e: any) => e.code === 'REQUIRES_ADMIN_REVIEW');
+  a.equal(
+    (await sql.query('SELECT 1 FROM grants WHERE id=$1', [localGrant.body.grant_id])).rowCount,
+    1,
+  );
+  await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [id]);
+  a.equal((await call('/auth/me', undefined, fresh.body.access_token)).status, 401);
+  await a.rejects(issueSession(user), (e: any) => e.code === 'UNAUTHENTICATED');
 });
 test('apertura incluye proveedores una sola vez y no permite reinicializar', async () => {
   a.equal(
@@ -409,7 +514,7 @@ test('correcciones esperan equipo pausado; original y contado permanecen intacto
   );
 });
 test('turno del día anterior exige conteo antes de permitir pagos', async () => {
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10),
+  const yesterday = localTime(new Date(Date.now() - 86400000), 'America/Mazatlan').date,
     id = randomUUID();
   await sql.query(
     "INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,opening_cents) VALUES($1,$2,$3,$4,now()-interval '1 day',221000)",

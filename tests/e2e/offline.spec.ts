@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 const password = 'ShiftTrack-demo-2026!';
+const apiBase = process.env.E2E_API_URL || 'http://127.0.0.1:8080';
 async function signIn(page: Page, username: string) {
   await page.getByLabel('Usuario', { exact: true }).fill(username);
   await page.getByLabel('Contraseña', { exact: true }).fill(password);
@@ -20,17 +21,13 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     branchName = `Piloto ${suffix}`,
     first = `ana-${suffix}`,
     second = `luis-${suffix}`;
-  const response = await page.request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+  const response = await page.request.post(`${apiBase}/api/v1/auth/login`, {
     data: { username: 'cesar', password },
   });
   const initial = await response.json();
-  const auth = await page.request.post(
-    'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-only-key',
-    { data: { token: initial.custom_token, returnSecureToken: true } },
-  );
-  const { idToken } = await auth.json();
-  const headers = { Authorization: `Bearer ${idToken}` };
-  const created = await page.request.post('http://127.0.0.1:8080/api/v1/branches', {
+  expect(response.ok()).toBeTruthy();
+  const headers = { Authorization: `Bearer ${initial.access_token}` };
+  const created = await page.request.post(`${apiBase}/api/v1/branches`, {
     headers,
     data: { name: branchName },
   });
@@ -41,7 +38,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     [first, 'Ana prueba'],
     [second, 'Luis prueba'],
   ]) {
-    const r = await page.request.post('http://127.0.0.1:8080/api/v1/users', {
+    const r = await page.request.post(`${apiBase}/api/v1/users`, {
       headers,
       data: { username, name, role: 'employee', branch_id: branch.id, password },
     });
@@ -56,7 +53,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   }).format(new Date());
   expect(
     (
-      await page.request.post('http://127.0.0.1:8080/api/v1/tasks', {
+      await page.request.post(`${apiBase}/api/v1/tasks`, {
         headers,
         data: { branch_id: branch.id, user_id: firstId, title: 'Limpiar mostrador', due_date: due },
       })
@@ -66,7 +63,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal').selectOption(branch.id);
   await nav(page, 'Configuración');
-  await page.getByLabel('Nombre del equipo', {exact:true}).fill('Computadora piloto');
+  await page.getByLabel('Nombre del equipo', { exact: true }).fill('Computadora piloto');
   await page.getByLabel('Caja de proveedores', { exact: true }).last().fill('2');
   await page.getByRole('button', { name: 'Registrar este equipo' }).click();
   await expect(
@@ -143,10 +140,9 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await context.setOffline(false);
   await page.getByRole('button', { name: 'Sincronizar y actualizar' }).click();
   await expect(page.locator('.pending-panel')).toHaveCount(0, { timeout: 20000 });
-  const state = await page.request.get(
-    `http://127.0.0.1:8080/api/v1/snapshot?branch_id=${branch.id}`,
-    { headers },
-  );
+  const state = await page.request.get(`${apiBase}/api/v1/snapshot?branch_id=${branch.id}`, {
+    headers,
+  });
   const data = await state.json();
   expect(data.tickets).toHaveLength(1);
   expect(data.branch.balance_cents).toBe('219000');

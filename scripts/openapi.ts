@@ -26,11 +26,7 @@ function inspect(stack: any[], prefix: string) {
       paths[path][method] = {
         operationId: `${method}_${path.replace(/[^A-Za-z0-9]/g, '_')}`,
         summary: `${method.toUpperCase()} ${path}`,
-        security: publicPath
-          ? []
-          : devicePath
-            ? [{ deviceTransport: [] }]
-            : [{ firebaseIdToken: [] }],
+        security: publicPath ? [] : devicePath ? [{ deviceTransport: [] }] : [{ sessionToken: [] }],
         parameters: Array.from(path.matchAll(/\{(\w+)\}/g)).map((m) => ({
           name: m[1],
           in: 'path',
@@ -103,10 +99,10 @@ const document = {
   paths,
   components: {
     securitySchemes: {
-      firebaseIdToken: {
+      sessionToken: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'Firebase ID token (no custom token)',
+        bearerFormat: 'Token opaco de sesión (8 horas; revocable)',
       },
       deviceTransport: {
         type: 'apiKey',

@@ -1,12 +1,12 @@
 # ShiftTrack 2.0
 
-Aplicación web para Firebase Hosting y Authentication, API en Cloud Run y PostgreSQL en Cloud SQL. Implementación inicial basada en los documentos de `docs/`, con referencia funcional a `cesar04610/shifttrack` en `2cf7a06afcce071fbdc02e7e4aeff2a738bca090`.
+Aplicación web y API en Railway con PostgreSQL, sesiones propias y fotografías privadas en un volumen persistente. Implementación inicial basada en los documentos de `docs/`, con referencia funcional a `cesar04610/shifttrack` en `2cf7a06afcce071fbdc02e7e4aeff2a738bca090`.
 
 Esta versión permite desarrollar y probar los módulos principales y el flujo de caja offline. Todavía no es una versión certificada para operar dinero real: faltan la validación operativa del propietario, recuperación de dispositivos y configuración/verificación cloud. El estado detallado está en [docs/estado.md](docs/estado.md).
 
 ## Desarrollo
 
-Requiere Node 24, npm, Docker y Java 21 para la herramienta de emuladores. Usa el checkout existente: cada tarea cloud ya tiene aislamiento; no hace falta otro worktree.
+Requiere Node 24, npm y Docker. Usa el checkout existente: cada tarea cloud ya tiene aislamiento; no hace falta otro worktree.
 
 ```bash
 npm ci
@@ -19,7 +19,6 @@ npm run db:seed
 En terminales separadas:
 
 ```bash
-npm run emulators
 npm run dev
 ```
 
@@ -32,11 +31,11 @@ npx vite preview --config apps/web/vite.config.ts --port 5174
 
 Vite en desarrollo no comprueba la apertura offline; las pruebas de navegador usan la compilación con service worker. Los procesos deben volver a iniciarse después de restaurar el entorno. La base local de Docker se conserva mientras exista su volumen; no es un respaldo de producción.
 
-En el sandbox cloud puedes necesitar `XDG_CONFIG_HOME=/workspace/.shifttrack-config XDG_CACHE_HOME=/tmp/shifttrack-cache FIREBASE_CLI_DISABLE_USAGE=1 npm run emulators`. `.npmrc` coloca la caché de npm en `/tmp`.
+`.npmrc` coloca la caché de npm en `/tmp`. No se necesita Firebase, Java ni un emulador de autenticación.
 
 ## Cuentas de ejemplo
 
-Exclusivamente con Auth Emulator y la base local: `cesar` (dueño), `admin` (administrador), `ana` y `luis` (empleados). Contraseña pública de estos datos de prueba: `ShiftTrack-demo-2026!`. El seed no se ejecuta en producción ni sobrescribe cuentas existentes. No hay contraseña predeterminada para producción.
+Exclusivamente con la base local de desarrollo: `cesar` (dueño), `admin` (administrador), `ana` y `luis` (empleados). Contraseña pública de estos datos de prueba: `ShiftTrack-demo-2026!`. El seed no se ejecuta en producción ni sobrescribe cuentas existentes. No hay contraseña predeterminada para producción.
 
 1. Ingresa como `cesar`, selecciona Sucursal Centro y registra este navegador/equipo en Configuración. La caja de proveedores no depende de ser Caja 3.
 2. En Caja general registra efectivo total, la parte incluida en proveedores y saldo bancario. La parte de proveedores no se suma otra vez al total.
@@ -48,7 +47,7 @@ Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el
 
 ## Pruebas
 
-Con PostgreSQL y Auth Emulator en ejecución:
+Con PostgreSQL en ejecución:
 
 ```bash
 npm test
@@ -71,8 +70,14 @@ Cada comando y su proyección se guardan juntos en IndexedDB. Contraseña local:
 
 Un conflicto conserva el comando y bloquea la continuación dependiente; nunca se aplica un saldo arbitrario. La descarga de pendientes contiene comandos y firmas, no claves privadas ni contraseñas. Fotografías pendientes se conservan en IndexedDB y no están incluidas en ese archivo de respaldo. El almacenamiento borrado o el equipo perdido requieren recuperación administrativa: ver límites en `docs/estado.md`.
 
-## Firebase / Google Cloud
+## Railway
 
-El proyecto de destino es `shifttrackcloud` y la app registrada se llama `supergalaviz`. `npm run build` compila para ese proyecto con `.env.production`; `npm run build:local` conserva el emulador para las pruebas locales. La configuración de Hosting está en `firebase.json`; despliegue y requisitos en [docs/despliegue.md](docs/despliegue.md). No se han creado recursos ni habilitado facturación. Las variables `VITE_FIREBASE_*` son configuración pública del SDK; no incluir claves privadas. La API usa identidad de servicio y secretos de Cloud Run. No se usa Firestore.
+Despliegue y límites en [docs/railway.md](docs/railway.md). La imagen sirve la interfaz y la API juntas; usa PostgreSQL para identidad y datos, y un volumen privado para fotografías. No requiere Firebase ni claves de Google. Los documentos originales 02 y 03 conservan el diseño inicial como referencia; la elección posterior del propietario de usar Railway sin Firebase lo sustituye.
+
+El login emite un token aleatorio de 256 bits, de ocho horas, guardado por pestaña en `sessionStorage`; SQL solo conserva su hash. Cada petición revisa vencimiento, versión de credenciales y estado de la cuenta. El cierre online revoca esa sesión; cambiar contraseña revoca todas. El cierre sin Internet borra el acceso local, pero no puede contactar al servidor para revocar: el token remoto mantiene su vencimiento original. Las contraseñas usan Argon2. Solo servir la aplicación publicada con HTTPS.
+
+La migración 005 agrega sesiones sin cambiar usuarios ni datos financieros. No se borran IndexedDB, concesiones ni pendientes. Después de cambiar contraseña o desactivar cuenta, las capturas antiguas permanecen para revisión y no se aceptan automáticamente. Las rutas de fotos siempre comprueban usuario, tarea y sucursal.
+
+En producción se exige un volumen montado real; no se admiten fotografías en el disco efímero del contenedor. La imagen prepara la carpeta del volumen y luego ejecuta la API como usuario `node`. Configurar una sola réplica para ese volumen. Los respaldos del volumen y de SQL deben verificarse antes de operar dinero real.
 
 El correo requiere SMTP configurado en el servidor y habilitación por sucursal. Por defecto hay un intento automático; las entregas inciertas quedan para revisión. Los reintentos adicionales son configurables, sin promesa de entrega exactamente una vez. El inventario de API y el contrato de comandos están en `docs/openapi.json`; se regeneran con `npm run contracts`.

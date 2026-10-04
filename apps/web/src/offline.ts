@@ -8,7 +8,7 @@ import {
   type Command,
   type User,
 } from '../../../packages/domain/index.js';
-import { request, onlineLogin, logoutFirebase, ApiError } from './api';
+import { request, onlineLogin, logoutSession, ApiError } from './api';
 type Meta = { id: string; value: any };
 export type Pending = {
   id: string;
@@ -260,7 +260,7 @@ export async function logout() {
   clockAnchor = null;
   releaseWriter?.();
   releaseWriter = null;
-  await logoutFirebase();
+  await logoutSession();
 }
 export async function snapshot(user: User, branchId: string, refresh = true) {
   const device = await getDevice(),

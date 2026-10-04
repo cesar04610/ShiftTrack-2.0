@@ -4,13 +4,21 @@ export const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ma
 export async function verifyRuntimeRole() {
   const role = (
     await pool.query(
-      `SELECT r.rolsuper,r.rolbypassrls,EXISTS(SELECT 1 FROM pg_tables t WHERE t.schemaname='public' AND t.tableowner=current_user) owns_tables FROM pg_roles r WHERE r.rolname=current_user`,
+      `SELECT r.rolsuper,r.rolbypassrls,EXISTS(SELECT 1 FROM pg_tables t WHERE t.schemaname='public' AND t.tableowner=current_user) owns_tables,
+       to_regclass('public.auth_sessions') IS NOT NULL AND to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.server_keys') IS NOT NULL schema_ready
+       FROM pg_roles r WHERE r.rolname=current_user`,
     )
   ).rows[0];
   assert(
     role && !role.rolsuper && !role.rolbypassrls && !role.owns_tables,
     'UNSAFE_DATABASE_ROLE',
     'DATABASE_URL debe utilizar el rol de aplicación sin propiedad de tablas ni bypass RLS.',
+    500,
+  );
+  assert(
+    role.schema_ready,
+    'SCHEMA_NOT_READY',
+    'Aplica todas las migraciones antes de iniciar la aplicación.',
     500,
   );
 }

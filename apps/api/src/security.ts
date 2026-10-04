@@ -7,8 +7,6 @@ import {
   randomUUID,
   randomBytes,
 } from 'node:crypto';
-import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import argon2 from 'argon2';
 import { pool } from './db.js';
 import {
@@ -18,42 +16,63 @@ import {
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
-function firebaseCredential() {
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return applicationDefault();
-  try {
-    const account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-    if (!process.env.FIREBASE_PROJECT_ID || account.project_id !== process.env.FIREBASE_PROJECT_ID)
-      throw Error('Proyecto incompatible');
-    return cert(account);
-  } catch {
-    // No incluir contenido de la credencial ni errores de parsing en los logs.
-    throw Error('FIREBASE_SERVICE_ACCOUNT_JSON inválido o de otro proyecto.');
-  }
-}
-initializeApp({
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  ...(process.env.FIREBASE_AUTH_EMULATOR_HOST ? {} : { credential: firebaseCredential() }),
-});
-export const firebaseAuth = getAuth();
 export const digest = (text: string) => createHash('sha256').update(text).digest('hex');
-export async function identity(header?: string): Promise<User> {
-  assert(header?.startsWith('Bearer '), 'UNAUTHENTICATED', 'Inicia sesión.', 401);
-  let token;
-  try {
-    token = await firebaseAuth.verifyIdToken(header!.slice(7), true);
-  } catch {
-    throw Object.assign(Error('Sesión inválida. Inicia sesión.'), {
-      status: 401,
-      code: 'UNAUTHENTICATED',
-    });
-  }
-  const user = (await pool.query('SELECT * FROM users WHERE id=$1', [token.uid])).rows[0];
+function sessionToken(header?: string) {
   assert(
-    user?.active && token.av === user.auth_version,
+    header && /^Bearer [A-Za-z0-9_-]{43}$/.test(header),
     'UNAUTHENTICATED',
-    'Cuenta o sesión desactivada.',
+    'Inicia sesión.',
     401,
   );
+  return header!.slice(7);
+}
+export async function issueSession(user: User) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const current = (await db.query('SELECT * FROM users WHERE id=$1 FOR SHARE', [user.id]))
+      .rows[0];
+    assert(
+      current?.active && current.auth_version === user.auth_version,
+      'UNAUTHENTICATED',
+      'Cuenta o sesión desactivada.',
+      401,
+    );
+    const accessToken = randomBytes(32).toString('base64url');
+    const row = (
+      await db.query(
+        "INSERT INTO auth_sessions(token_hash,user_id,auth_version,expires_at) VALUES($1,$2,$3,now()+interval '8 hours') RETURNING expires_at",
+        [digest(accessToken), current.id, current.auth_version],
+      )
+    ).rows[0];
+    await db.query('DELETE FROM auth_sessions WHERE user_id=$1 AND expires_at<=now()', [
+      current.id,
+    ]);
+    await db.query('COMMIT');
+    return {
+      access_token: accessToken,
+      expires_at: row.expires_at,
+      user: current,
+      server_time: new Date().toISOString(),
+    };
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+export async function revokeSession(header?: string) {
+  await pool.query('DELETE FROM auth_sessions WHERE token_hash=$1', [digest(sessionToken(header))]);
+}
+export async function identity(header?: string): Promise<User> {
+  const user = (
+    await pool.query(
+      'SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active AND s.auth_version=u.auth_version',
+      [digest(sessionToken(header))],
+    )
+  ).rows[0];
+  assert(user, 'UNAUTHENTICATED', 'Sesión vencida o desactivada. Inicia sesión.', 401);
   return user;
 }
 export async function checkPassword(username: string, password: string) {

@@ -1,8 +1,13 @@
 import pg from 'pg';
 import argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
-if (process.env.NODE_ENV === 'production' || !process.env.FIREBASE_AUTH_EMULATOR_HOST)
-  throw Error('Los datos de ejemplo requieren Auth Emulator.');
+if (
+  !['development', 'test'].includes(process.env.NODE_ENV || '') ||
+  !['127.0.0.1', 'localhost', '[::1]'].includes(
+    new URL(process.env.MIGRATION_DATABASE_URL || '').hostname,
+  )
+)
+  throw Error('Los datos de ejemplo solo se permiten en desarrollo con PostgreSQL local.');
 const db = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
 await db.connect();
 try {

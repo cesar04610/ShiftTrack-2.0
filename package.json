@@ -10,7 +10,6 @@
     "dev": "concurrently -k -n api,web 'npm:dev:api' 'npm:dev:web'",
     "dev:api": "tsx watch --env-file=.env apps/api/src/server.ts",
     "dev:web": "vite --config apps/web/vite.config.ts --host 0.0.0.0",
-    "emulators": "firebase emulators:start --only auth --project demo-shifttrack",
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file=.env scripts/seed.ts",
     "typecheck": "tsc --noEmit",
@@ -27,14 +26,11 @@
   "dependencies": {
     "@fontsource/dm-sans": "5.3.0",
     "@fontsource/manrope": "5.3.0",
-    "@google-cloud/storage": "8.2.0",
     "argon2": "0.45.1",
     "dexie": "4.4.6",
     "exceljs": "4.4.0",
     "express": "5.2.1",
     "express-rate-limit": "8.7.0",
-    "firebase": "12.19.0",
-    "firebase-admin": "14.5.0",
     "helmet": "8.3.0",
     "lucide-react": "1.51.0",
     "nodemailer": "10.0.14",
@@ -55,7 +51,6 @@
     "@types/smtp-server": "3.5.13",
     "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
-    "firebase-tools": "15.32.1",
     "prettier": "3.9.9",
     "smtp-server": "3.19.17",
     "tsx": "4.23.15",
@@ -64,11 +59,7 @@
     "vite-plugin-pwa": "2.0.0"
   },
   "overrides": {
-    "@grpc/grpc-js": "1.14.5",
     "exceljs": {
-      "uuid": "11.1.1"
-    },
-    "gaxios": {
       "uuid": "11.1.1"
     }
   }

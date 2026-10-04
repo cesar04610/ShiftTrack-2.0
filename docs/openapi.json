@@ -17,7 +17,7 @@
         "summary": "GET /api/v1/health",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -49,7 +49,7 @@
         "summary": "POST /api/v1/auth/login",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -106,7 +106,7 @@
         "summary": "GET /api/v1/auth/me",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -138,7 +138,7 @@
         "summary": "POST /api/v1/auth/logout",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -170,7 +170,7 @@
         "summary": "POST /api/v1/auth/change-password",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -202,7 +202,7 @@
         "summary": "GET /api/v1/branches",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -232,7 +232,7 @@
         "summary": "POST /api/v1/branches",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -264,7 +264,7 @@
         "summary": "POST /api/v1/devices/register",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -296,7 +296,7 @@
         "summary": "POST /api/v1/devices/user-grants",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -328,7 +328,7 @@
         "summary": "POST /api/v1/devices/challenge",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -360,7 +360,7 @@
         "summary": "POST /api/v1/devices/session",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -392,7 +392,7 @@
         "summary": "POST /api/v1/sync/push",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -446,7 +446,7 @@
         "summary": "GET /api/v1/snapshot",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -478,7 +478,7 @@
         "summary": "POST /api/v1/users",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -510,7 +510,7 @@
         "summary": "POST /api/v1/users/{id}/deactivate",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -551,7 +551,7 @@
         "summary": "POST /api/v1/clock/{action}",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -592,7 +592,7 @@
         "summary": "POST /api/v1/schedules",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -624,7 +624,7 @@
         "summary": "POST /api/v1/tasks",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -656,7 +656,7 @@
         "summary": "POST /api/v1/treasury/opening",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -688,7 +688,7 @@
         "summary": "POST /api/v1/treasury/movements",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -720,7 +720,7 @@
         "summary": "POST /schedules/clone",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -752,7 +752,7 @@
         "summary": "POST /tasks/catalog",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -784,7 +784,7 @@
         "summary": "POST /tasks/assignments",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -816,7 +816,7 @@
         "summary": "POST /tasks/{id}/revert",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -857,7 +857,7 @@
         "summary": "POST /tasks/assignments/{id}/deactivate",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -898,7 +898,7 @@
         "summary": "POST /shortages/{id}/resolve",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -939,7 +939,7 @@
         "summary": "POST /users/{id}/update",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -980,7 +980,7 @@
         "summary": "POST /suppliers/{id}/update",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -1021,7 +1021,7 @@
         "summary": "POST /supplier-corrections/prepare",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1117,7 +1117,7 @@
         "summary": "POST /supplier-corrections",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1149,7 +1149,7 @@
         "summary": "POST /supplier-corrections/cancel",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1181,7 +1181,7 @@
         "summary": "POST /expense-categories",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1213,7 +1213,7 @@
         "summary": "POST /alerts/settings",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1245,7 +1245,7 @@
         "summary": "POST /notifications/{id}/retry",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -1286,7 +1286,7 @@
         "summary": "POST /alerts/{id}/seen",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -1327,7 +1327,7 @@
         "summary": "GET /reports/export",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1359,7 +1359,7 @@
         "summary": "GET /analytics",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [],
@@ -1423,7 +1423,7 @@
         "summary": "GET /media/{id}/content",
         "security": [
           {
-            "firebaseIdToken": []
+            "sessionToken": []
           }
         ],
         "parameters": [
@@ -1461,10 +1461,10 @@
   },
   "components": {
     "securitySchemes": {
-      "firebaseIdToken": {
+      "sessionToken": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "Firebase ID token (no custom token)"
+        "bearerFormat": "Token opaco de sesión (8 horas; revocable)"
       },
       "deviceTransport": {
         "type": "apiKey",

@@ -9,7 +9,8 @@ import { pool, context, transaction, admin, owner, verifyRuntimeRole } from './d
 import {
   identity,
   checkPassword,
-  firebaseAuth,
+  issueSession,
+  revokeSession,
   issueGrant,
   deviceIdentity,
   verifySignature,
@@ -19,21 +20,25 @@ import { processCommand, commandSchema } from './commands.js';
 import { assert, AppError, cents, localTime, type User } from '../../../packages/domain/index.js';
 import { modules } from './modules.js';
 import { media } from './media.js';
+import { prepareMediaStorage } from './storage.js';
 export const app = express();
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        connectSrc: [
-          "'self'",
-          'https://identitytoolkit.googleapis.com',
-          'https://securetoken.googleapis.com',
-        ],
-        frameSrc: ["'self'", 'https://shifttrackcloud.firebaseapp.com'],
+        connectSrc: ["'self'"],
+        frameSrc: ["'none'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
       },
     },
   }),
 );
+// El último proxy de Railway define la IP real; no confiar en cabeceras de cualquier origen.
+if (process.env.RAILWAY_ENVIRONMENT_ID) app.set('trust proxy', 1);
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 app.use('/api/v1/media', media);
 app.use(express.json({ limit: '128kb' }));
 app.get('/api/v1/health', async (_req, res) => {
@@ -48,27 +53,43 @@ app.post(
       .object({ username: z.string().min(1).max(100), password: z.string().min(1).max(256) })
       .parse(req.body);
     const user = await checkPassword(body.username, body.password);
-    const custom_token = await firebaseAuth.createCustomToken(user.id, { av: user.auth_version });
-    res.json({ custom_token, user, server_time: new Date().toISOString() });
+    res.json(await issueSession(user));
   },
 );
 app.get('/api/v1/auth/me', async (req, res) => res.json(await identity(req.headers.authorization)));
 app.post('/api/v1/auth/logout', async (req, res) => {
-  await identity(req.headers.authorization);
+  await revokeSession(req.headers.authorization);
   res.json({ ok: true });
 });
 app.post('/api/v1/auth/change-password', async (req, res) => {
   const user = await identity(req.headers.authorization),
     body = z
-      .object({ old_password: z.string(), password: z.string().min(12).max(256) })
+      .object({ old_password: z.string().min(1).max(256), password: z.string().min(12).max(256) })
       .parse(req.body);
-  await checkPassword(user.username, body.old_password);
   const hash = await argon2.hash(body.password);
   await transaction(user.branch_id || '', async (db) => {
+    const current = (
+      await db.query(
+        'SELECT u.active,u.auth_version,p.hash FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE u.id=$1 FOR UPDATE OF u,p',
+        [user.id],
+      )
+    ).rows[0];
+    assert(
+      current?.active && current.auth_version === user.auth_version,
+      'UNAUTHENTICATED',
+      'Sesión desactivada.',
+      401,
+    );
+    assert(
+      await argon2.verify(current.hash, body.old_password),
+      'INVALID_CREDENTIALS',
+      'Usuario o contraseña incorrectos.',
+      401,
+    );
     await db.query('UPDATE password_credentials SET hash=$2 WHERE user_id=$1', [user.id, hash]);
     await db.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1', [user.id]);
+    await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [user.id]);
   });
-  await firebaseAuth.revokeRefreshTokens(user.id);
   res.json({ ok: true });
 });
 app.get('/api/v1/branches', async (req, res) => {
@@ -344,9 +365,9 @@ app.post('/api/v1/users/:id/deactivate', async (req, res) => {
         'Debe quedar un dueño activo.',
       );
     await db.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [id]);
+    await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [id]);
     await audit(db, branch.id, u, 'user.deactivate', { id });
   });
-  await firebaseAuth.revokeRefreshTokens(id);
   res.json({ ok: true });
 });
 app.post('/api/v1/clock/:action', async (req, res) => {
@@ -567,9 +588,8 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   });
   if (status === 500) console.error({ code: err.code, message: err.message });
 });
-if (process.env.NODE_ENV === 'production' && process.env.FIREBASE_AUTH_EMULATOR_HOST)
-  throw Error('Auth Emulator no está permitido en producción.');
 if (process.env.NODE_ENV !== 'test') {
+  await prepareMediaStorage();
   await verifyRuntimeRole();
   app.listen(Number(process.env.PORT || 8080), '0.0.0.0', () =>
     console.log('API ShiftTrack disponible.'),

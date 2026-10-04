@@ -1,6 +1,5 @@
 import express from 'express';
 import sharp from 'sharp';
-import { Storage } from '@google-cloud/storage';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -8,12 +7,9 @@ import { deviceIdentity, validateCommand, identity } from './security.js';
 import { context, transaction } from './db.js';
 import { commandSchema } from './commands.js';
 import { assert } from '../../../packages/domain/index.js';
+import { mediaDir as localDir } from './storage.js';
 export const media = express.Router();
 media.use(express.json({ limit: '8mb' }));
-const localDir = process.env.MEDIA_LOCAL_DIR || '/workspace/.shifttrack-media';
-const cloud = process.env.STORAGE_BUCKET ? new Storage().bucket(process.env.STORAGE_BUCKET) : null;
-if (process.env.NODE_ENV === 'production' && !cloud)
-  throw Error('STORAGE_BUCKET es obligatorio en producción.');
 media.post('/upload', async (req, res) => {
   const device = await deviceIdentity(req.headers.authorization),
     body = z.object({ command: commandSchema, base64: z.string().max(7_000_000) }).parse(req.body);
@@ -79,16 +75,9 @@ media.post('/upload', async (req, res) => {
       );
       return;
     }
-    if (cloud)
-      await cloud.file(path).save(file, {
-        resumable: false,
-        validation: 'crc32c',
-        contentType,
-        metadata: { cacheControl: 'private, no-store' },
-      });
-    else {
-      await mkdir(`${localDir}/${c.branch_id}`, { recursive: true });
-      await writeFile(`${localDir}/${c.branch_id}/${id}`, file, { flag: 'wx' }).catch(
+    {
+      await mkdir(`${localDir}/${c.branch_id}`, { recursive: true, mode: 0o700 });
+      await writeFile(`${localDir}/${c.branch_id}/${id}`, file, { flag: 'wx', mode: 0o600 }).catch(
         async (err) => {
           if (err.code !== 'EEXIST') throw err;
           const prior = await readFile(`${localDir}/${c.branch_id}/${id}`);
@@ -131,9 +120,7 @@ media.get('/:id/content', async (req, res) => {
     );
     return row;
   });
-  const file = cloud
-    ? (await cloud.file(object.object_path).download())[0]
-    : await readFile(`${localDir}/${b.id}/${object.id}`);
+  const file = await readFile(`${localDir}/${b.id}/${object.id}`);
   res.setHeader('Content-Type', object.content_type);
   res.setHeader('Cache-Control', 'private, no-store');
   res.send(file);
