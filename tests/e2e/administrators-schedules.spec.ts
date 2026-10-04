@@ -18,7 +18,7 @@ async function select(page: Page, number: string) {
 test('Mostrador: administrador organiza turnos y trabaja en caja; súper administrador conserva gestión y operación', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1600, height: 1200 });
+  await page.setViewportSize({ width: 1366, height: 768 });
   const auth = await page.request.post(`${api}/api/v1/auth/login`, {
     data: { username: 'cesar', password },
   });
@@ -84,6 +84,8 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
     exact: true,
   });
   await expect(chip).toContainText('07:30 – 15:00');
+  const personColor = await chip.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await expect(chip).toHaveAttribute('title', new RegExp(employeeName));
   await chip.click();
   let dialog = page.getByRole('dialog', { name: `Turno de ${employeeName}` });
   await dialog.getByRole('button', { name: /Medio turno/ }).click();
@@ -94,6 +96,7 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
   await expect(monday.locator('.assigned')).toHaveCount(0);
   const moved = tuesday.locator('.assigned');
   await expect(moved).toContainText('18:30 – 21:30');
+  expect(await moved.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(personColor);
   await moved.click();
   dialog = page.getByRole('dialog', { name: `Turno de ${employeeName}` });
   await dialog.getByRole('button', { name: /Turno completo/ }).click();
@@ -102,14 +105,94 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
   await board.getByRole('button', { name: 'Asignar a miércoles Mañana', exact: true }).click();
   await expect(
     board.locator('.board-slot[data-date="2026-11-04"][data-shift="morning"] .assigned'),
-  ).toContainText('Gerente pizarra');
+  ).toContainText('Gerente');
   await board
     .getByRole('button', { name: `Seleccionar a ${owner.user.name}`, exact: true })
     .click();
   await board.getByRole('button', { name: 'Asignar a viernes Mañana', exact: true }).click();
   await expect(
     board.locator('.board-slot[data-date="2026-11-06"][data-shift="morning"] .assigned'),
-  ).toContainText(owner.user.name);
+  ).toContainText(owner.user.name.split(' ')[0]);
+  // Exercise a full weekly board, with enough staff to expose scroll and sizing problems.
+  for (const [index, name] of [
+    'Jenny López',
+    'Lupe Ramírez',
+    'Orlando Pérez',
+    'Ximena García',
+    'Thanya Ruiz',
+    'Guillermo Soto',
+  ].entries()) {
+    const person = await page.request.post(`${api}/api/v1/users`, {
+      headers,
+      data: {
+        branch_id: branch.id,
+        username: `compact-${index}-${suffix}`,
+        name,
+        role: 'employee',
+        password,
+      },
+    });
+    expect(person.ok()).toBeTruthy();
+    const id = (await person.json()).id;
+    for (let day = 2; day <= 8; day++) {
+      const scheduled = await page.request.post(`${api}/api/v1/schedules/board`, {
+        headers,
+        data: {
+          branch_id: branch.id,
+          user_id: id,
+          business_date: `2026-11-${String(day).padStart(2, '0')}`,
+          shift: index < 4 ? 'morning' : 'afternoon',
+          half: index === 5,
+        },
+      });
+      expect(scheduled.ok()).toBeTruthy();
+    }
+  }
+  await page.getByRole('button', { name: 'Sincronizar y actualizar', exact: true }).click();
+  await expect(
+    board.getByRole('button', { name: 'Seleccionar a Jenny López', exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  let bounds = await board.boundingBox();
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(768);
+  expect(
+    await board.locator('.board-days').evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBeTruthy();
+  expect(
+    await board
+      .locator('.board-assigned')
+      .evaluateAll((elements) => elements.every((el) => el.scrollHeight <= el.clientHeight + 1)),
+  ).toBeTruthy();
+  expect(
+    await board
+      .locator('.personnel-chips')
+      .evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+  ).toBeTruthy();
+  await board.getByRole('button', { name: 'Ampliar pizarra', exact: true }).click();
+  expect((await board.boundingBox())!.height).toBeGreaterThan(bounds!.height);
+  await page.keyboard.press('Escape');
+  await expect(board.getByRole('button', { name: 'Ampliar pizarra', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  bounds = await board.boundingBox();
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(844);
+  expect(
+    await board.locator('.board-days').evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBeTruthy();
+  expect(
+    await board
+      .locator('.personnel-chips')
+      .evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+  ).toBeTruthy();
+  await board.getByRole('button', { name: 'Ampliar pizarra', exact: true }).click();
+  expect(
+    await board
+      .locator('.board-assigned')
+      .evaluateAll((elements) => elements.every((el) => el.scrollHeight <= el.clientHeight + 1)),
+  ).toBeTruthy();
+  await board.screenshot({ path: '/tmp/mostrador-pizarra-movil.png' });
+  await board.getByRole('button', { name: 'Reducir pizarra', exact: true }).click();
+  await page.setViewportSize({ width: 1366, height: 768 });
   await board.screenshot({ path: '/tmp/mostrador-pizarra.png' });
   await page.getByRole('button', { name: 'Seleccionar caja', exact: true }).click();
   await select(page, '3');
@@ -143,7 +226,7 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
   const snapshot = await shot.json();
   expect(snapshot.cuts).toHaveLength(1);
   expect(snapshot.tickets).toHaveLength(1);
-  expect(snapshot.schedules).toHaveLength(3);
+  expect(snapshot.schedules).toHaveLength(45);
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await login(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);

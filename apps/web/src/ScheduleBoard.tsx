@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, GripVertical, X } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { CalendarDays, ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
 type Person = { id: string; name: string; role: string; active: boolean };
 type Schedule = {
   id: string;
@@ -47,6 +47,9 @@ export default function ScheduleBoard({
     half: boolean;
   }) => Promise<unknown>;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const board = useRef<HTMLElement>(null);
+  const expandButton = useRef<HTMLButtonElement>(null);
   const [week, setWeek] = useState(() => monday(date));
   const [selection, setSelection] = useState<Selection | null>(null);
   const [editing, setEditing] = useState<Schedule | null>(null);
@@ -56,6 +59,62 @@ export default function ScheduleBoard({
   const dialog = useRef<HTMLDialogElement>(null);
   const dragging = useRef<Selection | null>(null);
   const people = users.filter((u) => u.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  useEffect(() => {
+    if (!expanded) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    expandButton.current?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (dialog.current?.open) return;
+      if (event.key === 'Escape') {
+        setExpanded(false);
+        expandButton.current?.focus();
+      }
+      if (event.key === 'Tab') {
+        const controls = Array.from(
+          board.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input:not(:disabled)',
+          ) || [],
+        ).filter((el) => el.getClientRects().length);
+        const first = controls[0],
+          last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', keyboard);
+    return () => {
+      document.body.style.overflow = previous;
+      document.removeEventListener('keydown', keyboard);
+    };
+  }, [expanded]);
+  function shortName(person?: Person) {
+    if (!person) return 'Personal';
+    const parts = person.name.trim().split(/\s+/);
+    const repeated = users.some(
+      (u) =>
+        u.id !== person.id &&
+        u.name.trim().split(/\s+/)[0].toLocaleLowerCase('es') === parts[0].toLocaleLowerCase('es'),
+    );
+    return parts[0] + (repeated && parts[1] ? ` ${parts[1][0]}.` : '');
+  }
+  function chipStyle(id: string): CSSProperties {
+    // The ID keeps each person's color unchanged across days, shifts and reloads.
+    const hues = [48, 330, 210, 145, 275, 28, 175, 5, 85, 245, 190, 305];
+    let hash = 0;
+    for (const character of id) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+    const hue = hues[hash % hues.length];
+    return {
+      '--chip-bg': `hsl(${hue} 88% 91%)`,
+      '--chip-border': `hsl(${hue} 65% 65%)`,
+      '--chip-text': `hsl(${hue} 60% 24%)`,
+    } as CSSProperties;
+  }
   async function perform(action: () => Promise<unknown>) {
     if (!online || busy) return;
     setBusy(true);
@@ -113,15 +172,38 @@ export default function ScheduleBoard({
     setEditing(s);
     dialog.current?.showModal();
   }
+  const rowWeight = (shift: Shift) =>
+    Math.max(
+      1,
+      ...Array.from(
+        { length: 7 },
+        (_, i) =>
+          schedules.filter(
+            (s) => s.business_date.slice(0, 10) === addDays(week, i) && shiftOf(s) === shift,
+          ).length,
+      ),
+    ) + 0.8;
   const editingPerson = people.find((u) => u.id === editing?.user_id);
   return (
-    <section className="card schedule-board" aria-label="Pizarra semanal de horarios">
+    <section
+      ref={board}
+      className={`card schedule-board ${expanded ? 'is-expanded' : ''}`}
+      aria-label="Pizarra semanal de horarios"
+    >
       <div className="board-heading">
         <div>
-          <span className="eyebrow">ORGANIZA TU EQUIPO</span>
           <h2>Pizarra semanal</h2>
         </div>
         <div className="board-week">
+          <button
+            ref={expandButton}
+            className="secondary board-expand"
+            aria-pressed={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {expanded ? 'Reducir pizarra' : 'Ampliar pizarra'}
+          </button>
           <button
             className="icon-button"
             aria-label="Semana anterior"
@@ -131,7 +213,7 @@ export default function ScheduleBoard({
             <ChevronLeft size={20} />
           </button>
           <label>
-            Semana del
+            <span className="board-date-label">Semana del</span>
             <input
               type="date"
               value={week}
@@ -154,9 +236,9 @@ export default function ScheduleBoard({
           </button>
         </div>
       </div>
-      <p>
-        Arrastra una ficha a un turno. También puedes seleccionar a una persona y pulsar «Asignar
-        aquí». Selecciona una ficha asignada para cambiarla a medio turno.
+      <p className="board-hint">
+        Arrastra una ficha o selecciona una persona y pulsa +. Toca un turno para cambiarlo a medio
+        turno.
       </p>
       {!online && (
         <div className="notice">Conecta a Internet para guardar cambios en los horarios.</div>
@@ -180,7 +262,12 @@ export default function ScheduleBoard({
         </div>
       )}
       <div className="board-scroll">
-        <div className="board-days">
+        <div
+          className="board-days"
+          style={{
+            gridTemplateRows: `36px minmax(0,${rowWeight('morning')}fr) minmax(0,${rowWeight('afternoon')}fr)`,
+          }}
+        >
           {Array.from({ length: 7 }, (_, i) => {
             const day = addDays(week, i);
             const title = new Intl.DateTimeFormat('es-MX', {
@@ -194,7 +281,7 @@ export default function ScheduleBoard({
                 aria-label={`${title} ${day}`}
               >
                 <header>
-                  <strong>{title}</strong>
+                  <strong title={title}>{title.slice(0, 3)}</strong>
                   <span>
                     {new Intl.DateTimeFormat('es-MX', {
                       day: 'numeric',
@@ -223,26 +310,28 @@ export default function ScheduleBoard({
                       onDrop={(e) => drop(e, day, shift)}
                     >
                       <h3>{label}</h3>
-                      <small>{shift === 'morning' ? '07:30 – 15:00' : '15:00 – 21:30'}</small>
                       <div className="board-assigned">
                         {items.map((s) => (
                           <button
                             key={s.id}
                             className={`person-chip assigned ${halfOf(s) ? 'half-shift' : ''}`}
+                            style={chipStyle(s.user_id)}
+                            title={`${users.find((u) => u.id === s.user_id)?.name || 'Personal no activo'} · ${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}${halfOf(s) ? ' · Medio turno' : ''}`}
                             disabled={busy || !online}
                             draggable={!busy && online}
                             onDragStart={(e) => drag(e, { userId: s.user_id, schedule: s })}
                             onClick={() => edit(s)}
                             aria-label={`Editar turno de ${users.find((u) => u.id === s.user_id)?.name || 'Personal'} ${title} ${label}`}
                           >
-                            <GripVertical size={14} />
-                            <strong>
-                              {users.find((u) => u.id === s.user_id)?.name || 'Personal no activo'}
-                            </strong>
+                            <strong>{shortName(users.find((u) => u.id === s.user_id))}</strong>
                             <span>
                               {s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}
                             </span>
-                            {halfOf(s) && <em>Medio turno</em>}
+                            {halfOf(s) && (
+                              <em className="half-marker" title="Medio turno">
+                                ½
+                              </em>
+                            )}
                           </button>
                         ))}
                       </div>
@@ -252,7 +341,7 @@ export default function ScheduleBoard({
                         aria-label={`Asignar a ${title} ${label}`}
                         onClick={() => assign(day, shift)}
                       >
-                        Asignar aquí
+                        +
                       </button>
                     </div>
                   );
@@ -272,6 +361,8 @@ export default function ScheduleBoard({
             <button
               key={u.id}
               className={`person-chip ${selection?.userId === u.id && !selection.schedule ? 'chosen' : ''}`}
+              style={chipStyle(u.id)}
+              title={`${u.name} · ${roleNames[u.role]}`}
               disabled={busy || !online}
               draggable={online && !busy}
               aria-label={`Seleccionar a ${u.name}`}
@@ -281,9 +372,7 @@ export default function ScheduleBoard({
                 setError('');
               }}
             >
-              <GripVertical size={14} />
-              <strong>{u.name}</strong>
-              <span>{roleNames[u.role]}</span>
+              <strong>{shortName(u)}</strong>
             </button>
           ))}
           {!people.length && <p>No hay personal activo para asignar.</p>}
