@@ -7,7 +7,7 @@ import {
   randomUUID,
   randomBytes,
 } from 'node:crypto';
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
+import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import argon2 from 'argon2';
 import { pool } from './db.js';
@@ -18,9 +18,21 @@ import {
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
+function firebaseCredential() {
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return applicationDefault();
+  try {
+    const account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    if (!process.env.FIREBASE_PROJECT_ID || account.project_id !== process.env.FIREBASE_PROJECT_ID)
+      throw Error('Proyecto incompatible');
+    return cert(account);
+  } catch {
+    // No incluir contenido de la credencial ni errores de parsing en los logs.
+    throw Error('FIREBASE_SERVICE_ACCOUNT_JSON inválido o de otro proyecto.');
+  }
+}
 initializeApp({
   projectId: process.env.FIREBASE_PROJECT_ID,
-  ...(process.env.FIREBASE_AUTH_EMULATOR_HOST ? {} : { credential: applicationDefault() }),
+  ...(process.env.FIREBASE_AUTH_EMULATOR_HOST ? {} : { credential: firebaseCredential() }),
 });
 export const firebaseAuth = getAuth();
 export const digest = (text: string) => createHash('sha256').update(text).digest('hex');
