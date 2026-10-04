@@ -734,6 +734,52 @@ tbody tr:last-child td {
   justify-content: flex-end;
   margin-bottom: 16px;
 }
+.supplier-import-dialog {
+  width: min(1000px, calc(100vw - 32px));
+  max-height: 90vh;
+  overflow: auto;
+  border: 1px solid var(--border, #e1e8ef);
+  border-radius: 16px;
+  padding: 24px;
+  color: #203247;
+  background: white;
+}
+.supplier-import-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+.supplier-import-dialog p {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.supplier-import-dialog .import-file {
+  margin: 20px 0;
+}
+.import-preview {
+  max-height: 340px;
+  overflow: auto;
+  margin-top: 16px;
+}
+.import-preview td {
+  white-space: normal;
+  min-width: 110px;
+}
+.import-preview th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+}
+.import-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.import-success {
+  padding: 14px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #047857;
+}
 .modal-backdrop {
   position: fixed;
   inset: 0;

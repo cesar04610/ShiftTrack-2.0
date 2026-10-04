@@ -29,6 +29,7 @@ import {
   type Command,
 } from '../../../packages/domain/index.js';
 import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
+import SupplierImport from './SupplierImport';
 import {
   login,
   logout,
@@ -237,14 +238,26 @@ export default function App() {
     [prepared, setPrepared] = useState(false),
     [deviceId, setDeviceId] = useState(''),
     [now, setNow] = useState(Date.now());
+  const currentScope = useRef({ user: user?.id, branch: branchId }),
+    refreshGeneration = useRef(0);
+  currentScope.current = { user: user?.id, branch: branchId };
   const notify = (e: unknown) => setMessage(e instanceof Error ? e.message : String(e));
   async function refresh(remote = true) {
     if (!user || !branchId) return;
+    const generation = ++refreshGeneration.current,
+      userId = user.id;
     const loaded = await snapshot(user, branchId, remote);
     if (user.role !== 'employee' && remote)
       loaded.analytics = await request(`/analytics?branch_id=${branchId}`);
+    const loadedPending = await listPending();
+    if (
+      currentScope.current.user !== userId ||
+      currentScope.current.branch !== branchId ||
+      refreshGeneration.current !== generation
+    )
+      return;
     setData(loaded);
-    setPending(await listPending());
+    setPending(loadedPending);
   }
   async function synchronize() {
     setBusy(true);
@@ -690,7 +703,7 @@ export default function App() {
                 }}
               />
             </Card>
-          ) : !data && page !== 'Configuración' ? (
+          ) : (!data || data.branch.id !== branchId) && page !== 'Configuración' ? (
             <Card title="Preparando datos">
               <p>Conecta para descargar la información de tu sucursal.</p>
             </Card>
@@ -1098,6 +1111,20 @@ export default function App() {
               )}
               {page === 'Caja proveedores' && (
                 <>
+                  {isAdmin && (
+                    <div className="supplier-actions">
+                      <SupplierImport
+                        key={branchId}
+                        branchId={branchId}
+                        branchName={b.name}
+                        online={online}
+                        onImported={async () => {
+                          setMessage('Registro guardado correctamente.');
+                          await refresh();
+                        }}
+                      />
+                    </div>
+                  )}
                   {!isAdmin && (
                     <div className="supplier-actions">
                       <button className="secondary" onClick={() => setAddingSupplier(true)}>
