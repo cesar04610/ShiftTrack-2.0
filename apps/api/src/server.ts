@@ -2,6 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { randomUUID, randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import { pool, context, transaction, admin, owner, verifyRuntimeRole } from './db.js';
@@ -19,7 +20,20 @@ import { assert, AppError, cents, localTime, type User } from '../../../packages
 import { modules } from './modules.js';
 import { media } from './media.js';
 export const app = express();
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        connectSrc: [
+          "'self'",
+          'https://identitytoolkit.googleapis.com',
+          'https://securetoken.googleapis.com',
+        ],
+        frameSrc: ["'self'", 'https://shifttrackcloud.firebaseapp.com'],
+      },
+    },
+  }),
+);
 app.use('/api/v1/media', media);
 app.use(express.json({ limit: '128kb' }));
 app.get('/api/v1/health', async (_req, res) => {
@@ -518,6 +532,21 @@ async function employee(db: any, branch: string, id: string) {
   );
 }
 app.use('/api/v1', modules);
+if (process.env.WEB_DIST_DIR) {
+  const webDir = resolve(process.env.WEB_DIST_DIR);
+  app.use('/api', (_req, res) =>
+    res.status(404).json({ code: 'NOT_FOUND', message: 'Ruta API no encontrada.' }),
+  );
+  app.use(
+    express.static(webDir, {
+      setHeaders(res, path) {
+        if (path.endsWith('/sw.js') || path.endsWith('/index.html'))
+          res.setHeader('Cache-Control', 'no-cache');
+      },
+    }),
+  );
+  app.get('/{*path}', (_req, res) => res.sendFile(resolve(webDir, 'index.html')));
+}
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = err instanceof z.ZodError ? 400 : err.code === '23505' ? 409 : err.status || 500;
   res.status(status).json({
