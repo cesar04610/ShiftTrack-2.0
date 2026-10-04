@@ -9,6 +9,7 @@ COPY apps/api apps/api
 COPY apps/worker apps/worker
 COPY apps/web apps/web
 COPY packages packages
+COPY scripts/migrate.ts scripts/provision.ts scripts/
 COPY tsconfig.json ./
 RUN NODE_ENV=production npx vite build --config apps/web/vite.config.ts
 RUN npx tsc -p apps/api/tsconfig.json
@@ -20,6 +21,8 @@ COPY --chown=node:node --from=build /app/node_modules node_modules
 COPY --chown=node:node --from=build /app/dist dist
 COPY --chown=node:node --from=build /app/apps/web/dist apps/web/dist
 COPY --chown=node:node package.json ./
+COPY --chown=node:node packages/database/migrations packages/database/migrations
+COPY --chown=node:node infra/runtime-role.sql infra/runtime-role.sql
 ENV WEB_DIST_DIR=/app/apps/web/dist
 EXPOSE 8080
 ENTRYPOINT ["node", "dist/apps/api/src/entrypoint.js"]

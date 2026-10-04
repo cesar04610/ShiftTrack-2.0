@@ -8,5 +8,11 @@
     "allowImportingTsExtensions": false,
     "noEmit": false
   },
-  "include": ["src/**/*.ts", "../worker/**/*.ts", "../../packages/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "../worker/**/*.ts",
+    "../../packages/**/*.ts",
+    "../../scripts/migrate.ts",
+    "../../scripts/provision.ts"
+  ]
 }
