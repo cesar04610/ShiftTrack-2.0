@@ -1,9 +1,11 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
-RUN --mount=type=secret,id=npm_ca \
-    if [ -s /run/secrets/npm_ca ]; then \
-      NODE_EXTRA_CA_CERTS=/run/secrets/npm_ca npm ci --fetch-retries=1 --fetch-timeout=30000; \
+ARG NPM_CA_BASE64
+RUN if [ -n "$NPM_CA_BASE64" ]; then \
+      printf '%s' "$NPM_CA_BASE64" | base64 -d > /tmp/npm-ca.pem && \
+      NODE_EXTRA_CA_CERTS=/tmp/npm-ca.pem npm ci --fetch-retries=1 --fetch-timeout=30000 && \
+      rm /tmp/npm-ca.pem; \
     else npm ci --fetch-retries=1 --fetch-timeout=30000; fi
 COPY apps/api apps/api
 COPY apps/worker apps/worker
