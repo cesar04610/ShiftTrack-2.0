@@ -55,7 +55,12 @@ export function localTime(instant: string | Date, zone: string) {
 }
 export function shiftLabel(instant: string | Date, zone: string) {
   const { minutes } = localTime(instant, zone);
-  return minutes >= 450 && minutes < 1020 ? 'Mañana' : 'Tarde';
+  return minutes >= 300 && minutes < 900 ? 'Mañana' : 'Tarde';
+}
+export function shiftBusinessDate(instant: string | Date, zone: string) {
+  const { date, minutes } = localTime(instant, zone);
+  if (minutes >= 300) return date;
+  return new Date(Date.parse(`${date}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
 }
 export function cutAmounts(sales: string, card: string, declared: string) {
   const s = cents(sales),

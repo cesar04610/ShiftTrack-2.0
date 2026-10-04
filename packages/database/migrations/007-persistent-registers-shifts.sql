@@ -1,0 +1,10 @@
+ALTER TABLE auth_sessions ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE grants ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE register_leases ALTER COLUMN expires_at DROP NOT NULL;
+UPDATE auth_sessions SET expires_at=NULL WHERE expires_at>now();
+UPDATE register_leases SET expires_at=NULL;
+ALTER TABLE register_leases ADD COLUMN device_id uuid REFERENCES devices(id);
+ALTER TABLE cuts ADD COLUMN clock_record_id uuid;
+ALTER TABLE cuts ADD CONSTRAINT cuts_clock_record_fk FOREIGN KEY(branch_id,clock_record_id) REFERENCES clock_records(branch_id,id);
+ALTER TABLE cuts DROP CONSTRAINT cuts_branch_id_user_id_business_date_label_key;
+CREATE UNIQUE INDEX one_cut_per_clock_record ON cuts(branch_id,clock_record_id) WHERE clock_record_id IS NOT NULL;

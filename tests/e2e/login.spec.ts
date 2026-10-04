@@ -11,7 +11,7 @@ async function signIn(page: Page, username: string) {
   await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toBeVisible();
 }
 
-test('empleado creado por administrador entra online desde un equipo de otra sucursal', async ({
+test('empleado creado por administrador prepara un equipo nuevo y vuelve a entrar offline', async ({
   page,
   context,
 }) => {
@@ -59,38 +59,16 @@ test('empleado creado por administrador entra online desde un equipo de otra suc
   });
   expect(employeeCreated.ok()).toBeTruthy();
   await page.goto('/');
-  await signIn(page, 'cesar');
-  await page.getByLabel('Sucursal').selectOption(branches[0].id);
-  await page.getByRole('button', { name: 'Configuración', exact: true }).click();
-  await page.getByLabel('Nombre del equipo', { exact: true }).fill('Equipo otra sucursal');
-  await page.getByRole('button', { name: 'Registrar este equipo', exact: true }).click();
-  await expect(
-    page.getByText('La sucursal ya tiene equipo designado.', { exact: false }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Cerrar sesión' }).click();
-
   await signIn(page, employeeUsername);
   await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
   await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
-  await expect(
-    page.getByText('Este equipo aún no tiene tu acceso offline preparado.', { exact: false }),
-  ).toBeVisible();
-  await expect(page.getByText('Acceso preparado hasta', { exact: false })).toHaveCount(0);
-  // An online-only login must release the operational tab lock.
-  const otherPage = await context.newPage();
-  await otherPage.goto('/');
-  await signIn(otherPage, employeeUsername);
-  await otherPage.getByLabel('Selecciona tu caja', { exact: true }).selectOption('2');
-  await otherPage.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
-  await expect(
-    otherPage.getByRole('heading', { name: 'Horario', exact: true, level: 1 }),
-  ).toBeVisible();
-  await otherPage.close();
+  await expect(page.getByText('Acceso offline preparado', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Proveedores', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await page.route('**/api/v1/auth/login', (route) => route.abort());
-  await page.getByLabel('Usuario', { exact: true }).fill(employeeUsername);
-  await page.getByLabel('Contraseña', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('necesita iniciar sesión con conexión');
+  await signIn(page, employeeUsername);
+  await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
 });

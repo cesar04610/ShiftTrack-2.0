@@ -5,7 +5,7 @@ export async function verifyRuntimeRole() {
   const role = (
     await pool.query(
       `SELECT r.rolsuper,r.rolbypassrls,EXISTS(SELECT 1 FROM pg_tables t WHERE t.schemaname='public' AND t.tableowner=current_user) owns_tables,
-       to_regclass('public.register_leases') IS NOT NULL AND to_regclass('public.auth_sessions') IS NOT NULL AND to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.server_keys') IS NOT NULL schema_ready
+       EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cuts' AND column_name='clock_record_id') AND to_regclass('public.register_leases') IS NOT NULL AND to_regclass('public.auth_sessions') IS NOT NULL AND to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.server_keys') IS NOT NULL schema_ready
        FROM pg_roles r WHERE r.rolname=current_user`,
     )
   ).rows[0];

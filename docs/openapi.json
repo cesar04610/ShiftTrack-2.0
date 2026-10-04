@@ -79,10 +79,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "username",
-                  "password"
-                ],
+                "required": ["username", "password"],
                 "properties": {
                   "username": {
                     "type": "string",
@@ -363,6 +360,79 @@
         }
       }
     },
+    "/registers": {
+      "get": {
+        "operationId": "get__api_v1_registers",
+        "summary": "GET /api/v1/registers",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/registers/{number}/release": {
+      "post": {
+        "operationId": "post__api_v1_registers__number__release",
+        "summary": "POST /api/v1/registers/{number}/release",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
     "/devices/register": {
       "post": {
         "operationId": "post__api_v1_devices_register",
@@ -527,9 +597,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "commands"
-                ],
+                "required": ["commands"],
                 "properties": {
                   "commands": {
                     "type": "array",
@@ -1569,7 +1637,7 @@
       "sessionToken": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "Token opaco de sesión (8 horas; revocable)"
+        "bearerFormat": "Token opaco de sesión (sin vencimiento automático; revocable)"
       },
       "deviceTransport": {
         "type": "apiKey",

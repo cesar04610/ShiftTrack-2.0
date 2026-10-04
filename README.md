@@ -37,9 +37,9 @@ Vite en desarrollo no comprueba la apertura offline; las pruebas de navegador us
 
 Exclusivamente con la base local de desarrollo: `cesar` (dueño), `admin` (administrador), `ana` y `luis` (empleados). Contraseña pública de estos datos de prueba: `ShiftTrack-demo-2026!`. El seed no se ejecuta en producción ni sobrescribe cuentas existentes. No hay contraseña predeterminada para producción.
 
-1. Ingresa como `cesar`, selecciona Sucursal Centro y registra este navegador/equipo en Configuración. La caja de proveedores no depende de ser Caja 3.
+1. Ingresa como `cesar`, selecciona Sucursal Centro y configura sus cajas. La caja de proveedores no depende de ser Caja 3.
 2. En Caja general registra efectivo total, la parte incluida en proveedores y saldo bancario. La parte de proveedores no se suma otra vez al total.
-3. Cada empleado inicia sesión individualmente con conexión en ese equipo. Su concesión dura ocho horas desde esa validación, independientemente del acceso de otros empleados.
+3. Cada empleado inicia sesión con conexión y selecciona su caja. El equipo y su acceso offline se preparan automáticamente, sin vencimiento por horas.
 4. El empleado abre su turno de proveedores. Registra pagos/adiciones, cuenta y cierra. Sale de su sesión; el entrante ingresa con sus credenciales y abre un turno vinculado al último cierre.
 5. Sin Internet se muestra guardado local pendiente. Al reconectar se envían comandos firmados con identificadores estables, incluyendo los de empleados anteriores. No hace falta renovar su concesión para enviar capturas válidas anteriores.
 
@@ -47,9 +47,9 @@ Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el
 
 ## Sucursales y cajas
 
-El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se renueva cada 30 segundos; cerrar sesión la libera y una desconexión la deja caducar en dos minutos. La caja de proveedores también exige el equipo designado. Los equipos de apoyo no obtienen sus permisos por seleccionar su número.
+El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se comprueba cada 30 segundos, sin vencimiento automático. Cerrar sesión la libera. Si alguien dejó una sesión abierta, el administrador puede liberar la caja desde Configuración confirmando su contraseña. El menú de proveedores depende de seleccionar la caja de proveedores configurada.
 
-El acceso offline se prepara para la caja seleccionada y dura ocho horas. Sin conexión se permite la última caja preparada y se advierte que su ocupación no puede comprobarse. Tras un login offline, al reconectar se pueden enviar los pendientes; antes de nuevas capturas online se requiere volver a iniciar sesión para reservar la caja. Los cortes quedan vinculados a la caja firmada en la concesión.
+El acceso offline se prepara automáticamente para la caja seleccionada y no vence por tiempo. Sin conexión se permite la última caja preparada y se advierte que su ocupación no puede comprobarse. Tras un login offline, al reconectar se pueden enviar los pendientes; antes de nuevas capturas online se requiere volver a iniciar sesión para reservar la caja. Los cortes quedan vinculados a la caja firmada en la concesión.
 
 Eliminar una sucursal exige superadministrador y su contraseña actual. Se desactiva, revoca sesiones y equipos, detiene sus procesos y conserva usuarios, movimientos y fotografías. Un turno de proveedores abierto debe cerrarse primero. El dueño puede consultar el historial desde Configuración. Las capturas previas que lleguen después quedan para revisión.
 
@@ -70,7 +70,7 @@ Las pruebas de integración crean sucursales y registros exclusivos de prueba. N
 
 ## Dinero y sincronización
 
-Importes MXN en centavos enteros, enviados como cadenas. Fecha operativa calculada en la zona IANA de la sucursal. La etiqueta del corte se calcula en el servidor con la hora original (Mañana desde 07:30 hasta antes de 17:00). Fichaje del mismo día obligatorio; horario y foto opcionales.
+Importes MXN en centavos enteros, enviados como cadenas. Fecha operativa calculada en la zona IANA de la sucursal. La etiqueta y fecha del corte se calculan desde el registro de entrada: Mañana desde 05:00 hasta antes de 15:00; Tarde desde 15:00 hasta antes de 05:00 del día siguiente. Una entrada antes de 05:00 pertenece a la tarde del día anterior. El cierre no cambia el turno. Solo un corte por registro de entrada. El horario, si existe, se vincula automáticamente.
 
 **Aclaración del propietario en esta conversación:** el efectivo contado corresponde únicamente a ventas de ese turno. General recibe ese contado, banco recibe tarjeta, y cada ticket de proveedores descuenta su importe separadamente. La diferencia de corte no se suma otra vez.
 
@@ -82,7 +82,7 @@ Un conflicto conserva el comando y bloquea la continuación dependiente; nunca s
 
 Despliegue y límites en [docs/railway.md](docs/railway.md). La imagen sirve la interfaz y la API juntas; usa PostgreSQL para identidad y datos, y un volumen privado para fotografías. No requiere Firebase ni claves de Google. Los documentos originales 02 y 03 conservan el diseño inicial como referencia; la elección posterior del propietario de usar Railway sin Firebase lo sustituye.
 
-El login emite un token aleatorio de 256 bits, de ocho horas, guardado por pestaña en `sessionStorage`; SQL solo conserva su hash. Cada petición revisa vencimiento, versión de credenciales y estado de la cuenta. El cierre online revoca esa sesión; cambiar contraseña revoca todas. El cierre sin Internet borra el acceso local, pero no puede contactar al servidor para revocar: el token remoto mantiene su vencimiento original. Las contraseñas usan Argon2. Solo servir la aplicación publicada con HTTPS.
+El login emite un token aleatorio de 256 bits, sin vencimiento automático, guardado por pestaña en `sessionStorage`; SQL solo conserva su hash. Cada petición revisa vencimiento, versión de credenciales y estado de la cuenta. El cierre online revoca esa sesión; cambiar contraseña revoca todas. El cierre sin Internet borra el acceso local, pero no puede contactar al servidor para revocar: el administrador puede liberar la caja pendiente desde Configuración. Las contraseñas usan Argon2. Solo servir la aplicación publicada con HTTPS.
 
 La migración 005 agrega sesiones sin cambiar usuarios ni datos financieros. No se borran IndexedDB, concesiones ni pendientes. Después de cambiar contraseña o desactivar cuenta, las capturas antiguas permanecen para revisión y no se aceptan automáticamente. Las rutas de fotos siempre comprueban usuario, tarea y sucursal.
 

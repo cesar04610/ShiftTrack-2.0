@@ -223,6 +223,8 @@ export default function App() {
     [allBranches, setAllBranches] = useState<any[]>([]),
     [deletingBranch, setDeletingBranch] = useState<any>(null),
     [newRegisterCount, setNewRegisterCount] = useState(1),
+    [occupiedRegisters, setOccupiedRegisters] = useState<any[]>([]),
+    [releasingRegister, setReleasingRegister] = useState<number | null>(null),
     [data, setData] = useState<any>(null),
     [page, setPage] = useState('Inicio'),
     [pending, setPending] = useState<Pending[]>([]),
@@ -282,6 +284,8 @@ export default function App() {
   useEffect(() => {
     if (user?.role === 'superadmin' && page === 'Configuración')
       request('/branches?include_archived=true').then(setAllBranches).catch(notify);
+    if (user && user.role !== 'employee' && page === 'Configuración' && branchId)
+      request(`/registers?branch_id=${branchId}`).then(setOccupiedRegisters).catch(notify);
   }, [user, page, branchId]);
   useEffect(() => {
     if (user?.role !== 'employee' || !registerNumber || !online || !hasOnlineSession()) return;
@@ -385,12 +389,10 @@ export default function App() {
     : employeeNav.filter(
         ([label]) =>
           !['Proveedores', 'Caja proveedores'].includes(label) ||
-          (prepared &&
-            registerNumber === data?.branch.supplier_register &&
-            data?.branch.device_id === deviceId),
+          (prepared && registerNumber === data?.branch.supplier_register),
       );
   const b = data?.branch,
-    deviceReady = prepared && registerNumber === b?.supplier_register && b?.device_id === deviceId;
+    deviceReady = prepared && registerNumber === b?.supplier_register;
   const treasury = data?.treasury || [],
     cash = treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
     bank = treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
@@ -408,7 +410,7 @@ export default function App() {
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
     'Registro de entradas': 'Registra tu entrada y salida del día.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
-    Configuración: 'Sucursales y equipo designado para proveedores.',
+    Configuración: 'Sucursales, cajas y accesos preparados.',
     Reportes: 'Consulta la actividad registrada de esta sucursal.',
   };
   const supplierForm = (
@@ -657,6 +659,7 @@ export default function App() {
                   const result = await selectRegister(number, online);
                   setRegisterNumber(number);
                   setPrepared(result.prepared);
+                  setDeviceId((await getDevice(branchId)).id);
                   await refresh(online);
                 }}
               />
@@ -833,9 +836,7 @@ export default function App() {
                     <div className="clock-display">
                       <Timer size={42} />
                       <h2>
-                        {data.clock.some(
-                          (r: any) => r.business_date.slice(0, 10) === date && !r.clock_out,
-                        )
+                        {data.clock.some((r: any) => !r.clock_out)
                           ? 'Tu turno está en curso'
                           : 'Listo para registrar tu turno'}
                       </h2>
@@ -1313,24 +1314,13 @@ export default function App() {
                   {!isAdmin && (
                     <Card title="Capturar mi corte">
                       <p>
-                        El contado corresponde al efectivo de ventas de este turno. La etiqueta se
-                        calcula con la hora de captura: Mañana de 07:30 a 16:59; Tarde en el resto
-                        del día.
+                        El corte corresponde a tu registro de entrada. Mañana: desde las 05:00 hasta
+                        antes de las 15:00. Tarde: desde las 15:00 hasta antes de las 05:00 del día
+                        siguiente. La hora de cierre no cambia el turno.
                       </p>
                       <Form
                         fields={[
                           { name: 'sales', label: 'Ventas totales · MXN', type: 'number' },
-                          {
-                            name: 'schedule_id',
-                            label: 'Horario vinculado · opcional',
-                            optional: true,
-                            options: data.schedules
-                              .filter((s: any) => s.business_date.slice(0, 10) === date)
-                              .map((s: any) => ({
-                                value: s.id,
-                                label: `${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`,
-                              })),
-                          },
                           { name: 'card', label: 'Pagos con tarjeta · MXN', type: 'number' },
                           {
                             name: 'declared',
@@ -1343,7 +1333,6 @@ export default function App() {
                           command('cut.create', {
                             id: crypto.randomUUID(),
                             register_number: String(registerNumber),
-                            schedule_id: v.schedule_id || '',
                             sales_cents: parseMoney(v.sales),
                             card_cents: parseMoney(v.card),
                             declared_cents: parseMoney(v.declared),
@@ -1757,71 +1746,55 @@ export default function App() {
                           }}
                         />
                       </Card>
-                      <Card title="Equipo designado para proveedores">
-                        <p>
-                          Registra esta computadora en la sucursal seleccionada. La caja de
-                          proveedores configurada es la número {b?.supplier_register}.
-                        </p>
-                        {b?.device_id ? (
-                          <div className="notice">
-                            La sucursal ya tiene equipo designado. No se habilitará otro sin
-                            reconciliar el anterior.
-                          </div>
-                        ) : (
-                          <Form
-                            fields={[
-                              {
-                                name: 'name',
-                                label: 'Nombre del equipo',
-                                placeholder: 'Computadora mostrador',
-                              },
-                            ]}
-                            label="Registrar este equipo"
-                            onSubmit={async (v) => {
-                              const device = await getDevice();
-                              await mutate('/devices/register', {
-                                id: device.id,
-                                public_key: device.public_key,
-                                name: v.name,
-                                supplier_register: b.supplier_register,
-                              });
-                            }}
-                          />
-                        )}
-                        <p>
-                          Después, cada empleado debe iniciar sesión con conexión en este navegador
-                          para preparar su acceso de ocho horas.
-                        </p>
-                      </Card>
-                      {b?.device_id !== deviceId && (
-                        <Card title="Equipo de apoyo para tareas y cortes">
-                          <p>
-                            Prepara este navegador para capturas offline del empleado. La caja de
-                            proveedores conserva exclusivamente su equipo designado.
-                          </p>
-                          <Form
-                            fields={[{ name: 'name', label: 'Nombre del equipo de apoyo' }]}
-                            label="Registrar equipo de apoyo"
-                            onSubmit={async (v) => {
-                              const device = await getDevice();
-                              await mutate('/devices/register', {
-                                id: device.id,
-                                name: v.name,
-                                public_key: device.public_key,
-                                supplier_register: b?.supplier_register || 1,
-                                supplier_enabled: false,
-                              });
-                            }}
-                          />
-                        </Card>
-                      )}
                     </>
                   ) : (
                     <Card title="Configuración de sucursal">
-                      <p>El dueño administra las sucursales y el equipo designado.</p>
+                      <p>El dueño administra las sucursales y sus cajas.</p>
                     </Card>
                   )}
                 </>
+              )}
+              {page === 'Configuración' && isAdmin && b?.active && (
+                <Card title="Cajas ocupadas">
+                  <p>
+                    Las cajas permanecen asignadas hasta cerrar sesión. Si un empleado dejó una
+                    sesión abierta, puedes liberarla con tu contraseña. Sus movimientos e historial
+                    se conservan.
+                  </p>
+                  <Table
+                    headers={['Caja', 'Empleado', 'Acción']}
+                    rows={occupiedRegisters.map((r) => [
+                      `Caja ${r.register_number}`,
+                      r.name,
+                      <button
+                        className="secondary"
+                        onClick={() => setReleasingRegister(r.register_number)}
+                      >
+                        Liberar caja {r.register_number}
+                      </button>,
+                    ])}
+                  />
+                  {releasingRegister && (
+                    <>
+                      <div className="notice warning">
+                        Vas a liberar la caja {releasingRegister} y cerrar la sesión que la ocupa.
+                        Confirma con tu contraseña.
+                      </div>
+                      <Form
+                        fields={[{ name: 'password', label: 'Tu contraseña', type: 'password' }]}
+                        label="Confirmar liberación"
+                        onSubmit={async (v) => {
+                          await mutate(`/registers/${releasingRegister}/release`, v);
+                          setReleasingRegister(null);
+                          setOccupiedRegisters(await request(`/registers?branch_id=${branchId}`));
+                        }}
+                      />
+                      <button className="secondary" onClick={() => setReleasingRegister(null)}>
+                        Cancelar
+                      </button>
+                    </>
+                  )}
+                </Card>
               )}
               {page === 'Contraseña' && (
                 <Card title="Cambiar mi contraseña">
@@ -1846,10 +1819,8 @@ export default function App() {
           )}
           <footer className="app-footer">
             ShiftTrack 2.0 · {b?.name || 'Selecciona una sucursal'}
-            {!isAdmin && expiresAt() && (
-              <span>
-                Acceso preparado hasta {time(expiresAt()!, b?.timezone || 'America/Mazatlan')}
-              </span>
+            {!isAdmin && prepared && (
+              <span>Acceso offline preparado · Caja {registerNumber || preparedRegister()}</span>
             )}
           </footer>
         </main>

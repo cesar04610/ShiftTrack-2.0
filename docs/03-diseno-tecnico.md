@@ -1,5 +1,7 @@
 # 03 — ShiftTrack 2.0: diseño técnico
 
+> Actualización del 4 de octubre de 2026: las reglas actuales sustituyen las referencias históricas a ocho horas, reservas de dos minutos y equipo designado. Las sesiones, cajas y concesiones nuevas no vencen por tiempo. Al seleccionar caja online se prepara automáticamente un equipo de esa sucursal; proveedores depende de la caja configurada. La salida libera la caja y un administrador puede liberar una sesión abandonada con contraseña. El corte nuevo queda vinculado a la entrada real (05:00–antes de 15:00 mañana; 15:00–antes de 05:00 tarde), con fecha anterior para entradas antes de 05:00. No se solicita horario opcional. La migración 007 conserva el historial.
+
 **Versión:** 1.0.  
 **Fecha:** 3 de octubre de 2026.  
 **Base funcional:** documento 02, «ShiftTrack 2.0: especificación maestra», versión 1.0.  
@@ -272,7 +274,7 @@ Las operaciones críticas online y offline utilizan el mismo command handler del
   "business_date": "2026-10-03",
   "expected_version": 18,
   "depends_on": ["uuid-apertura"],
-  "payload": {"ticket_id": "uuid", "supplier_id": "uuid", "amount_cents": "30000"},
+  "payload": { "ticket_id": "uuid", "supplier_id": "uuid", "amount_cents": "30000" },
   "signature": "firma-de-contenido-canonico"
 }
 ```

@@ -5,6 +5,8 @@ import {
   cents,
   localTime,
   cutAmounts,
+  shiftLabel,
+  shiftBusinessDate,
   type Command,
   type User,
 } from '../../../packages/domain/index.js';
@@ -73,7 +75,12 @@ async function signature(body: unknown, key: CryptoKey) {
     ),
   );
 }
-export async function getDevice() {
+export async function getDevice(branchId?: string) {
+  branchId ||= session?.user.branch_id || onlineCredentials?.user.branch_id || undefined;
+  if (branchId) {
+    const scoped = await db.meta.get(`device:${branchId}`);
+    if (scoped) return scoped.value;
+  }
   let stored = await db.meta.get('device');
   if (stored) return stored.value;
   const pair = await crypto.subtle.generateKey(curve, false, ['sign', 'verify']);
@@ -113,7 +120,7 @@ async function activateWriter() {
 }
 let onlineCredentials: { user: User; password: string } | null = null;
 async function prepareEmployee(user: User, password: string) {
-  const device = await getDevice();
+  const device = await getDevice(user.branch_id!);
   const username = user.username;
   await activateWriter();
   const pair = await crypto.subtle.generateKey(curve, true, ['sign', 'verify']);
@@ -186,7 +193,15 @@ export async function selectRegister(registerNumber: number, connected: boolean)
     await trustedNow();
     return { prepared: true };
   }
-  await request('/registers/select', { register_number: registerNumber });
+  const branchId = onlineCredentials?.user.branch_id || session?.user.branch_id;
+  const device = await getDevice(branchId || undefined);
+  const lease = await request('/registers/select', {
+    register_number: registerNumber,
+    device_id: device.id,
+    public_key: device.public_key,
+  });
+  if (branchId && lease.device_id)
+    await db.meta.put({ id: `device:${branchId}`, value: { ...device, id: lease.device_id } });
   if (onlineCredentials) {
     const credentials = onlineCredentials;
     await prepareEmployee(credentials.user, credentials.password);
@@ -264,7 +279,7 @@ export async function trustedNow() {
   assert(
     session && privateKey,
     'NOT_PREPARED',
-    'Valida tu acceso en línea en el equipo designado.',
+    'Selecciona tu caja con conexión para preparar este equipo.',
   );
   const wall = Date.now(),
     high = (await db.meta.get('wall-highwater'))?.value || session.lastWall;
@@ -278,9 +293,9 @@ export async function trustedNow() {
     : wall + session.offset;
   assert(
     now >= Date.parse(session.grant.body.issued_at) &&
-      now < Date.parse(session.grant.body.expires_at),
+      (session.grant.body.expires_at === null || now < Date.parse(session.grant.body.expires_at)),
     'GRANT_EXPIRED',
-    'Tu acceso de ocho horas venció. Conecta para validar; los pendientes se conservan.',
+    'Este acceso anterior venció. Inicia sesión con conexión para actualizarlo; los pendientes se conservan.',
   );
   await db.meta.put({ id: 'wall-highwater', value: Math.max(high, wall) });
   return new Date(now).toISOString();
@@ -298,7 +313,7 @@ export async function logout() {
   await logoutSession();
 }
 export async function snapshot(user: User, branchId: string, refresh = true) {
-  const device = await getDevice(),
+  const device = await getDevice(branchId),
     key = `snapshot:${branchId}:${user.id}`;
   if (refresh) {
     try {
@@ -349,7 +364,13 @@ export async function snapshot(user: User, branchId: string, refresh = true) {
   assert(cached, 'NO_CACHE', 'Conecta para descargar los datos de esta sucursal.');
   const box = (await db.caches.get(`box:${branchId}`))?.value;
   // Shared box data is visible only to the designated device's employee or an administrator.
-  if (box && (user.role !== 'employee' || box.branch.device_id === device.id))
+  if (
+    box &&
+    (user.role !== 'employee' ||
+      (session?.grant.body.register_access
+        ? session.grant.body.register_number === box.branch.supplier_register
+        : box.branch.device_id === device.id))
+  )
     return { ...cached, ...box };
   return cached;
 }
@@ -361,6 +382,11 @@ export async function enqueue(
   photo?: Blob,
 ) {
   assert(
+    session && privateKey,
+    'NOT_PREPARED',
+    'Selecciona tu caja con conexión para preparar el acceso antes de registrar movimientos.',
+  );
+  assert(
     session?.user.id === user.id && session.user.branch_id === branchId,
     'FORBIDDEN',
     'La sesión no corresponde a esta sucursal.',
@@ -371,7 +397,7 @@ export async function enqueue(
     'Operación no preparada en este equipo.',
   );
   const occurred_at = await trustedNow(),
-    device = await getDevice();
+    device = await getDevice(branchId);
   return navigator.locks.request('shifttrack-write', async () => {
     const box = (await db.caches.get(`box:${branchId}`))?.value;
     assert(box, 'NO_CACHE', 'Conecta para preparar los datos de caja.');
@@ -411,7 +437,10 @@ export async function enqueue(
         'Caja detenida para corrección administrativa. Conecta para recibir la nueva versión.',
       );
       assert(
-        b.device_id === device.id && b.assignment_epoch === session!.grant.body.assignment_epoch,
+        (session!.grant.body.register_access
+          ? session!.grant.body.register_number === b.supplier_register
+          : b.device_id === device.id) &&
+          b.assignment_epoch === session!.grant.body.assignment_epoch,
         'DEVICE_NOT_ASSIGNED',
         'Este equipo no administra esta caja.',
       );
@@ -530,8 +559,27 @@ export async function enqueue(
       depends_on: supplier && pending.length ? [pending.at(-1)!.id] : [],
       payload,
     };
-    if (type === 'cut.create')
+    let cutClock: any = null;
+    if (type === 'cut.create') {
+      const cached = (await db.caches.get(`snapshot:${branchId}:${user.id}`))?.value;
+      cutClock = (cached?.clock || [])
+        .filter(
+          (r: any) => r.user_id === user.id && Date.parse(r.clock_in) <= Date.parse(occurred_at),
+        )
+        .sort((a: any, b: any) => Date.parse(b.clock_in) - Date.parse(a.clock_in))[0];
+      assert(cutClock, 'CLOCK_REQUIRED', 'Registra tu entrada antes de guardar el corte.');
+      assert(
+        !(cached?.cuts || []).some(
+          (r: any) =>
+            r.clock_record_id === cutClock.id ||
+            (!r.clock_record_id && Date.parse(r.occurred_at) >= Date.parse(cutClock.clock_in)),
+        ),
+        'DUPLICATE_BUSINESS_RECORD',
+        'Este registro de entrada ya tiene un corte.',
+      );
+      payload.clock_record_id = cutClock.id;
       cutAmounts(payload.sales_cents, payload.card_cents, payload.declared_cents);
+    }
     command.signature = await signature(command, privateKey!);
     if (supplier) {
       b.balance_cents = balance.toString();
@@ -559,8 +607,9 @@ export async function enqueue(
           cached.cuts.push({
             ...payload,
             user_id: user.id,
-            business_date: date,
-            label: 'Pendiente',
+            business_date: shiftBusinessDate(cutClock.clock_in, b.timezone),
+            label: shiftLabel(cutClock.clock_in, b.timezone),
+            clock_record_id: cutClock.id,
             ...cutAmounts(payload.sales_cents, payload.card_cents, payload.declared_cents),
             occurred_at,
           });
@@ -575,107 +624,119 @@ export async function sync() {
   if (syncing) return;
   syncing = true;
   try {
-    const rows = (await db.outbox.toArray()).filter(
+    const allRows = (await db.outbox.toArray()).filter(
       (x) => x.state === 'pending' || x.state === 'sending',
     );
-    const device = await getDevice();
-    if (
-      !rows.length &&
-      !(await db.caches.toArray()).some(
-        (x) => x.id.startsWith('box:') && x.value.branch.device_id === device.id,
+    const current = await getDevice();
+    const known = (await db.meta.toArray())
+      .filter((x) => x.id === 'device' || x.id.startsWith('device:'))
+      .map((x) => x.value);
+    const devices = Array.from(new Map([current, ...known].map((x) => [x.id, x])).values());
+    for (const device of devices) {
+      const rows = allRows.filter((x) => x.command.device_id === device.id);
+      if (
+        !rows.length &&
+        !(await db.caches.toArray()).some(
+          (x) =>
+            x.id.startsWith('box:') &&
+            (x.value.branch.device_id === device.id ||
+              (device.id === current.id &&
+                session?.grant.body.register_access &&
+                session.grant.body.register_number === x.value.branch.supplier_register)),
+        )
       )
-    )
-      return;
-    const challenge = await request('/devices/challenge', { device_id: device.id });
-    const session = await request('/devices/session', {
-      id: challenge.id,
-      signature: await signature(challenge, device.private_key),
-    });
-    // UUIDs are not sortable by creation time; suppliers use their durable stream sequence.
-    rows.sort(
-      (a, b) =>
-        a.command.occurred_at.localeCompare(b.command.occurred_at) ||
-        a.command.device_seq - b.command.device_seq,
-    );
-    for (let i = 0; i < rows.length; i += 20) {
-      const batch = rows.slice(i, i + 20);
-      await db.outbox.bulkPut(batch.map((x) => ({ ...x, state: 'sending' })));
-      for (const row of batch) {
-        const id = row.command.payload.media_id;
-        if (!id) continue;
-        const image = await db.media.get(id);
-        if (image && !image.confirmed) {
-          const data = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve((reader.result as string).split(',')[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(image.blob);
+        continue;
+      const challenge = await request('/devices/challenge', { device_id: device.id });
+      const session = await request('/devices/session', {
+        id: challenge.id,
+        signature: await signature(challenge, device.private_key),
+      });
+      // UUIDs are not sortable by creation time; suppliers use their durable stream sequence.
+      rows.sort(
+        (a, b) =>
+          a.command.occurred_at.localeCompare(b.command.occurred_at) ||
+          a.command.device_seq - b.command.device_seq,
+      );
+      for (let i = 0; i < rows.length; i += 20) {
+        const batch = rows.slice(i, i + 20);
+        await db.outbox.bulkPut(batch.map((x) => ({ ...x, state: 'sending' })));
+        for (const row of batch) {
+          const id = row.command.payload.media_id;
+          if (!id) continue;
+          const image = await db.media.get(id);
+          if (image && !image.confirmed) {
+            const data = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve((reader.result as string).split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(image.blob);
+            });
+            const ack = await request(
+              '/media/upload',
+              { command: row.command, base64: data },
+              `Device ${session.token}`,
+            );
+            assert(
+              ack.media_id === id && ack.status === 'confirmed',
+              'UPLOAD_PENDING',
+              'La foto aún no está confirmada.',
+            );
+            await db.media.update(id, { confirmed: true });
+          }
+        }
+        const response = await request(
+          '/sync/push',
+          { commands: batch.map((x) => x.command) },
+          `Device ${session.token}`,
+        );
+        for (const ack of response.results) {
+          const row = await db.outbox.get(ack.operation_id);
+          if (!row) continue;
+          await db.outbox.update(row.id, {
+            state:
+              ack.status === 'confirmed'
+                ? 'confirmed'
+                : ack.code === 'DEPENDENCY_PENDING'
+                  ? 'blocked'
+                  : 'needs_review',
+            message: ack.message,
+            result: ack,
           });
-          const ack = await request(
-            '/media/upload',
-            { command: row.command, base64: data },
-            `Device ${session.token}`,
-          );
-          assert(
-            ack.media_id === id && ack.status === 'confirmed',
-            'UPLOAD_PENDING',
-            'La foto aún no está confirmada.',
-          );
-          await db.media.update(id, { confirmed: true });
         }
       }
-      const response = await request(
-        '/sync/push',
-        { commands: batch.map((x) => x.command) },
-        `Device ${session.token}`,
-      );
-      for (const ack of response.results) {
-        const row = await db.outbox.get(ack.operation_id);
-        if (!row) continue;
-        await db.outbox.update(row.id, {
-          state:
-            ack.status === 'confirmed'
-              ? 'confirmed'
-              : ack.code === 'DEPENDENCY_PENDING'
-                ? 'blocked'
-                : 'needs_review',
-          message: ack.message,
-          result: ack,
-        });
-      }
-    }
-    await navigator.locks.request('shifttrack-write', async () => {
-      const state = await request('/devices/state', undefined, `Device ${session.token}`),
-        key = `box:${state.id}`,
-        box = (await db.caches.get(key))?.value;
-      if (state.device_id !== device.id) return;
-      if (!box) return;
-      if (state.pause_token) {
-        box.branch.local_paused = true;
-        box.branch.pause_token = state.pause_token;
-        await db.caches.put({ id: key, value: box });
-        const pending = (await db.outbox.toArray()).filter(
-          (x) =>
-            x.state !== 'confirmed' &&
-            x.command.branch_id === state.id &&
-            x.command.type.startsWith('supplier.'),
-        );
-        if (!pending.length)
-          await request(
-            '/devices/pause-ack',
-            {
-              pause_token: state.pause_token,
-              version: String(box.branch.version),
-              device_seq: String(box.branch.device_seq),
-            },
-            `Device ${session.token}`,
+      await navigator.locks.request('shifttrack-write', async () => {
+        const state = await request('/devices/state', undefined, `Device ${session.token}`),
+          key = `box:${state.id}`,
+          box = (await db.caches.get(key))?.value;
+        if (state.device_id !== device.id && !state.supplier_access) return;
+        if (!box) return;
+        if (state.pause_token) {
+          box.branch.local_paused = true;
+          box.branch.pause_token = state.pause_token;
+          await db.caches.put({ id: key, value: box });
+          const pending = (await db.outbox.toArray()).filter(
+            (x) =>
+              x.state !== 'confirmed' &&
+              x.command.branch_id === state.id &&
+              x.command.type.startsWith('supplier.'),
           );
-      } else if (box.branch.local_paused) {
-        // Keep paused until an authenticated snapshot incorporates the corrected version.
-        box.branch.pause_token = null;
-        await db.caches.put({ id: key, value: box });
-      }
-    });
+          if (!pending.length)
+            await request(
+              '/devices/pause-ack',
+              {
+                pause_token: state.pause_token,
+                version: String(box.branch.version),
+                device_seq: String(box.branch.device_seq),
+              },
+              `Device ${session.token}`,
+            );
+        } else if (box.branch.local_paused) {
+          // Keep paused until an authenticated snapshot incorporates the corrected version.
+          box.branch.pause_token = null;
+          await db.caches.put({ id: key, value: box });
+        }
+      });
+    }
   } finally {
     syncing = false;
   }

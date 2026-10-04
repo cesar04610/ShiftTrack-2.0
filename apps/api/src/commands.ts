@@ -8,6 +8,7 @@ import {
   cutAmounts,
   localTime,
   shiftLabel,
+  shiftBusinessDate,
   canonical,
   type Command,
 } from '../../../packages/domain/index.js';
@@ -68,7 +69,7 @@ async function entry(
   );
 }
 export async function processCommand(c: Command, deviceId: string) {
-  await validateCommand(c, deviceId);
+  const granted = await validateCommand(c, deviceId);
   return transaction(c.branch_id, async (db) => {
     // Every command locks its branch: deduplication, stream and financial effects commit together.
     const b = (await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [c.branch_id]))
@@ -115,7 +116,9 @@ export async function processCommand(c: Command, deviceId: string) {
     if (supplier) {
       assert(!b.pause_ack, 'BOX_PAUSED', 'Caja detenida para corrección administrativa.');
       assert(
-        b.device_id === deviceId && b.assignment_epoch === c.assignment_epoch,
+        (granted.body.register_access
+          ? granted.body.register_number === b.supplier_register
+          : b.device_id === deviceId) && b.assignment_epoch === c.assignment_epoch,
         'REQUIRES_ADMIN_REVIEW',
         'El equipo o su asignación cambiaron.',
       );
@@ -304,45 +307,52 @@ export async function processCommand(c: Command, deviceId: string) {
         await entry(db, c, 'supplier_void', BigInt(ticket.amount_cents), 0n, p.reason);
       }
     } else if (c.type === 'cut.create') {
+      const clock = (
+        await db.query(
+          'SELECT * FROM clock_records WHERE user_id=$1 AND clock_in<=$2 AND ($3::uuid IS NULL OR id=$3) ORDER BY clock_in DESC LIMIT 1 FOR UPDATE',
+          [c.actor_user_id, c.occurred_at, p.clock_record_id ? uuid(p.clock_record_id) : null],
+        )
+      ).rows[0];
+      assert(clock, 'CLOCK_REQUIRED', 'Registra tu entrada antes de guardar el corte.');
       assert(
-        (
-          await db.query('SELECT id FROM clock_records WHERE user_id=$1 AND business_date=$2', [
-            c.actor_user_id,
-            date,
-          ])
+        !(
+          await db.query(
+            'SELECT id FROM cuts WHERE user_id=$1 AND clock_record_id IS NULL AND occurred_at>=$2 AND occurred_at<=$3 LIMIT 1',
+            [c.actor_user_id, clock.clock_in, c.occurred_at],
+          )
         ).rowCount,
-        'CLOCK_REQUIRED',
-        'Registra tu registro de entrada del día antes del corte.',
+        'DUPLICATE_BUSINESS_RECORD',
+        'Este registro de entrada ya tiene un corte anterior.',
       );
+      const shiftDate = shiftBusinessDate(clock.clock_in, b.timezone);
+      const calendar = localTime(clock.clock_in, b.timezone);
+      const startTime = `${Math.floor(calendar.minutes / 60)
+        .toString()
+        .padStart(2, '0')}:${(calendar.minutes % 60).toString().padStart(2, '0')}`;
+      const schedule = (
+        await db.query(
+          'SELECT id FROM schedules WHERE user_id=$1 AND business_date=$2 ORDER BY abs(extract(epoch FROM (start_time-$3::time))) LIMIT 1',
+          [c.actor_user_id, calendar.date, startTime],
+        )
+      ).rows[0];
       const amounts = cutAmounts(p.sales_cents, p.card_cents, p.declared_cents);
-      if (p.schedule_id)
-        assert(
-          (
-            await db.query(
-              'SELECT id FROM schedules WHERE id=$1 AND user_id=$2 AND business_date=$3',
-              [uuid(p.schedule_id), c.actor_user_id, date],
-            )
-          ).rowCount,
-          'NOT_FOUND',
-          'Horario no disponible para este corte.',
-          404,
-        );
       await db.query(
-        'INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,schedule_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+        'INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,schedule_id,clock_record_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
         [
           b.id,
           uuid(p.id),
           c.actor_user_id,
           z.coerce.number().int().positive().parse(p.register_number),
-          date,
-          shiftLabel(c.occurred_at, b.timezone),
+          shiftDate,
+          shiftLabel(clock.clock_in, b.timezone),
           p.sales_cents,
           p.card_cents,
           p.declared_cents,
           amounts.expected,
           amounts.difference,
           c.occurred_at,
-          p.schedule_id || null,
+          schedule?.id || null,
+          clock.id,
         ],
       );
       await entry(db, c, 'cut', cents(p.declared_cents), cents(p.card_cents), 'Corte de ventas');

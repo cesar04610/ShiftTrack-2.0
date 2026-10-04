@@ -70,11 +70,6 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal').selectOption(branch.id);
   await nav(page, 'Configuración');
-  await page.getByLabel('Nombre del equipo', { exact: true }).fill('Computadora piloto');
-  await page.getByRole('button', { name: 'Registrar este equipo' }).click();
-  await expect(
-    page.getByText('La sucursal ya tiene equipo designado.', { exact: false }),
-  ).toBeVisible();
   await nav(page, 'Caja general');
   await page.getByLabel('Efectivo total · MXN').fill('10000');
   await page.getByLabel('Parte en caja proveedores · MXN').fill('2000');
@@ -83,7 +78,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await expect(page.getByRole('heading', { name: 'Nuevo movimiento' })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await signIn(page, second);
-  await expect(page.getByText('Acceso preparado hasta', { exact: false })).toBeVisible();
+  await expect(page.getByText('Acceso offline preparado', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await signIn(page, first);
   await nav(page, 'Proveedores');
@@ -155,7 +150,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   expect(data.treasury.reduce((n: number, t: any) => n + Number(t.cash_cents), 0)).toBe(970000);
   expect(data.tasks[0].completed_at).toBeTruthy();
   expect(data.tasks[0].media_id).toBeTruthy();
-  // The eight-hour deadline is per employee and never extends after offline relogin.
+  // Clock rollback still blocks capture, but nine hours do not expire the prepared access.
   await context.setOffline(true);
   const real = Date.now();
   await page.clock.install({ time: new Date(real - 3600_000) });
@@ -171,7 +166,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await page.clock.setSystemTime(new Date(real + 9 * 3600_000));
   await page.getByLabel('Importe · MXN', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('venció');
-  await expect(page.locator('.pending-panel')).toContainText('1 operación');
+  await expect(page.getByRole('status')).toContainText('Guardado en este equipo');
+  await expect(page.locator('.pending-panel')).toContainText('2 operación(es)');
   await page.screenshot({ path: 'test-results/caja-proveedores.png', fullPage: true });
 });

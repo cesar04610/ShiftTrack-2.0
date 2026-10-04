@@ -249,7 +249,18 @@ modules.get('/devices/state', async (req, res) => {
       [d.branch_id],
     )
   ).rows[0];
-  res.json(b);
+  const supplierAccess = await transaction(
+    d.branch_id,
+    async (db) =>
+      (
+        await db.query('SELECT 1 FROM register_leases WHERE device_id=$1 AND register_number=$2', [
+          d.id,
+          (await db.query('SELECT supplier_register FROM branches WHERE id=$1', [d.branch_id]))
+            .rows[0].supplier_register,
+        ])
+      ).rowCount,
+  );
+  res.json({ ...b, supplier_access: !!supplierAccess });
 });
 modules.post('/devices/pause-ack', async (req, res) => {
   const d = await deviceIdentity(req.headers.authorization),
@@ -263,8 +274,14 @@ modules.post('/devices/pause-ack', async (req, res) => {
   await transaction(d.branch_id, async (db) => {
     const b = (await db.query('SELECT * FROM branches WHERE id=$1 FOR UPDATE', [d.branch_id]))
       .rows[0];
+    const supplierAccess = (
+      await db.query('SELECT 1 FROM register_leases WHERE device_id=$1 AND register_number=$2', [
+        d.id,
+        b.supplier_register,
+      ])
+    ).rowCount;
     assert(
-      b.device_id === d.id &&
+      (b.device_id === d.id || !!supplierAccess) &&
         b.pause_token === p.pause_token &&
         b.version === p.version &&
         b.device_seq === p.device_seq,

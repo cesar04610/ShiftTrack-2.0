@@ -47,7 +47,7 @@ async function token(username: string) {
   );
   a.equal(status, 200);
   a.match(body.access_token, /^[A-Za-z0-9_-]{43}$/);
-  a.ok(body.expires_at);
+  a.equal(body.expires_at, null);
   return body.access_token as string;
 }
 
@@ -167,12 +167,47 @@ test('cajas online: selección válida, ocupación concurrente y liberación al 
       "UPDATE register_leases SET expires_at=now()-interval '1 second' WHERE register_number=3",
     );
   });
-  a.equal(
-    (await call('/registers/heartbeat', { register_number: 3 }, loser)).body.code,
-    'REGISTER_LOST',
-  );
+  a.equal((await call('/registers/heartbeat', { register_number: 3 }, loser)).status, 200);
   a.equal((await call('/registers/select', { register_number: 3 }, loser)).status, 200);
   await call('/auth/logout', {}, loser);
+});
+test('preparación automática, caja de proveedores y liberación administrativa sin vencimiento', async () => {
+  const access = (await issueSession(employee)).access_token;
+  const newDevice = randomUUID(),
+    jwk = pair.publicKey.export({ format: 'jwk' });
+  const selected = await call(
+    '/registers/select',
+    { register_number: 1, device_id: newDevice, public_key: jwk },
+    access,
+  );
+  a.equal(selected.status, 200);
+  a.equal(selected.body.expires_at, null);
+  const prepared = await call(
+    '/devices/user-grants',
+    { device_id: newDevice, password: 'ShiftTrack-demo-2026!', public_key: jwk },
+    access,
+  );
+  a.equal(prepared.status, 200);
+  a.equal(prepared.body.body.expires_at, null);
+  a.ok(prepared.body.body.allowed_commands.includes('supplier.shift.open'));
+  await sql.query(
+    "UPDATE auth_sessions SET issued_at=now()-interval '12 hours' WHERE token_hash=$1",
+    [createHash('sha256').update(access).digest('hex')],
+  );
+  a.equal((await call('/registers/heartbeat', { register_number: 1 }, access)).status, 200);
+  a.equal(
+    (await call(`/registers/1/release`, { branch_id: branch, password: 'incorrecta' })).status,
+    401,
+  );
+  a.equal(
+    (await call(`/registers/1/release`, { branch_id: branch, password: 'ShiftTrack-demo-2026!' }))
+      .status,
+    200,
+  );
+  a.equal((await call('/auth/me', undefined, access)).status, 401);
+  const next = (await issueSession(second)).access_token;
+  a.equal((await call('/registers/select', { register_number: 1 }, next)).status, 200);
+  await call('/auth/logout', {}, next);
 });
 test('eliminar sucursal exige dueño y contraseña, revoca acceso y conserva historial', async () => {
   const invalid = await call('/branches', {
@@ -312,7 +347,7 @@ test('sesiones opacas: hash en SQL, vencimiento, cierre individual y credenciale
     ])
   ).rows[0];
   a.equal(row.user_id, id);
-  a.equal(+row.expires_at - +row.issued_at, 8 * 3600_000);
+  a.equal(row.expires_at, null);
   a.notEqual(row.token_hash, first);
   a.equal((await call('/auth/me', undefined, first)).body.id, id);
   a.equal((await call('/auth/logout', {}, first)).status, 200);
@@ -518,6 +553,36 @@ test('ficha previa, corte único y contado de ventas alimentan general', async (
   );
   a.equal(total.cash, '1049000');
   a.equal(total.bank, '520000');
+});
+test('el corte conserva el turno de entrada al cerrar tarde o al día siguiente', async () => {
+  for (const [entry, label, date] of [
+    ['2026-09-30T12:00:00Z', 'Mañana', '2026-09-30'],
+    ['2026-09-30T22:00:00Z', 'Tarde', '2026-09-30'],
+    ['2026-10-01T11:30:00Z', 'Tarde', '2026-09-30'],
+  ]) {
+    const clock = randomUUID(),
+      id = randomUUID();
+    await sql.query(
+      'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in,clock_out) VALUES($1,$2,$3,$4,$5,now())',
+      [branch, clock, employee.id, date, entry],
+    );
+    await apply(
+      command('cut.create', {
+        id,
+        clock_record_id: clock,
+        register_number: '1',
+        sales_cents: '0',
+        card_cents: '0',
+        declared_cents: '0',
+      }),
+    );
+    const saved = (
+      await sql.query('SELECT label,business_date,clock_record_id FROM cuts WHERE id=$1', [id])
+    ).rows[0];
+    a.equal(saved.label, label);
+    a.equal(saved.business_date.toISOString().slice(0, 10), date);
+    a.equal(saved.clock_record_id, clock);
+  }
 });
 function localTimeForTest() {
   return new Intl.DateTimeFormat('en-CA', {

@@ -17,7 +17,14 @@ import {
   digest,
 } from './security.js';
 import { processCommand, commandSchema } from './commands.js';
-import { assert, AppError, cents, localTime, type User } from '../../../packages/domain/index.js';
+import {
+  assert,
+  AppError,
+  cents,
+  localTime,
+  shiftBusinessDate,
+  type User,
+} from '../../../packages/domain/index.js';
 import { modules } from './modules.js';
 import { media } from './media.js';
 import { prepareMediaStorage } from './storage.js';
@@ -220,12 +227,14 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     );
     const validSession = (
       await db.query(
-        'SELECT token_hash FROM auth_sessions WHERE token_hash=$1 AND expires_at>now() FOR SHARE',
+        'SELECT token_hash FROM auth_sessions WHERE token_hash=$1 AND (expires_at IS NULL OR expires_at>now()) FOR SHARE',
         [sessionHash],
       )
     ).rowCount;
     assert(validSession, 'UNAUTHENTICATED', 'La sesión venció.', 401);
-    await db.query('DELETE FROM register_leases WHERE expires_at<=now()');
+    await db.query(
+      'DELETE FROM register_leases WHERE expires_at<=now() OR session_hash IN (SELECT token_hash FROM auth_sessions WHERE expires_at<=now())',
+    );
     const held = (
       await db.query('SELECT * FROM register_leases WHERE register_number=$1', [register_number])
     ).rows[0];
@@ -235,21 +244,46 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
       `La caja ${register_number} ya está ocupada. Selecciona otra caja.`,
       409,
     );
-    if (heartbeat)
-      assert(
-        held?.session_hash === sessionHash,
-        'REGISTER_LOST',
-        'La reserva de caja venció. Selecciona tu caja nuevamente.',
-        409,
-      );
+
     await db.query('DELETE FROM register_leases WHERE session_hash=$1 AND register_number<>$2', [
       sessionHash,
       register_number,
     ]);
+    let deviceId: string | null = held?.device_id ?? null;
+    if (!heartbeat && req.body.device_id && req.body.public_key) {
+      const enrollment = z
+        .object({
+          device_id: z.uuid(),
+          public_key: z
+            .object({ kty: z.literal('EC'), crv: z.literal('P-256'), x: z.string(), y: z.string() })
+            .passthrough(),
+        })
+        .parse(req.body);
+      const existing = (await db.query('SELECT * FROM devices WHERE id=$1', [enrollment.device_id]))
+        .rows[0];
+      if (existing?.active && existing.branch_id === user.branch_id) {
+        assert(
+          existing.public_key.x === enrollment.public_key.x &&
+            existing.public_key.y === enrollment.public_key.y,
+          'FORBIDDEN',
+          'La clave de este equipo no coincide.',
+          403,
+        );
+        deviceId = existing.id;
+      } else {
+        deviceId = existing ? randomUUID() : enrollment.device_id;
+        await db.query('INSERT INTO devices(id,branch_id,name,public_key) VALUES($1,$2,$3,$4)', [
+          deviceId,
+          user.branch_id,
+          `Caja ${register_number} · ${user.username}`,
+          enrollment.public_key,
+        ]);
+      }
+    }
     const lease = (
       await db.query(
-        "INSERT INTO register_leases(branch_id,register_number,session_hash,user_id,expires_at) VALUES($1,$2,$3,$4,now()+interval '2 minutes') ON CONFLICT(branch_id,register_number) DO UPDATE SET expires_at=EXCLUDED.expires_at RETURNING register_number,expires_at",
-        [user.branch_id, register_number, sessionHash, user.id],
+        'INSERT INTO register_leases(branch_id,register_number,session_hash,user_id,expires_at,device_id) VALUES($1,$2,$3,$4,NULL,$5) ON CONFLICT(branch_id,register_number) DO UPDATE SET expires_at=NULL,device_id=EXCLUDED.device_id RETURNING register_number,expires_at,device_id',
+        [user.branch_id, register_number, sessionHash, user.id, deviceId],
       )
     ).rows[0];
     return lease;
@@ -258,6 +292,48 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
 app.post('/api/v1/registers/select', async (req, res) => res.json(await reserveRegister(req)));
 app.post('/api/v1/registers/heartbeat', async (req, res) =>
   res.json(await reserveRegister(req, true)),
+);
+app.get('/api/v1/registers', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  admin(user);
+  const branch = await context(user, req.query.branch_id as string);
+  res.json(
+    await transaction(
+      branch.id,
+      async (db) =>
+        (
+          await db.query(
+            'SELECT r.register_number,u.name,u.username FROM register_leases r JOIN users u ON u.id=r.user_id ORDER BY r.register_number',
+          )
+        ).rows,
+    ),
+  );
+});
+app.post(
+  '/api/v1/registers/:number/release',
+  rateLimit({ windowMs: 15 * 60_000, limit: 10 }),
+  async (req, res) => {
+    const user = await identity(req.headers.authorization);
+    admin(user);
+    const branch = await context(user, req.body.branch_id);
+    const password = z.string().min(1).max(256).parse(req.body.password);
+    await checkPassword(user.username, password);
+    const number = z.coerce.number().int().positive().parse(req.params.number);
+    await transaction(branch.id, async (db) => {
+      await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [branch.id]);
+      const lease = (
+        await db.query('SELECT * FROM register_leases WHERE register_number=$1', [number])
+      ).rows[0];
+      if (lease) {
+        await db.query('DELETE FROM auth_sessions WHERE token_hash=$1', [lease.session_hash]);
+        await audit(db, branch.id, user, 'register.release', {
+          register_number: number,
+          user_id: lease.user_id,
+        });
+      }
+    });
+    res.json({ ok: true });
+  },
 );
 app.post('/api/v1/devices/register', async (req, res) => {
   const u = await identity(req.headers.authorization);
@@ -321,7 +397,7 @@ app.post('/api/v1/devices/user-grants', async (req, res) => {
     async (db) =>
       (
         await db.query(
-          'SELECT register_number FROM register_leases WHERE session_hash=$1 AND expires_at>now()',
+          'SELECT register_number FROM register_leases WHERE session_hash=$1 AND (expires_at IS NULL OR expires_at>now())',
           [digest(req.headers.authorization!.slice(7))],
         )
       ).rows[0]?.register_number ?? null,
@@ -426,7 +502,19 @@ app.get('/api/v1/snapshot', async (req, res) => {
         cuts: await select('cuts', true),
         shortages: await select('shortages'),
       };
-      if (user.role !== 'employee' || b.device_id === req.query.device_id) {
+      const selected =
+        user.role === 'employee'
+          ? (
+              await db.query('SELECT register_number FROM register_leases WHERE session_hash=$1', [
+                digest(req.headers.authorization!.slice(7)),
+              ])
+            ).rows[0]?.register_number
+          : null;
+      if (
+        user.role !== 'employee' ||
+        selected === b.supplier_register ||
+        (selected == null && b.device_id === req.query.device_id)
+      ) {
         result.tickets = await select('tickets');
         result.shifts = await select('supplier_shifts');
       }
@@ -520,24 +608,35 @@ app.post('/api/v1/clock/:action', async (req, res) => {
   const u = await identity(req.headers.authorization);
   assert(u.role === 'employee', 'FORBIDDEN', 'El registro de entrada es del empleado.', 403);
   const b = await context(u, req.body.branch_id),
-    date = localTime(new Date(), b.timezone).date;
+    date = shiftBusinessDate(new Date(), b.timezone);
   await transaction(b.id, async (db) => {
-    if (req.params.action === 'in')
+    await db.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [u.id]);
+    if (req.params.action === 'in') {
+      assert(
+        !(
+          await db.query('SELECT id FROM clock_records WHERE user_id=$1 AND clock_out IS NULL', [
+            u.id,
+          ])
+        ).rowCount,
+        'OPEN_CLOCK',
+        'Ya tienes una entrada abierta. Registra la salida antes de iniciar otro turno.',
+        409,
+      );
       await db.query(
         'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,$4,now())',
         [b.id, randomUUID(), u.id, date],
       );
-    else {
+    } else {
       assert(req.params.action === 'out', 'NOT_FOUND', 'Acción inválida.', 404);
       assert(
         (
           await db.query(
-            'UPDATE clock_records SET clock_out=now() WHERE user_id=$1 AND business_date=$2 AND clock_out IS NULL RETURNING id',
-            [u.id, date],
+            'UPDATE clock_records SET clock_out=now() WHERE user_id=$1 AND clock_out IS NULL RETURNING id',
+            [u.id],
           )
         ).rowCount,
         'NO_CLOCK',
-        'No hay entrada abierta hoy.',
+        'No hay una entrada abierta.',
       );
     }
   });

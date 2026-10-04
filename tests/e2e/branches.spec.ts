@@ -37,11 +37,6 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   expect(created.status()).toBe(201);
   const branch = await created.json();
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
-  await page.getByLabel('Nombre del equipo', { exact: true }).fill('Mostrador Madeira');
-  await page.getByRole('button', { name: 'Registrar este equipo', exact: true }).click();
-  await expect(
-    page.getByText('La sucursal ya tiene equipo designado.', { exact: false }),
-  ).toBeVisible();
   const first = `lupe-${suffix}`,
     second = `jenny-${suffix}`;
   for (const username of [first, second]) {
@@ -79,6 +74,17 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await signIn(page, first);
   await selectBox(page, 3);
   await expect(page.getByRole('button', { name: 'Caja proveedores', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
+  await page.getByRole('button', { name: 'Registrar entrada', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Registrar salida', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Mi corte', exact: true }).click();
+  await expect(page.getByLabel('Horario vinculado · opcional')).toHaveCount(0);
+  await page.getByLabel('Ventas totales · MXN').fill('100');
+  await page.getByLabel('Pagos con tarjeta · MXN').fill('20');
+  await page.getByLabel('Efectivo contado de ventas · MXN').fill('80');
+  await page.getByRole('button', { name: 'Guardar corte', exact: true }).click();
+  await expect(page.getByRole('cell', { name: '$100.00', exact: true })).toBeVisible();
+  await expect(page.locator('.pending-panel')).toHaveCount(0, { timeout: 20000 });
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);

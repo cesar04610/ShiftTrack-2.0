@@ -102,7 +102,7 @@ const document = {
       sessionToken: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'Token opaco de sesión (8 horas; revocable)',
+        bearerFormat: 'Token opaco de sesión (sin vencimiento automático; revocable)',
       },
       deviceTransport: {
         type: 'apiKey',

@@ -1,5 +1,7 @@
 # Inicio de este entorno de desarrollo
 
+> Actualización del 4 de octubre de 2026: las reglas actuales sustituyen las referencias históricas a ocho horas, reservas de dos minutos y equipo designado. Las sesiones, cajas y concesiones nuevas no vencen por tiempo. Al seleccionar caja online se prepara automáticamente un equipo de esa sucursal; proveedores depende de la caja configurada. La salida libera la caja y un administrador puede liberar una sesión abandonada con contraseña. El corte nuevo queda vinculado a la entrada real (05:00–antes de 15:00 mañana; 15:00–antes de 05:00 tarde), con fecha anterior para entradas antes de 05:00. No se solicita horario opcional. La migración 007 conserva el historial.
+
 Usa `/workspace/ShiftTrack-2.0`; esta tarea cloud ya está aislada. No crear worktrees adicionales. Lee `README.md` y `docs/estado.md`. El entorno local validado no equivale a un despliegue Railway operativo ni a un piloto aceptado.
 
 Dependencias y archivos permanecen en el sistema de archivos; PostgreSQL y servidores deben reiniciarse. No asumir que procesos ni conexiones sobreviven a publicación/restauración. No sobrescribir `.env` ni ejecutar datos de ejemplo en cloud. Firebase y Java ya no son necesarios.

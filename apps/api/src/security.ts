@@ -41,7 +41,7 @@ export async function issueSession(user: User) {
     const accessToken = randomBytes(32).toString('base64url');
     const row = (
       await db.query(
-        "INSERT INTO auth_sessions(token_hash,user_id,auth_version,expires_at) VALUES($1,$2,$3,now()+interval '8 hours') RETURNING expires_at",
+        'INSERT INTO auth_sessions(token_hash,user_id,auth_version,expires_at) VALUES($1,$2,$3,NULL) RETURNING expires_at',
         [digest(accessToken), current.id, current.auth_version],
       )
     ).rows[0];
@@ -68,7 +68,7 @@ export async function revokeSession(header?: string) {
 export async function identity(header?: string): Promise<User> {
   const user = (
     await pool.query(
-      "SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active AND s.auth_version=u.auth_version AND (u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active))",
+      "SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND (s.expires_at IS NULL OR s.expires_at>now()) AND u.active AND s.auth_version=u.auth_version AND (u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active))",
       [digest(sessionToken(header))],
     )
   ).rows[0];
@@ -131,7 +131,7 @@ export async function issueGrant(
   assert(branch?.active, 'BRANCH_INACTIVE', 'Esta sucursal fue eliminada.', 403);
   const id = randomUUID(),
     issued = new Date(),
-    expires = new Date(issued.getTime() + 8 * 3600_000);
+    expires = null;
   const body = {
     grant_id: id,
     ...(registerNumber !== undefined ? { register_number: registerNumber } : {}),
@@ -141,12 +141,14 @@ export async function issueGrant(
     assignment_epoch: device.assignment_epoch,
     auth_version: user.auth_version,
     issued_at: issued.toISOString(),
-    expires_at: expires.toISOString(),
+    expires_at: null,
+    ...(registerNumber != null ? { register_access: true } : {}),
     allowed_commands: offlineTypes.filter(
       (t) =>
         !t.startsWith('supplier.') ||
-        (device.assigned_device === device.id &&
-          (registerNumber === undefined || registerNumber === branch.supplier_register)),
+        (registerNumber === undefined
+          ? device.assigned_device === device.id
+          : registerNumber === branch.supplier_register),
     ),
     public_key: publicKey,
   };
@@ -227,7 +229,7 @@ export async function validateCommand(command: Command, deviceId: string) {
   assert(
     Number.isFinite(occurred) &&
       occurred >= +grant.issued_at &&
-      occurred < +grant.expires_at &&
+      (grant.expires_at === null || occurred < +grant.expires_at) &&
       occurred <= Date.now() + 60_000,
     'REQUIRES_ADMIN_REVIEW',
     'La hora de captura requiere revisión.',
