@@ -110,10 +110,11 @@ export async function issueGrant(user: User, deviceId: string, publicKey: object
     )
   ).rows[0];
   assert(device?.active, 'DEVICE_NOT_ASSIGNED', 'Este equipo no está registrado.', 403);
+  assert(user.role === 'employee', 'FORBIDDEN', 'Solo empleados preparan acceso operativo.', 403);
   assert(
-    user.role === 'employee' && user.branch_id === device.branch_id,
-    'FORBIDDEN',
-    'Solo empleados de esta sucursal preparan acceso operativo.',
+    user.branch_id === device.branch_id,
+    'DEVICE_BRANCH_MISMATCH',
+    'Este equipo está registrado en otra sucursal. Usa un equipo de tu sucursal para preparar el acceso offline.',
     403,
   );
   const id = randomUUID(),

@@ -524,8 +524,8 @@ export default function App() {
           {!isAdmin && !prepared && (
             <div className="notice">
               Este equipo aún no tiene tu acceso offline preparado. Puedes consultar horarios y
-              fichar con conexión. El dueño debe registrar el equipo para habilitar las capturas
-              operativas.
+              fichar con conexión. Para habilitar las capturas operativas, usa un equipo registrado
+              por el dueño en tu misma sucursal.
             </div>
           )}
           {pending.length > 0 && (

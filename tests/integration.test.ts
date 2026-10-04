@@ -135,6 +135,27 @@ after(async () => {
   await sql.end();
   await pool.end();
 });
+test('equipo de otra sucursal deniega concesión offline sin invalidar la sesión online', async () => {
+  const body = {
+    device_id: device,
+    password: 'ShiftTrack-demo-2026!',
+    public_key: pair.publicKey.export({ format: 'jwk' }),
+  };
+  const response = await call('/devices/user-grants', body, employeeToken);
+  a.equal(response.status, 403);
+  a.equal(response.body.code, 'DEVICE_BRANCH_MISMATCH');
+  a.equal((await call('/auth/me', undefined, employeeToken)).status, 200);
+  a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, employeeToken)).status, 403);
+  const user = (await call('/auth/me', undefined, employeeToken)).body;
+  a.equal(
+    (await sql.query('SELECT id FROM grants WHERE user_id=$1 AND device_id=$2', [user.id, device]))
+      .rowCount,
+    0,
+  );
+  const admin = await call('/devices/user-grants', body, adminToken);
+  a.equal(admin.status, 403);
+  a.equal(admin.body.code, 'FORBIDDEN');
+});
 test('sesión propia y ámbito de sucursal; RLS sin contexto no filtra datos ajenos', async () => {
   a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, employeeToken)).status, 403);
   a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, adminToken)).status, 403);

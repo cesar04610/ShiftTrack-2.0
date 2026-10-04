@@ -169,10 +169,15 @@ export async function login(username: string, password: string) {
         await db.meta.put({ id: 'wall-highwater', value: Date.now() });
         await navigator.storage?.persist();
       } catch (e) {
-        // Employees can use online clock/schedule before an owner registers this device.
-        if (e instanceof ApiError && e.code === 'DEVICE_NOT_ASSIGNED') {
+        // A valid online session does not require an offline grant on this device.
+        if (
+          e instanceof ApiError &&
+          (e.code === 'DEVICE_NOT_ASSIGNED' || e.code === 'DEVICE_BRANCH_MISMATCH')
+        ) {
           session = null;
           privateKey = null;
+          releaseWriter?.();
+          releaseWriter = null;
         } else throw e;
       }
     }
