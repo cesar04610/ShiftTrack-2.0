@@ -551,7 +551,9 @@ export async function enqueue(
       box.suppliers.push({
         id: payload.id,
         company: payload.company,
-        contact: payload.contact,
+        representative: payload.representative,
+        phone: payload.phone,
+        product_type: payload.product_type,
         active: true,
       });
     const command: Command = {
@@ -657,7 +659,7 @@ export async function sync() {
       )
         continue;
       const challenge = await request('/devices/challenge', { device_id: device.id });
-      const session = await request('/devices/session', {
+      const transportSession = await request('/devices/session', {
         id: challenge.id,
         signature: await signature(challenge, device.private_key),
       });
@@ -684,7 +686,7 @@ export async function sync() {
             const ack = await request(
               '/media/upload',
               { command: row.command, base64: data },
-              `Device ${session.token}`,
+              `Device ${transportSession.token}`,
             );
             assert(
               ack.media_id === id && ack.status === 'confirmed',
@@ -697,7 +699,7 @@ export async function sync() {
         const response = await request(
           '/sync/push',
           { commands: batch.map((x) => x.command) },
-          `Device ${session.token}`,
+          `Device ${transportSession.token}`,
         );
         for (const ack of response.results) {
           const row = await db.outbox.get(ack.operation_id);
@@ -715,7 +717,11 @@ export async function sync() {
         }
       }
       await navigator.locks.request('shifttrack-write', async () => {
-        const state = await request('/devices/state', undefined, `Device ${session.token}`),
+        const state = await request(
+            '/devices/state',
+            undefined,
+            `Device ${transportSession.token}`,
+          ),
           key = `box:${state.id}`,
           box = (await db.caches.get(key))?.value;
         if (state.device_id !== device.id && !state.supplier_access) return;
@@ -738,7 +744,7 @@ export async function sync() {
                 version: String(box.branch.version),
                 device_seq: String(box.branch.device_seq),
               },
-              `Device ${session.token}`,
+              `Device ${transportSession.token}`,
             );
         } else if (box.branch.local_paused) {
           // Keep paused until an authenticated snapshot incorporates the corrected version.

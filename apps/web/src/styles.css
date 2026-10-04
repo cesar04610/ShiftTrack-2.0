@@ -728,3 +728,34 @@ tbody tr:last-child td {
 .export-button {
   margin-bottom: 24px;
 }
+
+.supplier-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(17, 24, 39, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.supplier-dialog {
+  background: white;
+  border-radius: 16px;
+  padding: 24px;
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+.supplier-dialog h2 {
+  margin: 0 0 20px;
+}
+.supplier-dialog > button {
+  margin-top: 16px;
+}

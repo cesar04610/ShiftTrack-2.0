@@ -196,7 +196,7 @@ const adminNav = [
   ['Tareas', ClipboardCheck],
   ['Reportes', BarChart3],
   ['Alertas', BarChart3],
-  ['Proveedores', ShoppingBag],
+  ['Caja proveedores', Wallet],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
   ['Configuración', Settings],
@@ -205,7 +205,6 @@ const employeeNav = [
   ['Horario', CalendarDays],
   ['Registro de entradas', Timer],
   ['Tareas', ClipboardCheck],
-  ['Proveedores', ShoppingBag],
   ['Caja proveedores', Wallet],
   ['Faltantes', PackageX],
   ['Mi corte', Receipt],
@@ -223,6 +222,7 @@ export default function App() {
     [allBranches, setAllBranches] = useState<any[]>([]),
     [deletingBranch, setDeletingBranch] = useState<any>(null),
     [newRegisterCount, setNewRegisterCount] = useState(1),
+    [addingSupplier, setAddingSupplier] = useState(false),
     [occupiedRegisters, setOccupiedRegisters] = useState<any[]>([]),
     [releasingRegister, setReleasingRegister] = useState<number | null>(null),
     [data, setData] = useState<any>(null),
@@ -336,7 +336,7 @@ export default function App() {
   async function mutate(path: string, values: any) {
     await request(path, { ...values, branch_id: branchId });
     await refresh();
-    setMessage('Guardado en la nube.');
+    setMessage('Registro guardado correctamente.');
   }
   async function command(type: Command['type'], values: Record<string, string>, photo?: Blob) {
     if (online && !hasOnlineSession())
@@ -345,7 +345,7 @@ export default function App() {
       );
     await enqueue(type, values, user!, branchId, photo);
     await refresh(false);
-    setMessage('Guardado en este equipo — pendiente de sincronizar.');
+    setMessage('Registro guardado correctamente.');
     synchronize();
   }
   const expired = !!expiresAt() && Date.parse(expiresAt()!) <= now;
@@ -404,7 +404,7 @@ export default function App() {
     Horario: 'Consulta tus próximos turnos.',
     Tareas: 'Lo que hay que hacer, en un solo lugar.',
     Proveedores: 'Directorio y pagos de proveedores.',
-    'Caja proveedores': 'Recibe, registra y entrega el efectivo de tu turno.',
+    'Caja proveedores': 'Registra pagos y consulta los tickets de proveedores.',
     Cortes: 'Ventas, efectivo contado y diferencias.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
@@ -417,13 +417,15 @@ export default function App() {
     <Form
       fields={[
         { name: 'company', label: 'Empresa' },
-        { name: 'contact', label: 'Representante / teléfono', optional: true },
         { name: 'representative', label: 'Representante', optional: true },
         { name: 'phone', label: 'Teléfono', optional: true },
         { name: 'product_type', label: 'Tipo de producto', optional: true },
       ]}
       label="Agregar proveedor"
-      onSubmit={(v) => command('supplier.create', { id: crypto.randomUUID(), ...v })}
+      onSubmit={async (v) => {
+        await command('supplier.create', { id: crypto.randomUUID(), ...v });
+        setAddingSupplier(false);
+      }}
     />
   );
   return (
@@ -586,7 +588,7 @@ export default function App() {
               <summary>
                 {pending.some((x) => x.state === 'needs_review' || x.state === 'blocked')
                   ? 'Hay operaciones que requieren revisión'
-                  : `${pending.length} operación(es) guardada(s) en este equipo — pendiente(s) de sincronizar`}
+                  : `${pending.length} registro(s) guardado(s) correctamente`}
               </summary>
               {pending.map((x) => (
                 <div key={x.id}>
@@ -1028,24 +1030,31 @@ export default function App() {
                   </div>
                 </>
               )}
-              {page === 'Proveedores' && (
+              {page === 'Caja proveedores' && (
                 <>
-                  <div className="grid">
-                    <Card title="Directorio de proveedores">
-                      <Table
-                        headers={['Empresa', 'Representante', 'Teléfono', 'Producto']}
-                        rows={data.suppliers
-                          .filter((s: any) => s.active)
-                          .map((s: any) => [
-                            s.company,
-                            s.representative || s.contact || '—',
-                            s.phone || '—',
-                            s.product_type || '—',
-                          ])}
-                      />
-                    </Card>
-                    {!isAdmin && <Card title="Nuevo proveedor">{supplierForm}</Card>}
-                  </div>
+                  {!isAdmin && (
+                    <div className="supplier-actions">
+                      <button className="secondary" onClick={() => setAddingSupplier(true)}>
+                        Agregar proveedores
+                      </button>
+                    </div>
+                  )}
+                  {addingSupplier && (
+                    <div className="modal-backdrop">
+                      <section
+                        className="supplier-dialog"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="supplier-dialog-title"
+                      >
+                        <h2 id="supplier-dialog-title">Agregar proveedor</h2>
+                        {supplierForm}
+                        <button className="secondary" onClick={() => setAddingSupplier(false)}>
+                          Cancelar
+                        </button>
+                      </section>
+                    </div>
+                  )}
                   {!isAdmin && (
                     <Card title="Registrar pago">
                       <Form
@@ -1071,6 +1080,25 @@ export default function App() {
                         }
                       />
                     </Card>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <div className="grid">
+                        <Card title="Directorio de proveedores">
+                          <Table
+                            headers={['Empresa', 'Representante', 'Teléfono', 'Producto']}
+                            rows={data.suppliers
+                              .filter((s: any) => s.active)
+                              .map((s: any) => [
+                                s.company,
+                                s.representative || s.contact || '—',
+                                s.phone || '—',
+                                s.product_type || '—',
+                              ])}
+                          />
+                        </Card>
+                      </div>
+                    </>
                   )}
                   {isAdmin && (
                     <Card title="Corrección después del cierre">
@@ -1182,7 +1210,7 @@ export default function App() {
                   </Card>
                 </>
               )}
-              {page === 'Caja proveedores' && (
+              {page === 'Caja proveedores' && !isAdmin && (
                 <>
                   <div className="stats">
                     <Stat
@@ -1742,7 +1770,7 @@ export default function App() {
                             setAllBranches(await request('/branches?include_archived=true'));
                             if (!branchId) setBranchId(list[0]?.id || '');
                             setNewRegisterCount(1);
-                            setMessage('Sucursal creada.');
+                            setMessage('Registro guardado correctamente.');
                           }}
                         />
                       </Card>

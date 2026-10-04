@@ -64,7 +64,8 @@ test('empleado creado por administrador prepara un equipo nuevo y vuelve a entra
   await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText('Acceso offline preparado', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Proveedores', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Caja proveedores', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Proveedores', exact: true })).toHaveCount(0);
   // A live second tab must not revoke the first one's lease.
   const competing = await context.newPage();
   await competing.goto('/');

@@ -58,6 +58,16 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await expect(
     page.getByRole('button', { name: 'Registro de entradas', exact: true }),
   ).toBeVisible();
+  await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
+  await page.getByRole('button', { name: 'Registrar entrada', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText(/Registro guardado correctamente/);
+  await page.getByRole('button', { name: 'Sincronizar y actualizar' }).click();
+  await expect(page.getByRole('status')).not.toContainText('before initialization');
+  await page.getByRole('button', { name: 'Faltantes', exact: true }).click();
+  await page.getByLabel('Producto', { exact: true }).fill('Faltante de prueba');
+  await page.getByRole('button', { name: 'Registrar faltante', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Registro guardado correctamente');
+  await expect(page.locator('.pending-panel')).toHaveCount(0, { timeout: 20000 });
   const other = await browser.newContext();
   const otherPage = await other.newPage();
   await otherPage.goto('/');
@@ -75,7 +85,6 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await selectBox(page, 3);
   await expect(page.getByRole('button', { name: 'Caja proveedores', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
-  await page.getByRole('button', { name: 'Registrar entrada', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Registrar salida', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Mi corte', exact: true }).click();
   await expect(page.getByLabel('Horario vinculado · opcional')).toHaveCount(0);

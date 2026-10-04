@@ -81,10 +81,19 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await expect(page.getByText('Acceso offline preparado', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await signIn(page, first);
-  await nav(page, 'Proveedores');
-  await page.getByLabel('Empresa', { exact: true }).fill('Proveedor piloto');
-  await page.getByRole('button', { name: 'Agregar proveedor' }).click();
-  await expect(page.getByRole('cell', { name: 'Proveedor piloto' })).toBeVisible();
+  await nav(page, 'Caja proveedores');
+  await page.getByRole('button', { name: 'Agregar proveedores', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Agregar proveedor' });
+  await expect(dialog.getByLabel('Representante / teléfono', { exact: true })).toHaveCount(0);
+  await dialog.getByLabel('Empresa', { exact: true }).fill('Proveedor piloto');
+  await dialog.getByLabel('Representante', { exact: true }).fill('María');
+  await dialog.getByLabel('Teléfono', { exact: true }).fill('6691234567');
+  await dialog.getByLabel('Tipo de producto', { exact: true }).fill('Bebidas');
+  await dialog.getByRole('button', { name: 'Agregar proveedor', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByLabel('Proveedor', { exact: true }).getByRole('option', { name: 'Proveedor piloto' }),
+  ).toHaveCount(1);
   await page.getByRole('button', { name: 'Sincronizar y actualizar' }).click();
   await expect(page.locator('.pending-panel')).toHaveCount(0);
   // Wait until the production PWA controls the page before cutting the network.
@@ -101,11 +110,21 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await nav(page, 'Caja proveedores');
   await page.getByRole('button', { name: 'Abrir mi turno' }).click();
   await expect(page.getByRole('heading', { name: 'Cerrar y entregar turno' })).toBeVisible();
-  await page.getByLabel('Importe · MXN', { exact: true }).fill('500');
+  await page
+    .locator('.card')
+    .filter({
+      has: page.getByRole('heading', { name: 'Agregar efectivo a proveedores', exact: true }),
+    })
+    .getByLabel('Importe · MXN', { exact: true })
+    .fill('500');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
-  await nav(page, 'Proveedores');
+  await nav(page, 'Caja proveedores');
   await page.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Proveedor piloto' });
-  await page.getByLabel('Importe · MXN', { exact: true }).fill('300');
+  await page
+    .locator('.card')
+    .filter({ has: page.getByRole('heading', { name: 'Registrar pago', exact: true }) })
+    .getByLabel('Importe · MXN', { exact: true })
+    .fill('300');
   await page.getByRole('button', { name: 'Guardar ticket' }).click();
   await expect(page.getByRole('cell', { name: '$300.00' })).toBeVisible();
   await nav(page, 'Tareas');
@@ -146,6 +165,11 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   });
   const data = await state.json();
   expect(data.tickets).toHaveLength(1);
+  expect(data.suppliers[0]).toMatchObject({
+    representative: 'María',
+    phone: '6691234567',
+    product_type: 'Bebidas',
+  });
   expect(data.branch.balance_cents).toBe('219000');
   expect(data.treasury.reduce((n: number, t: any) => n + Number(t.cash_cents), 0)).toBe(970000);
   expect(data.tasks[0].completed_at).toBeTruthy();
@@ -154,7 +178,13 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await context.setOffline(true);
   const real = Date.now();
   await page.clock.install({ time: new Date(real - 3600_000) });
-  await page.getByLabel('Importe · MXN', { exact: true }).fill('1');
+  await page
+    .locator('.card')
+    .filter({
+      has: page.getByRole('heading', { name: 'Agregar efectivo a proveedores', exact: true }),
+    })
+    .getByLabel('Importe · MXN', { exact: true })
+    .fill('1');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('reloj retrocedió');
   await page.clock.setSystemTime(new Date(real));
@@ -164,9 +194,15 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await expect(page.locator('.pending-panel')).toBeVisible();
   await nav(page, 'Caja proveedores');
   await page.clock.setSystemTime(new Date(real + 9 * 3600_000));
-  await page.getByLabel('Importe · MXN', { exact: true }).fill('1');
+  await page
+    .locator('.card')
+    .filter({
+      has: page.getByRole('heading', { name: 'Agregar efectivo a proveedores', exact: true }),
+    })
+    .getByLabel('Importe · MXN', { exact: true })
+    .fill('1');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Guardado en este equipo');
-  await expect(page.locator('.pending-panel')).toContainText('2 operación(es)');
+  await expect(page.getByRole('status')).toContainText('Registro guardado correctamente');
+  await expect(page.locator('.pending-panel')).toContainText('2 registro(s)');
   await page.screenshot({ path: 'test-results/caja-proveedores.png', fullPage: true });
 });
