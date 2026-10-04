@@ -161,6 +161,38 @@
         }
       }
     },
+    "/auth/logout-on-close": {
+      "post": {
+        "operationId": "post__api_v1_auth_logout_on_close",
+        "summary": "POST /api/v1/auth/logout-on-close",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
     "/auth/change-password": {
       "post": {
         "operationId": "post__api_v1_auth_change_password",

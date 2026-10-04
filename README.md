@@ -47,7 +47,7 @@ Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el
 
 ## Sucursales y cajas
 
-El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se comprueba cada 30 segundos, sin vencimiento automático. Cerrar sesión la libera. Si alguien dejó una sesión abierta, el administrador puede liberar la caja desde Configuración confirmando su contraseña. El menú de proveedores depende de seleccionar la caja de proveedores configurada.
+El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se comprueba cada 30 segundos, sin vencimiento automático. Cerrar sesión o cerrar la ventana la libera cuando el aviso llega al servidor. Si el navegador se cierra sin red o de forma abrupta, el mismo usuario puede recuperar su caja al volver a entrar desde ese equipo. Otra pestaña abierta no puede apropiarse de la caja. Si alguien dejó una sesión abierta, el administrador puede liberar la caja desde Configuración confirmando su contraseña. El menú de proveedores depende de seleccionar la caja de proveedores configurada.
 
 El acceso offline se prepara automáticamente para la caja seleccionada y no vence por tiempo. Sin conexión se permite la última caja preparada y se advierte que su ocupación no puede comprobarse. Tras un login offline, al reconectar se pueden enviar los pendientes; antes de nuevas capturas online se requiere volver a iniciar sesión para reservar la caja. Los cortes quedan vinculados a la caja firmada en la concesión.
 

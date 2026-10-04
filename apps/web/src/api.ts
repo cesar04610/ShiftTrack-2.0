@@ -18,6 +18,32 @@ function storeToken(token?: string) {
 export function hasOnlineSession() {
   return !!accessToken;
 }
+// pagehide covers tab/window close and navigation without logging out on minimization.
+// Delivery is best effort; a fresh login can recover its own box on this device.
+function closeWindowSession() {
+  const token = accessToken;
+  storeToken();
+  if (!token) return;
+  const body = JSON.stringify({ token });
+  if (
+    !navigator.sendBeacon?.(
+      '/api/v1/auth/logout-on-close',
+      new Blob([body], { type: 'application/json' }),
+    )
+  )
+    fetch('/api/v1/auth/logout-on-close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+}
+window.addEventListener('pagehide', closeWindowSession);
+window.addEventListener('beforeunload', closeWindowSession);
+// A page restored from the back/forward cache must not reuse its revoked session.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) window.location.reload();
+});
 export class ApiError extends Error {
   constructor(
     public code: string,
@@ -55,7 +81,7 @@ export async function logoutSession() {
     try {
       await request('/auth/logout', {}, `Bearer ${token}`);
     } catch {
-      /* Offline: se borra acceso local; el token servidor vence en ocho horas. */
+      /* Sin red: se borra el acceso local; la caja puede recuperarse al volver a entrar en este equipo. */
     }
   }
 }

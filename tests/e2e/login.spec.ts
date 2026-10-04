@@ -21,7 +21,7 @@ test('empleado creado por administrador prepara un equipo nuevo y vuelve a entra
   });
   expect(ownerLogin.ok()).toBeTruthy();
   const ownerHeaders = { Authorization: `Bearer ${(await ownerLogin.json()).access_token}` };
-  const branches = [];
+  const branches: { id: string }[] = [];
   for (const name of [`Equipo ${suffix}`, `Empleado ${suffix}`]) {
     const response = await page.request.post(`${apiBase}/api/v1/branches`, {
       headers: ownerHeaders,
@@ -65,6 +65,42 @@ test('empleado creado por administrador prepara un equipo nuevo y vuelve a entra
   await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText('Acceso offline preparado', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Proveedores', exact: true })).toBeVisible();
+  // A live second tab must not revoke the first one's lease.
+  const competing = await context.newPage();
+  await competing.goto('/');
+  await signIn(competing, employeeUsername);
+  await competing.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
+  await competing.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
+  await expect(competing.getByRole('alert')).toContainText('Otra pestaña');
+  await competing.close();
+  // Normal navigation sends the close notification, releases the register and requires login.
+  expect(await page.evaluate(() => sessionStorage.getItem('shifttrack-session-v1')?.length)).toBe(
+    43,
+  );
+  await page.reload();
+  await expect
+    .poll(async () => {
+      const response = await context.request.get(
+        `${apiBase}/api/v1/registers?branch_id=${branches[1].id}`,
+        { headers: ownerHeaders },
+      );
+      return (await response.json()).length;
+    })
+    .toBe(0);
+  await page.goto('/');
+  await signIn(page, employeeUsername);
+  await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
+  // Missed close notification (offline) also recovers the same user's box on reconnection.
+  await context.setOffline(true);
+  await page.goto('about:blank');
+  await context.setOffline(false);
+  await page.goto('/');
+  await signIn(page, employeeUsername);
+  await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Entrar a esta caja', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await page.route('**/api/v1/auth/login', (route) => route.abort());
   await signIn(page, employeeUsername);

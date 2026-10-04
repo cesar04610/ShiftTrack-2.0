@@ -195,24 +195,34 @@ export async function selectRegister(registerNumber: number, connected: boolean)
   }
   const branchId = onlineCredentials?.user.branch_id || session?.user.branch_id;
   const device = await getDevice(branchId || undefined);
-  const lease = await request('/registers/select', {
-    register_number: registerNumber,
-    device_id: device.id,
-    public_key: device.public_key,
-  });
-  if (branchId && lease.device_id)
-    await db.meta.put({ id: `device:${branchId}`, value: { ...device, id: lease.device_id } });
-  if (onlineCredentials) {
-    const credentials = onlineCredentials;
-    await prepareEmployee(credentials.user, credentials.password);
-    onlineCredentials = null;
-  } else
-    assert(
-      !session || preparedRegister() === registerNumber,
-      'REGISTER_NOT_PREPARED',
-      'Inicia sesión de nuevo para preparar otra caja.',
-    );
-  return { prepared: !!session };
+  const alreadyWriter = !!releaseWriter;
+  await activateWriter();
+  try {
+    const lease = await request('/registers/select', {
+      register_number: registerNumber,
+      device_id: device.id,
+      public_key: device.public_key,
+    });
+    if (branchId && lease.device_id)
+      await db.meta.put({ id: `device:${branchId}`, value: { ...device, id: lease.device_id } });
+    if (onlineCredentials) {
+      const credentials = onlineCredentials;
+      await prepareEmployee(credentials.user, credentials.password);
+      onlineCredentials = null;
+    } else
+      assert(
+        !session || preparedRegister() === registerNumber,
+        'REGISTER_NOT_PREPARED',
+        'Inicia sesión de nuevo para preparar otra caja.',
+      );
+    return { prepared: !!session };
+  } catch (error) {
+    if (!alreadyWriter) {
+      releaseWriter?.();
+      releaseWriter = null;
+    }
+    throw error;
+  }
 }
 
 export async function login(username: string, password: string) {

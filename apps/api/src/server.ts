@@ -68,6 +68,11 @@ app.post('/api/v1/auth/logout', async (req, res) => {
   await revokeSession(req.headers.authorization);
   res.json({ ok: true });
 });
+app.post('/api/v1/auth/logout-on-close', async (req, res) => {
+  const { token } = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).parse(req.body);
+  await revokeSession(`Bearer ${token}`);
+  res.json({ ok: true });
+});
 app.post('/api/v1/auth/change-password', async (req, res) => {
   const user = await identity(req.headers.authorization),
     body = z
@@ -238,8 +243,33 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     const held = (
       await db.query('SELECT * FROM register_leases WHERE register_number=$1', [register_number])
     ).rows[0];
+    // Reclaim only this user's prior session on the same enrolled browser/device.
+    // A late close notification can only revoke its old token, never the replacement.
+    let recovered = false;
+    if (
+      !heartbeat &&
+      held &&
+      held.session_hash !== sessionHash &&
+      held.user_id === user.id &&
+      req.body.device_id &&
+      req.body.public_key &&
+      (!held.device_id || held.device_id === req.body.device_id)
+    ) {
+      const previousDevice = (
+        await db.query('SELECT * FROM devices WHERE id=$1', [z.uuid().parse(req.body.device_id)])
+      ).rows[0];
+      if (
+        previousDevice?.active &&
+        previousDevice.branch_id === user.branch_id &&
+        previousDevice.public_key.x === req.body.public_key.x &&
+        previousDevice.public_key.y === req.body.public_key.y
+      ) {
+        await db.query('DELETE FROM auth_sessions WHERE token_hash=$1', [held.session_hash]);
+        recovered = true;
+      }
+    }
     assert(
-      !held || held.session_hash === sessionHash,
+      !held || held.session_hash === sessionHash || recovered,
       'REGISTER_OCCUPIED',
       `La caja ${register_number} ya está ocupada. Selecciona otra caja.`,
       409,

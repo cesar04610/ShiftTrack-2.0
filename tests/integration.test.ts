@@ -209,6 +209,31 @@ test('preparación automática, caja de proveedores y liberación administrativa
   a.equal((await call('/registers/select', { register_number: 1 }, next)).status, 200);
   await call('/auth/logout', {}, next);
 });
+test('cerrar ventana libera caja y el mismo equipo recupera una sesión abandonada', async () => {
+  const first = (await issueSession(employee)).access_token;
+  const registration = {
+    register_number: 3,
+    device_id: device,
+    public_key: pair.publicKey.export({ format: 'jwk' }),
+  };
+  a.equal((await call('/registers/select', registration, first)).status, 200);
+  const other = (await issueSession(second)).access_token;
+  a.equal((await call('/registers/select', registration, other)).status, 409);
+  const replacement = (await issueSession(employee)).access_token;
+  a.equal((await call('/registers/heartbeat', { register_number: 3 }, replacement)).status, 409);
+  a.equal(
+    (await call('/registers/select', { ...registration, device_id: randomUUID() }, replacement))
+      .status,
+    409,
+  );
+  a.equal((await call('/registers/select', registration, replacement)).status, 200);
+  a.equal((await call('/auth/me', undefined, first)).status, 401);
+  a.equal((await call('/auth/logout-on-close', { token: first }, '')).status, 200);
+  a.equal((await call('/registers/heartbeat', { register_number: 3 }, replacement)).status, 200);
+  a.equal((await call('/auth/logout-on-close', { token: replacement }, '')).status, 200);
+  a.equal((await call('/registers/select', registration, other)).status, 200);
+  await call('/auth/logout', {}, other);
+});
 test('eliminar sucursal exige dueño y contraseña, revoca acceso y conserva historial', async () => {
   const invalid = await call('/branches', {
     name: 'Inválida',
