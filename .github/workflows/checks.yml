@@ -1,0 +1,30 @@
+name: Verificación
+on: [push, pull_request]
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: shifttrack
+          POSTGRES_PASSWORD: shifttrack_local_only
+          POSTGRES_DB: shifttrack
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U shifttrack -d shifttrack"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: cp .env.example .env
+      - run: npm run db:migrate && npm run db:seed && npm run build:local
+      - run: npx playwright install --with-deps chromium
+      - run: npx firebase emulators:exec --only auth --project demo-shifttrack 'npm test && bash scripts/ci-e2e.sh'

@@ -1,0 +1,1587 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ShiftTrack API",
+    "version": "0.1.0",
+    "description": "Rutas derivadas de los routers implementados. Contrato de comandos generado de Zod. Los payloads de módulos se validan en sus handlers; este inventario todavía no describe todos sus cuerpos."
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "get__api_v1_health",
+        "summary": "GET /api/v1/health",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "post__api_v1_auth_login",
+        "summary": "POST /api/v1/auth/login",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "writeOnly": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "get__api_v1_auth_me",
+        "summary": "GET /api/v1/auth/me",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "post__api_v1_auth_logout",
+        "summary": "POST /api/v1/auth/logout",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/auth/change-password": {
+      "post": {
+        "operationId": "post__api_v1_auth_change_password",
+        "summary": "POST /api/v1/auth/change-password",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/branches": {
+      "get": {
+        "operationId": "get__api_v1_branches",
+        "summary": "GET /api/v1/branches",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post__api_v1_branches",
+        "summary": "POST /api/v1/branches",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/register": {
+      "post": {
+        "operationId": "post__api_v1_devices_register",
+        "summary": "POST /api/v1/devices/register",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/user-grants": {
+      "post": {
+        "operationId": "post__api_v1_devices_user_grants",
+        "summary": "POST /api/v1/devices/user-grants",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/challenge": {
+      "post": {
+        "operationId": "post__api_v1_devices_challenge",
+        "summary": "POST /api/v1/devices/challenge",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/session": {
+      "post": {
+        "operationId": "post__api_v1_devices_session",
+        "summary": "POST /api/v1/devices/session",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/sync/push": {
+      "post": {
+        "operationId": "post__api_v1_sync_push",
+        "summary": "POST /api/v1/sync/push",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "commands"
+                ],
+                "properties": {
+                  "commands": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                      "$ref": "#/components/schemas/Command"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/snapshot": {
+      "get": {
+        "operationId": "get__api_v1_snapshot",
+        "summary": "GET /api/v1/snapshot",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/users": {
+      "post": {
+        "operationId": "post__api_v1_users",
+        "summary": "POST /api/v1/users",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/users/{id}/deactivate": {
+      "post": {
+        "operationId": "post__api_v1_users__id__deactivate",
+        "summary": "POST /api/v1/users/{id}/deactivate",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/clock/{action}": {
+      "post": {
+        "operationId": "post__api_v1_clock__action_",
+        "summary": "POST /api/v1/clock/{action}",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/schedules": {
+      "post": {
+        "operationId": "post__api_v1_schedules",
+        "summary": "POST /api/v1/schedules",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "post": {
+        "operationId": "post__api_v1_tasks",
+        "summary": "POST /api/v1/tasks",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/treasury/opening": {
+      "post": {
+        "operationId": "post__api_v1_treasury_opening",
+        "summary": "POST /api/v1/treasury/opening",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/treasury/movements": {
+      "post": {
+        "operationId": "post__api_v1_treasury_movements",
+        "summary": "POST /api/v1/treasury/movements",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/schedules/clone": {
+      "post": {
+        "operationId": "post__schedules_clone",
+        "summary": "POST /schedules/clone",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/tasks/catalog": {
+      "post": {
+        "operationId": "post__tasks_catalog",
+        "summary": "POST /tasks/catalog",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/tasks/assignments": {
+      "post": {
+        "operationId": "post__tasks_assignments",
+        "summary": "POST /tasks/assignments",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/tasks/{id}/revert": {
+      "post": {
+        "operationId": "post__tasks__id__revert",
+        "summary": "POST /tasks/{id}/revert",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/tasks/assignments/{id}/deactivate": {
+      "post": {
+        "operationId": "post__tasks_assignments__id__deactivate",
+        "summary": "POST /tasks/assignments/{id}/deactivate",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/shortages/{id}/resolve": {
+      "post": {
+        "operationId": "post__shortages__id__resolve",
+        "summary": "POST /shortages/{id}/resolve",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/users/{id}/update": {
+      "post": {
+        "operationId": "post__users__id__update",
+        "summary": "POST /users/{id}/update",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/suppliers/{id}/update": {
+      "post": {
+        "operationId": "post__suppliers__id__update",
+        "summary": "POST /suppliers/{id}/update",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/supplier-corrections/prepare": {
+      "post": {
+        "operationId": "post__supplier_corrections_prepare",
+        "summary": "POST /supplier-corrections/prepare",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/state": {
+      "get": {
+        "operationId": "get__devices_state",
+        "summary": "GET /devices/state",
+        "security": [
+          {
+            "deviceTransport": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/devices/pause-ack": {
+      "post": {
+        "operationId": "post__devices_pause_ack",
+        "summary": "POST /devices/pause-ack",
+        "security": [
+          {
+            "deviceTransport": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/supplier-corrections": {
+      "post": {
+        "operationId": "post__supplier_corrections",
+        "summary": "POST /supplier-corrections",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/supplier-corrections/cancel": {
+      "post": {
+        "operationId": "post__supplier_corrections_cancel",
+        "summary": "POST /supplier-corrections/cancel",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/expense-categories": {
+      "post": {
+        "operationId": "post__expense_categories",
+        "summary": "POST /expense-categories",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/alerts/settings": {
+      "post": {
+        "operationId": "post__alerts_settings",
+        "summary": "POST /alerts/settings",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/notifications/{id}/retry": {
+      "post": {
+        "operationId": "post__notifications__id__retry",
+        "summary": "POST /notifications/{id}/retry",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/alerts/{id}/seen": {
+      "post": {
+        "operationId": "post__alerts__id__seen",
+        "summary": "POST /alerts/{id}/seen",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/reports/export": {
+      "get": {
+        "operationId": "get__reports_export",
+        "summary": "GET /reports/export",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/analytics": {
+      "get": {
+        "operationId": "get__analytics",
+        "summary": "GET /analytics",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/media/upload": {
+      "post": {
+        "operationId": "post__media_upload",
+        "summary": "POST /media/upload",
+        "security": [
+          {
+            "deviceTransport": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/media/{id}/content": {
+      "get": {
+        "operationId": "get__media__id__content",
+        "summary": "GET /media/{id}/content",
+        "security": [
+          {
+            "firebaseIdToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "firebaseIdToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Firebase ID token (no custom token)"
+      },
+      "deviceTransport": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Device TOKEN; solo transporte de pendientes y confirmaciones de equipo"
+      }
+    },
+    "schemas": {
+      "Command": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "schema_version": {
+            "type": "number",
+            "const": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "supplier.create",
+              "supplier.ticket.create",
+              "supplier.ticket.void",
+              "supplier.balance.add",
+              "supplier.shift.open",
+              "supplier.shift.close",
+              "supplier.shift.reconcile",
+              "cut.create",
+              "task.complete",
+              "shortage.create"
+            ]
+          },
+          "branch_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "device_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "actor_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "grant_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "assignment_epoch": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "device_seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "expected_version": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "depends_on": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          "payload": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          },
+          "signature": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "operation_id",
+          "schema_version",
+          "type",
+          "branch_id",
+          "device_id",
+          "actor_user_id",
+          "grant_id",
+          "assignment_epoch",
+          "device_seq",
+          "expected_version",
+          "occurred_at",
+          "depends_on",
+          "payload",
+          "signature"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

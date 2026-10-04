@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+node_modules
+dist
+apps/web/dist
+test-results
+playwright-report
+*-debug.log
+*.log
