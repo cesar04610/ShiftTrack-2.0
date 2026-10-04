@@ -75,24 +75,46 @@ export async function identity(header?: string): Promise<User> {
   assert(user, 'UNAUTHENTICATED', 'Sesión vencida o desactivada. Inicia sesión.', 401);
   return user;
 }
-export async function checkPassword(username: string, password: string) {
-  const row = (
+export async function passwordAccounts(
+  username: string,
+  password: string,
+  branchId?: string,
+  userId?: string,
+) {
+  const rows = (
     await pool.query(
-      "SELECT u.*,p.hash,(u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active)) AS branch_active FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE username=$1",
-      [username.trim().toLowerCase()],
+      `SELECT u.*,p.hash,(u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active)) AS branch_active
+ FROM users u JOIN password_credentials p ON p.user_id=u.id
+ WHERE username=$1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR u.branch_id=$2) AND ($3::uuid IS NULL OR u.id=$3)`,
+      [username.trim().toLowerCase(), branchId || null, userId || null],
     )
-  ).rows[0];
-  // A dummy hash keeps the costly password check present for unknown names too.
-  const hash = row?.hash ?? (await dummyHash);
-  const valid = await argon2.verify(hash, password);
+  ).rows;
+  const matches: User[] = [];
+  if (!rows.length) await argon2.verify(await dummyHash, password);
+  for (const row of rows) {
+    const valid = await argon2.verify(row.hash, password);
+    if (valid && row.active && row.branch_active) {
+      const { hash: _, branch_active: __, ...user } = row;
+      matches.push(user as User);
+    }
+  }
+  assert(matches.length, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos.', 401);
+  return matches;
+}
+export async function checkPassword(
+  username: string,
+  password: string,
+  branchId?: string,
+  userId?: string,
+) {
+  const matches = await passwordAccounts(username, password, branchId, userId);
   assert(
-    valid && row?.active && row?.branch_active,
-    'INVALID_CREDENTIALS',
-    'Usuario o contraseña incorrectos.',
-    401,
+    matches.length === 1,
+    'BRANCH_REQUIRED',
+    'Selecciona la sucursal en la que vas a trabajar.',
+    409,
   );
-  const { hash: _, branch_active: __, ...user } = row;
-  return user as User;
+  return matches[0];
 }
 const dummyHash = argon2.hash(randomBytes(32));
 export function verifySignature(body: unknown, signature: string, jwk: object) {

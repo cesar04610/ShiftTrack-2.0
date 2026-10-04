@@ -53,6 +53,12 @@ El acceso offline se prepara automáticamente para la caja seleccionada y no ven
 
 Eliminar una sucursal exige superadministrador y su contraseña actual. Se desactiva, revoca sesiones y equipos, detiene sus procesos y conserva usuarios, movimientos y fotografías. Un turno de proveedores abierto debe cerrarse primero. El dueño puede consultar el historial desde Configuración. Las capturas previas que lleguen después quedan para revisión.
 
+## Empleados por sucursal
+
+El nombre de usuario es único dentro de cada sucursal. El mismo empleado puede tener una cuenta en Quates y otra en Madeira, con registros y permisos separados. Si sus credenciales coinciden en varias tiendas, el inicio de sesión pide elegir la sucursal. El acceso offline preparado se conserva por usuario y tienda.
+
+En Usuarios, **Eliminar empleado** pide confirmación, retira la cuenta de la lista, revoca sus sesiones y permite reutilizar su nombre en esa sucursal. Se conserva la fila original con `deleted_at` para mantener sus registros, fotografías y autoría en informes. Su cuenta en otras sucursales no cambia. **Desactivar** conserva la cuenta en la lista como inactiva. Un turno de proveedores abierto debe cerrarse antes de eliminar a su responsable.
+
 ## Pruebas
 
 Con PostgreSQL en ejecución:

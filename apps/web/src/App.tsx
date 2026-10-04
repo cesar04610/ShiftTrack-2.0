@@ -216,6 +216,8 @@ const labels: Record<string, string> = {
 };
 export default function App() {
   const [user, setUser] = useState<User | null>(null),
+    [loginBranches, setLoginBranches] = useState<{ id: string; name: string }[]>([]),
+    [deletingUser, setDeletingUser] = useState<any>(null),
     [branches, setBranches] = useState<any[]>([]),
     [branchId, setBranchId] = useState(''),
     [registerNumber, setRegisterNumber] = useState<number | null>(null),
@@ -305,7 +307,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user, registerNumber, online]);
   async function signIn(values: Record<string, string>) {
-    const result = await login(values.username, values.password);
+    let result;
+    try {
+      result = await login(values.username, values.password, values.branch_id || undefined);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'BRANCH_REQUIRED')
+        setLoginBranches(error.details.branches);
+      throw error;
+    }
+    setLoginBranches([]);
     setRegisterNumber(null);
     setData(null);
     setUser(result.user);
@@ -366,8 +376,22 @@ export default function App() {
           <p>Ingresa con tu usuario y contraseña.</p>
           <Form
             fields={[
-              { name: 'username', label: 'Usuario', placeholder: 'Nombre de usuario' },
+              {
+                name: 'username',
+                label: 'Usuario',
+                placeholder: 'Nombre de usuario',
+                onChange: () => setLoginBranches([]),
+              },
               { name: 'password', label: 'Contraseña', type: 'password' },
+              ...(loginBranches.length
+                ? [
+                    {
+                      name: 'branch_id',
+                      label: 'Sucursal de trabajo',
+                      options: loginBranches.map((b) => ({ value: b.id, label: b.name })),
+                    },
+                  ]
+                : []),
             ]}
             onSubmit={signIn}
             label="Iniciar sesión"
@@ -750,7 +774,11 @@ export default function App() {
                     <Form
                       fields={[
                         { name: 'name', label: 'Nombre' },
-                        { name: 'username', label: 'Usuario', placeholder: 'Único, sin espacios' },
+                        {
+                          name: 'username',
+                          label: 'Usuario',
+                          placeholder: 'Único en esta sucursal, sin espacios',
+                        },
                         {
                           name: 'role',
                           label: 'Rol',
@@ -769,25 +797,63 @@ export default function App() {
                       onSubmit={(v) => mutate('/users', v)}
                     />
                   </Card>
+                  {deletingUser && (
+                    <Card title="Eliminar empleado">
+                      <p>
+                        ¿Eliminar a {deletingUser.name} de esta sucursal? Su cuenta dejará de
+                        aparecer en la lista y no podrá entrar aquí. Sus registros anteriores se
+                        conservarán.
+                      </p>
+                      <button
+                        className="primary"
+                        onClick={async () => {
+                          try {
+                            await mutate(`/users/${deletingUser.id}/delete`, {});
+                            setDeletingUser(null);
+                            setMessage('Empleado eliminado. Su historial se conserva.');
+                          } catch (e) {
+                            notify(e);
+                          }
+                        }}
+                      >
+                        Confirmar eliminación
+                      </button>
+                      <button className="secondary" onClick={() => setDeletingUser(null)}>
+                        Cancelar
+                      </button>
+                    </Card>
+                  )}
                   <Card title="Equipo de la sucursal">
                     <Table
                       headers={['Nombre', 'Usuario', 'Rol', 'Estado', '']}
-                      rows={data.users.map((u: any) => [
-                        u.name,
-                        u.username,
-                        labels[u.role],
-                        u.active ? 'Activo' : 'Inactivo',
-                        u.active &&
-                        u.id !== user.id &&
-                        (user.role === 'superadmin' || u.role === 'employee') ? (
-                          <button
-                            className="danger-link"
-                            onClick={() => mutate(`/users/${u.id}/deactivate`, {}).catch(notify)}
-                          >
-                            Desactivar
-                          </button>
-                        ) : null,
-                      ])}
+                      rows={data.users
+                        .filter((u: any) => !u.deleted_at)
+                        .map((u: any) => [
+                          u.name,
+                          u.username,
+                          labels[u.role],
+                          u.active ? 'Activo' : 'Inactivo',
+                          u.id !== user.id &&
+                          (user.role === 'superadmin' || u.role === 'employee') ? (
+                            <>
+                              {u.active && (
+                                <button
+                                  className="danger-link"
+                                  onClick={() =>
+                                    mutate(`/users/${u.id}/deactivate`, {}).catch(notify)
+                                  }
+                                >
+                                  Desactivar
+                                </button>
+                              )}
+                              {u.role === 'employee' && (
+                                <button className="danger-link" onClick={() => setDeletingUser(u)}>
+                                  Eliminar empleado
+                                </button>
+                              )}
+                            </>
+                          ) : null,
+                        ])}
                     />
                   </Card>
                 </>

@@ -29,7 +29,7 @@ try {
     const id = randomUUID();
     const row = (
       await db.query(
-        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(username) DO NOTHING RETURNING id',
+        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
         [id, username, name, role, role === 'superadmin' ? null : branch],
       )
     ).rows[0];

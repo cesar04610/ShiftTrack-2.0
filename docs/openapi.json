@@ -750,6 +750,47 @@
         }
       }
     },
+    "/users/{id}/delete": {
+      "post": {
+        "operationId": "post__api_v1_users__id__delete",
+        "summary": "POST /api/v1/users/{id}/delete",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
     "/clock/{action}": {
       "post": {
         "operationId": "post__api_v1_clock__action_",

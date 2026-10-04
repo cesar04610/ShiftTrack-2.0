@@ -61,3 +61,7 @@ Después del despliegue: comprobar HTTPS, salud SQL, login/logout, roles, eviden
 ## Respaldos
 
 La API de Railway rechazó `volumeInstanceBackupScheduleUpdate` con «Not Authorized». El propietario debe activar los respaldos diarios de SQL y fotografías desde Railway si están disponibles en el plan. No presentar el volumen persistente como respaldo ni afirmar una restauración verificada. Antes de uso real, ejecutar y validar una restauración en un entorno aislado.
+
+## Migración 008: empleados por sucursal
+
+La migración `008-users-per-branch.sql` agrega `users.deleted_at` y sustituye la unicidad global del nombre por un índice único de cuentas no eliminadas por sucursal. Conserva usuarios, contraseñas e historial existentes. El runtime comprueba la nueva columna antes de servir solicitudes. El login valida contraseña antes de ofrecer sucursales; confirmaciones internas validan el ID de cuenta, evitando ambigüedad cuando dos cuentas comparten nombre.

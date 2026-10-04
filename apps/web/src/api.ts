@@ -48,6 +48,7 @@ export class ApiError extends Error {
   constructor(
     public code: string,
     message: string,
+    public details?: any,
   ) {
     super(message);
   }
@@ -66,11 +67,21 @@ export async function request(path: string, body?: unknown, authorization?: stri
     throw new ApiError('NETWORK', 'No se pudo conectar con el servidor.');
   }
   const result = await response.json();
-  if (!response.ok) throw new ApiError(result.code, result.message);
+  if (!response.ok) throw new ApiError(result.code, result.message, result);
   return result;
 }
-export async function onlineLogin(username: string, password: string) {
-  const result = await request('/auth/login', { username, password });
+export async function onlineLogin(username: string, password: string, branchId?: string) {
+  const result = await request('/auth/login', {
+    username,
+    password,
+    ...(branchId ? { branch_id: branchId } : {}),
+  });
+  if (result.branch_required)
+    throw new ApiError(
+      'BRANCH_REQUIRED',
+      'Selecciona la sucursal en la que vas a trabajar.',
+      result,
+    );
   storeToken(result.access_token);
   return result;
 }

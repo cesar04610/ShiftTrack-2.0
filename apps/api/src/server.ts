@@ -9,6 +9,7 @@ import { pool, context, transaction, admin, owner, verifyRuntimeRole } from './d
 import {
   identity,
   checkPassword,
+  passwordAccounts,
   issueSession,
   revokeSession,
   issueGrant,
@@ -57,10 +58,39 @@ app.post(
   rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }),
   async (req, res) => {
     const body = z
-      .object({ username: z.string().min(1).max(100), password: z.string().min(1).max(256) })
+      .object({
+        username: z.string().min(1).max(100),
+        password: z.string().min(1).max(256),
+        branch_id: z.union([z.uuid(), z.literal('owner')]).optional(),
+      })
       .parse(req.body);
-    const user = await checkPassword(body.username, body.password);
-    res.json(await issueSession(user));
+    const matched = await passwordAccounts(
+      body.username,
+      body.password,
+      body.branch_id === 'owner' ? undefined : body.branch_id,
+    );
+    const users =
+      body.branch_id === 'owner' ? matched.filter((u) => u.role === 'superadmin') : matched;
+    assert(users.length, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos.', 401);
+    if (users.length > 1) {
+      const ids = users.map((u) => u.branch_id).filter(Boolean);
+      const branches = (
+        await pool.query('SELECT id,name FROM branches WHERE id=ANY($1::uuid[]) ORDER BY name', [
+          ids,
+        ])
+      ).rows;
+      res.json({
+        branch_required: true,
+        branches: [
+          ...branches,
+          ...(users.some((u) => u.role === 'superadmin')
+            ? [{ id: 'owner', name: 'Superadministración' }]
+            : []),
+        ],
+      });
+      return;
+    }
+    res.json(await issueSession(users[0]));
   },
 );
 app.get('/api/v1/auth/me', async (req, res) => res.json(await identity(req.headers.authorization)));
@@ -347,7 +377,7 @@ app.post(
     admin(user);
     const branch = await context(user, req.body.branch_id);
     const password = z.string().min(1).max(256).parse(req.body.password);
-    await checkPassword(user.username, password);
+    await checkPassword(user.username, password, undefined, user.id);
     const number = z.coerce.number().int().positive().parse(req.params.number);
     await transaction(branch.id, async (db) => {
       await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [branch.id]);
@@ -421,7 +451,7 @@ app.post('/api/v1/devices/user-grants', async (req, res) => {
         .passthrough(),
     })
     .parse(req.body);
-  await checkPassword(u.username, b.password);
+  await checkPassword(u.username, b.password, undefined, u.id);
   const selected = await transaction(
     u.branch_id!,
     async (db) =>
@@ -551,7 +581,7 @@ app.get('/api/v1/snapshot', async (req, res) => {
       if (user.role !== 'employee') {
         result.users = (
           await db.query(
-            'SELECT id,username,name,role,branch_id,active FROM users WHERE branch_id=$1 OR role=$2',
+            'SELECT id,username,name,role,branch_id,active,deleted_at FROM users WHERE branch_id=$1 OR role=$2',
             [b.id, user.role === 'superadmin' ? 'superadmin' : 'none'],
           )
         ).rows;
@@ -591,6 +621,17 @@ app.post('/api/v1/users', async (req, res) => {
   const id = randomUUID(),
     hash = await argon2.hash(p.password);
   await transaction(b.id, async (db) => {
+    assert(
+      !(
+        await db.query(
+          'SELECT id FROM users WHERE username=$1 AND branch_id IS NOT DISTINCT FROM $2::uuid AND deleted_at IS NULL',
+          [p.username, p.role === 'superadmin' ? null : b.id],
+        )
+      ).rowCount,
+      'USER_EXISTS',
+      'Ya existe un usuario con ese nombre en esta sucursal.',
+      409,
+    );
     await db.query('INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5)', [
       id,
       p.username,
@@ -631,6 +672,47 @@ app.post('/api/v1/users/:id/deactivate', async (req, res) => {
     await db.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [id]);
     await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [id]);
     await audit(db, branch.id, u, 'user.deactivate', { id });
+  });
+  res.json({ ok: true });
+});
+app.post('/api/v1/users/:id/delete', async (req, res) => {
+  const actor = await identity(req.headers.authorization);
+  admin(actor);
+  const id = z.uuid().parse(req.params.id),
+    branch = await context(actor, req.body.branch_id);
+  await transaction(branch.id, async (db) => {
+    await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [branch.id]);
+    const target = (await db.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [id])).rows[0];
+    assert(target, 'NOT_FOUND', 'Cuenta no encontrada.', 404);
+    assert(
+      target.role === 'employee' && target.branch_id === branch.id,
+      'FORBIDDEN',
+      'Solo puedes eliminar empleados de esta sucursal.',
+      403,
+    );
+    assert(
+      !(
+        await db.query(
+          'SELECT id FROM supplier_shifts WHERE actor_user_id=$1 AND closed_at IS NULL',
+          [id],
+        )
+      ).rowCount,
+      'OPEN_SHIFT',
+      'Cierra el turno de proveedores del empleado antes de eliminarlo.',
+      409,
+    );
+    if (!target.deleted_at) {
+      await db.query(
+        'UPDATE users SET active=false,deleted_at=now(),auth_version=auth_version+1 WHERE id=$1',
+        [id],
+      );
+      await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [id]);
+      await audit(db, branch.id, actor, 'user.delete', {
+        id,
+        username: target.username,
+        name: target.name,
+      });
+    }
   });
   res.json({ ok: true });
 });

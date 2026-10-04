@@ -162,7 +162,9 @@ async function prepareEmployee(user: User, password: string) {
       lastWall: Date.now(),
       offset: Date.parse(grant.body.issued_at) - Date.now(),
     };
-    await db.users.put(session);
+    await db.users.put({ ...session, username: `${user.branch_id}:${username}` });
+    const legacy = await db.users.get(username);
+    if (legacy?.user.id === user.id) await db.users.delete(username);
     privateKey = pair.privateKey;
     clockAnchor = { server: Date.parse(grant.body.issued_at), mono: performance.now() };
     await db.meta.put({ id: 'wall-highwater', value: Date.now() });
@@ -225,10 +227,10 @@ export async function selectRegister(registerNumber: number, connected: boolean)
   }
 }
 
-export async function login(username: string, password: string) {
+export async function login(username: string, password: string, branchId?: string) {
   username = username.trim().toLowerCase();
   try {
-    const result = await onlineLogin(username, password),
+    const result = await onlineLogin(username, password, branchId),
       device = await getDevice();
     const user = result.user as User;
     clockAnchor = { server: Date.parse(result.server_time), mono: performance.now() };
@@ -241,7 +243,23 @@ export async function login(username: string, password: string) {
       await logout();
       throw e;
     }
-    const prepared = await db.users.get(username);
+    const saved = (await db.users.toArray()).filter((p) => p.user.username === username);
+    const byBranch = new Map<string, Prepared>();
+    for (const p of saved) {
+      const key = p.user.branch_id!;
+      if (!byBranch.has(key) || p.username.includes(':')) byBranch.set(key, p);
+    }
+    if (!branchId && byBranch.size > 1) {
+      const branches = [];
+      for (const [id, p] of byBranch) {
+        const snapshot = (await db.caches.get(`snapshot:${id}:${p.user.id}`))?.value;
+        branches.push({ id, name: snapshot?.branch.name || id });
+      }
+      throw new ApiError('BRANCH_REQUIRED', 'Selecciona la sucursal en la que vas a trabajar.', {
+        branches,
+      });
+    }
+    const prepared = branchId ? byBranch.get(branchId) : byBranch.values().next().value;
     assert(
       prepared,
       'NOT_PREPARED',

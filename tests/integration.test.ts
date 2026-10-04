@@ -234,6 +234,111 @@ test('cerrar ventana libera caja y el mismo equipo recupera una sesión abandona
   a.equal((await call('/registers/select', registration, other)).status, 200);
   await call('/auth/logout', {}, other);
 });
+test('mismo usuario en dos sucursales, selección de acceso y eliminación conservando historial', async () => {
+  const username = `jenny-${randomUUID().slice(0, 8)}`,
+    password = 'ShiftTrack-demo-2026!';
+  const accounts = [];
+  for (const name of ['Quates', 'Madeira']) {
+    const b = await call('/branches', {
+      name: `${name} ${randomUUID()}`,
+      register_count: 3,
+      supplier_register: 3,
+    });
+    a.equal(b.status, 201);
+    const u = await call('/users', {
+      branch_id: b.body.id,
+      username,
+      name: 'Jenny',
+      role: 'employee',
+      password,
+    });
+    a.equal(u.status, 201);
+    accounts.push({ branch: b.body.id, id: u.body.id });
+  }
+  const selection = await call('/auth/login', { username, password }, '');
+  a.equal(selection.status, 200);
+  a.equal(selection.body.branch_required, true);
+  a.equal(selection.body.access_token, undefined);
+  a.deepEqual(
+    selection.body.branches.map((b: any) => b.id).sort(),
+    accounts.map((a) => a.branch).sort(),
+  );
+  const loginA = await call(
+    '/auth/login',
+    { username, password, branch_id: accounts[0].branch },
+    '',
+  );
+  const loginB = await call(
+    '/auth/login',
+    { username, password, branch_id: accounts[1].branch },
+    '',
+  );
+  a.equal(loginA.body.user.id, accounts[0].id);
+  a.equal(loginB.body.user.id, accounts[1].id);
+  a.equal(
+    (await call(`/snapshot?branch_id=${accounts[1].branch}`, undefined, loginA.body.access_token))
+      .status,
+    403,
+  );
+  a.equal((await call('/auth/login', { username, password: 'incorrecta' }, '')).status, 401);
+  a.equal(
+    (
+      await call('/users', {
+        branch_id: accounts[0].branch,
+        username,
+        name: 'Duplicada',
+        role: 'employee',
+        password,
+      })
+    ).body.code,
+    'USER_EXISTS',
+  );
+  const record = randomUUID();
+  await sql.query(
+    'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in,clock_out) VALUES($1,$2,$3,CURRENT_DATE,now(),now())',
+    [accounts[0].branch, record, accounts[0].id],
+  );
+  const adminName = `admin-${randomUUID().slice(0, 8)}`;
+  await call('/users', {
+    branch_id: accounts[0].branch,
+    username: adminName,
+    name: 'Administrador',
+    role: 'admin',
+    password,
+  });
+  const manager = await token(adminName);
+  a.equal(
+    (await call(`/users/${accounts[1].id}/delete`, { branch_id: accounts[0].branch }, manager))
+      .status,
+    403,
+  );
+  a.equal(
+    (await call(`/users/${accounts[0].id}/delete`, { branch_id: accounts[0].branch }, manager))
+      .status,
+    200,
+  );
+  a.equal((await call('/auth/me', undefined, loginA.body.access_token)).status, 401);
+  a.equal((await call('/auth/me', undefined, loginB.body.access_token)).status, 200);
+  a.equal((await sql.query('SELECT id FROM clock_records WHERE id=$1', [record])).rowCount, 1);
+  const deleted = (await sql.query('SELECT * FROM users WHERE id=$1', [accounts[0].id])).rows[0];
+  a.ok(deleted.deleted_at);
+  a.equal(deleted.active, false);
+  const replacement = await call('/users', {
+    branch_id: accounts[0].branch,
+    username,
+    name: 'Jenny nueva',
+    role: 'employee',
+    password,
+  });
+  a.equal(replacement.status, 201);
+  a.notEqual(replacement.body.id, accounts[0].id);
+  const recreated = await call(
+    '/auth/login',
+    { username, password, branch_id: accounts[0].branch },
+    '',
+  );
+  a.equal(recreated.body.user.id, replacement.body.id);
+});
 test('eliminar sucursal exige dueño y contraseña, revoca acceso y conserva historial', async () => {
   const invalid = await call('/branches', {
     name: 'Inválida',
