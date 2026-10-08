@@ -9,6 +9,7 @@ import {
   Minimize2,
   Moon,
   Sun,
+  Trash2,
   X,
 } from 'lucide-react';
 type Person = { id: string; name: string; role: string; active: boolean };
@@ -51,6 +52,7 @@ export default function ScheduleBoard({
   date,
   online,
   onSave,
+  onRemove,
 }: {
   users: Person[];
   schedules: Schedule[];
@@ -64,6 +66,7 @@ export default function ScheduleBoard({
     half: boolean;
     index?: number;
   }) => Promise<unknown>;
+  onRemove: (id: string) => Promise<unknown>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const board = useRef<HTMLElement>(null);
@@ -71,6 +74,7 @@ export default function ScheduleBoard({
   const [week, setWeek] = useState(() => monday(date));
   const [selection, setSelection] = useState<Selection | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -224,6 +228,7 @@ export default function ScheduleBoard({
   }
   function edit(s: Schedule) {
     setError('');
+    setConfirmRemove(false);
     setEditingId(s.id);
     dialog.current?.showModal();
   }
@@ -538,6 +543,35 @@ export default function ScheduleBoard({
                 </div>
               );
             })()}
+            <div className="board-remove">
+              {confirmRemove ? (
+                <>
+                  <span>¿Quitar a {editingPerson?.name || 'esta persona'} de este turno?</span>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => setConfirmRemove(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    className="danger"
+                    disabled={busy || !online}
+                    onClick={() => perform(() => onRemove(editing.id))}
+                  >
+                    Sí, quitar
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="danger-outline"
+                  disabled={busy || !online}
+                  onClick={() => setConfirmRemove(true)}
+                >
+                  <Trash2 size={15} /> Quitar del turno
+                </button>
+              )}
+            </div>
           </>
         )}
       </dialog>

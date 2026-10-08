@@ -46,6 +46,34 @@ schedules.post('/board', async (req, res) => {
   const [start_time, end_time] = boardTimes[p.shift][p.half ? 'half' : 'full'];
   res.json(await save(branch.id, actor.id, { ...p, start_time, end_time }, p.id, p.index));
 });
+schedules.post('/board/delete', async (req, res) => {
+  const actor = await identity(req.headers.authorization);
+  admin(actor);
+  const branch = await context(actor, req.body.branch_id);
+  const p = z.object({ id: z.uuid() }).parse(req.body);
+  res.json(
+    await transaction(branch.id, async (db) => {
+      await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [branch.id]);
+      const existing = (await db.query('SELECT * FROM schedules WHERE id=$1', [p.id])).rows[0];
+      assert(existing, 'NOT_FOUND', 'El horario ya no está disponible.', 404);
+      assert(
+        !(await db.query('SELECT 1 FROM cuts WHERE schedule_id=$1 LIMIT 1', [p.id])).rowCount,
+        'SCHEDULE_IN_USE',
+        'Este turno ya tiene un corte registrado y no se puede quitar.',
+        409,
+      );
+      await db.query('DELETE FROM schedules WHERE id=$1', [p.id]);
+      await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
+        branch.id,
+        randomUUID(),
+        actor.id,
+        'schedule.delete',
+        { id: p.id, user_id: existing.user_id, business_date: existing.business_date },
+      ]);
+      return { id: p.id, ok: true };
+    }),
+  );
+});
 async function save(
   branch: string,
   actor: string,
