@@ -386,3 +386,33 @@ test('Alertas corresponde al súper administrador y no permite cambios desde adm
   a.deepEqual(snapshot.alerts, []);
   a.equal(snapshot.alert_settings, null);
 });
+test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async () => {
+  const date = '2026-11-09';
+  const place = (role: string, index?: number, id?: string) =>
+    call('/schedules/board', {
+      branch_id: branch,
+      user_id: people[role].id,
+      business_date: date,
+      shift: 'morning',
+      id,
+      index,
+    });
+  const order = async () =>
+    (
+      await sql.query(
+        `SELECT s.user_id FROM schedules s WHERE s.branch_id=$1 AND s.business_date=$2 ORDER BY position`,
+        [branch, date],
+      )
+    ).rows.map((r) => r.user_id);
+  const first = await place('employee');
+  const second = await place('admin');
+  a.deepEqual(await order(), [people.employee.id, people.admin.id]);
+  // Dropping above the first chip and between two chips must keep exactly that place.
+  const third = await place('superadmin', 0);
+  a.deepEqual(await order(), [people.superadmin.id, people.employee.id, people.admin.id]);
+  await place('superadmin', 1, third.body.id);
+  a.deepEqual(await order(), [people.employee.id, people.superadmin.id, people.admin.id]);
+  await place('admin', 0, second.body.id);
+  a.deepEqual(await order(), [people.admin.id, people.employee.id, people.superadmin.id]);
+  a.ok(first.body.id);
+});

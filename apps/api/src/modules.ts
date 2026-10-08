@@ -51,7 +51,7 @@ modules.post('/schedules/clone', async (req, res) => {
       inserted +=
         (
           await db.query(
-            'INSERT INTO schedules SELECT branch_id,$2,user_id,business_date+$3::integer,start_time,end_time FROM schedules WHERE id=$1 ON CONFLICT(branch_id,user_id,business_date,start_time) DO NOTHING',
+            `INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time${'position' in r ? ',position' : ''}) SELECT branch_id,$2,user_id,business_date+$3::integer,start_time,end_time${'position' in r ? ',position' : ''} FROM schedules WHERE id=$1 ON CONFLICT(branch_id,user_id,business_date,start_time) DO NOTHING`,
             [r.id, randomUUID(), diff],
           )
         ).rowCount || 0;

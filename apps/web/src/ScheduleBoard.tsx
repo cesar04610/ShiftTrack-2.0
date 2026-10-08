@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Maximize2,
+  Minimize2,
+  Moon,
+  Sun,
+  X,
+} from 'lucide-react';
 type Person = { id: string; name: string; role: string; active: boolean };
 type Schedule = {
   id: string;
@@ -7,9 +18,11 @@ type Schedule = {
   business_date: string;
   start_time: string;
   end_time: string;
+  position?: number;
 };
 type Shift = 'morning' | 'afternoon';
 type Selection = { userId: string; schedule?: Schedule };
+type Hover = { day: string; shift: Shift; index: number };
 export function addDays(date: string, days: number) {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -26,6 +39,10 @@ const roleNames: Record<string, string> = {
 };
 const shiftOf = (s: Schedule): Shift =>
   s.start_time.slice(0, 5) < '15:00' ? 'morning' : 'afternoon';
+const byPlace = (a: Schedule, b: Schedule) =>
+  (a.position ?? 0) - (b.position ?? 0) ||
+  a.start_time.localeCompare(b.start_time) ||
+  a.id.localeCompare(b.id);
 const halfOf = (s: Schedule) =>
   s.start_time.slice(0, 5) === (shiftOf(s) === 'morning' ? '12:00' : '18:30');
 export default function ScheduleBoard({
@@ -45,6 +62,7 @@ export default function ScheduleBoard({
     business_date: string;
     shift: Shift;
     half: boolean;
+    index?: number;
   }) => Promise<unknown>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -52,13 +70,24 @@ export default function ScheduleBoard({
   const expandButton = useRef<HTMLButtonElement>(null);
   const [week, setWeek] = useState(() => monday(date));
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [editing, setEditing] = useState<Schedule | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   const dragging = useRef<Selection | null>(null);
+  const editing = schedules.find((s) => s.id === editingId) || null;
+  const slotOf = (day: string, shift: Shift) =>
+    schedules
+      .filter((s) => s.business_date.slice(0, 10) === day && shiftOf(s) === shift)
+      .sort(byPlace);
   const people = users.filter((u) => u.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(''), 2500);
+    return () => clearTimeout(timer);
+  }, [notice]);
   useEffect(() => {
     if (!expanded) return;
     const previous = document.body.style.overflow;
@@ -115,7 +144,7 @@ export default function ScheduleBoard({
       '--chip-text': `hsl(${hue} 60% 24%)`,
     } as CSSProperties;
   }
-  async function perform(action: () => Promise<unknown>) {
+  async function perform(action: () => Promise<unknown>, keepOpen = false) {
     if (!online || busy) return;
     setBusy(true);
     setError('');
@@ -123,8 +152,10 @@ export default function ScheduleBoard({
     try {
       await action();
       setSelection(null);
-      setEditing(null);
-      dialog.current?.close();
+      if (!keepOpen) {
+        setEditingId(null);
+        dialog.current?.close();
+      }
       setNotice('Registro guardado correctamente.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar el horario.');
@@ -132,8 +163,9 @@ export default function ScheduleBoard({
       setBusy(false);
     }
   }
-  function assign(targetDate: string, shift: Shift, value = selection) {
+  function assign(targetDate: string, shift: Shift, value = selection, index?: number) {
     if (!value || !online || busy) return;
+    const rest = slotOf(targetDate, shift).filter((s) => s.id !== value.schedule?.id);
     void perform(() =>
       onSave({
         id: value.schedule?.id,
@@ -141,8 +173,21 @@ export default function ScheduleBoard({
         business_date: targetDate,
         shift,
         half: value.schedule ? halfOf(value.schedule) : false,
+        index: index ?? rest.length,
       }),
     );
+  }
+  // Chooses the place under the pointer, ignoring the chip that is being moved.
+  function placeUnder(event: React.DragEvent<HTMLElement>, day: string, shift: Shift): Hover {
+    const chips = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('.person-chip.assigned:not(.is-dragged)'),
+    );
+    let index = 0;
+    for (const chip of chips) {
+      const box = chip.getBoundingClientRect();
+      if (event.clientY > box.top + box.height / 2) index += 1;
+    }
+    return { day, shift, index };
   }
   function drag(event: React.DragEvent, value: Selection) {
     event.dataTransfer.setData(
@@ -151,9 +196,19 @@ export default function ScheduleBoard({
     );
     event.dataTransfer.effectAllowed = value.schedule ? 'move' : 'copy';
     dragging.current = value;
+    // Hiding the origin chip after the browser captured its image keeps the slot readable.
+    const origin = event.currentTarget as HTMLElement;
+    requestAnimationFrame(() => origin.classList.add('is-dragged'));
   }
-  function drop(event: React.DragEvent, targetDate: string, shift: Shift) {
+  function endDrag(event: React.DragEvent) {
+    (event.currentTarget as HTMLElement).classList.remove('is-dragged');
+    dragging.current = null;
+    setHover(null);
+  }
+  function drop(event: React.DragEvent<HTMLElement>, targetDate: string, shift: Shift) {
     event.preventDefault();
+    const target = placeUnder(event, targetDate, shift);
+    setHover(null);
     if (!online || busy) return;
     try {
       const value = JSON.parse(event.dataTransfer.getData('application/x-mostrador-schedule'));
@@ -162,27 +217,16 @@ export default function ScheduleBoard({
         ? schedules.find((s) => s.id === value.id && s.user_id === value.userId)
         : undefined;
       if (value.id && !schedule) return;
-      assign(targetDate, shift, { userId: value.userId, schedule });
+      assign(targetDate, shift, { userId: value.userId, schedule }, target.index);
     } catch {
       /* Only accept a personnel chip from this board. */
     }
   }
   function edit(s: Schedule) {
     setError('');
-    setEditing(s);
+    setEditingId(s.id);
     dialog.current?.showModal();
   }
-  const rowWeight = (shift: Shift) =>
-    Math.max(
-      1,
-      ...Array.from(
-        { length: 7 },
-        (_, i) =>
-          schedules.filter(
-            (s) => s.business_date.slice(0, 10) === addDays(week, i) && shiftOf(s) === shift,
-          ).length,
-      ),
-    ) + 0.8;
   const editingPerson = people.find((u) => u.id === editing?.user_id);
   return (
     <section
@@ -237,8 +281,9 @@ export default function ScheduleBoard({
         </div>
       </div>
       <p className="board-hint">
-        Arrastra una ficha o selecciona una persona y pulsa +. Toca un turno para cambiarlo a medio
-        turno.
+        Arrastra una ficha y suéltala en el lugar exacto del turno, arriba o abajo de otra. En el
+        celular selecciona una persona y pulsa +. Toca un turno para cambiar el horario o subirlo y
+        bajarlo.
       </p>
       {!online && (
         <div className="notice">Conecta a Internet para guardar cambios en los horarios.</div>
@@ -262,12 +307,7 @@ export default function ScheduleBoard({
         </div>
       )}
       <div className="board-scroll">
-        <div
-          className="board-days"
-          style={{
-            gridTemplateRows: `36px minmax(0,${rowWeight('morning')}fr) minmax(0,${rowWeight('afternoon')}fr)`,
-          }}
-        >
+        <div className="board-days">
           {Array.from({ length: 7 }, (_, i) => {
             const day = addDays(week, i);
             const title = new Intl.DateTimeFormat('es-MX', {
@@ -281,51 +321,68 @@ export default function ScheduleBoard({
                 aria-label={`${title} ${day}`}
               >
                 <header>
-                  <strong title={title}>{title.slice(0, 3)}</strong>
-                  <span>
-                    {new Intl.DateTimeFormat('es-MX', {
-                      day: 'numeric',
-                      month: 'short',
-                      timeZone: 'UTC',
-                    }).format(new Date(`${day}T12:00:00Z`))}
-                  </span>
+                  <strong title={title}>
+                    <span className="day-long">{title}</span>
+                    <span className="day-short">{title.slice(0, 3)}</span>
+                  </strong>
+                  <span className="day-number">{Number(day.slice(8, 10))}</span>
                 </header>
                 {(['morning', 'afternoon'] as const).map((shift) => {
                   const label = shift === 'morning' ? 'Mañana' : 'Tarde';
-                  const items = schedules.filter(
-                    (s) => s.business_date.slice(0, 10) === day && shiftOf(s) === shift,
-                  );
+                  const items = slotOf(day, shift);
+                  const rest = items.filter((s) => s.id !== dragging.current?.schedule?.id);
+                  const over = hover?.day === day && hover.shift === shift ? hover.index : -1;
                   return (
                     <div
                       key={shift}
-                      className={`board-slot ${selection ? 'accepts-chip' : ''}`}
+                      className={`board-slot ${selection ? 'accepts-chip' : ''} ${over >= 0 ? 'is-over' : ''}`}
                       data-date={day}
                       data-shift={shift}
                       onDragOver={(e) => {
                         if (online && !busy) {
                           e.preventDefault();
                           e.dataTransfer.dropEffect = dragging.current?.schedule ? 'move' : 'copy';
+                          const next = placeUnder(e, day, shift);
+                          setHover((h) =>
+                            h &&
+                            h.day === next.day &&
+                            h.shift === next.shift &&
+                            h.index === next.index
+                              ? h
+                              : next,
+                          );
                         }
+                      }}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+                          setHover(null);
                       }}
                       onDrop={(e) => drop(e, day, shift)}
                     >
-                      <h3>{label}</h3>
+                      <h3>
+                        {shift === 'morning' ? <Sun size={11} /> : <Moon size={11} />}
+                        <span>{label}</span>
+                      </h3>
                       <div className="board-assigned">
                         {items.map((s) => (
                           <button
                             key={s.id}
-                            className={`person-chip assigned ${halfOf(s) ? 'half-shift' : ''}`}
+                            className={`person-chip assigned ${halfOf(s) ? 'half-shift' : ''} ${
+                              over >= 0 && rest[over]?.id === s.id ? 'drop-before' : ''
+                            } ${over >= 0 && over === rest.length && rest.at(-1)?.id === s.id ? 'drop-after' : ''}`}
                             style={chipStyle(s.user_id)}
                             title={`${users.find((u) => u.id === s.user_id)?.name || 'Personal no activo'} · ${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}${halfOf(s) ? ' · Medio turno' : ''}`}
                             disabled={busy || !online}
                             draggable={!busy && online}
                             onDragStart={(e) => drag(e, { userId: s.user_id, schedule: s })}
+                            onDragEnd={endDrag}
                             onClick={() => edit(s)}
                             aria-label={`Editar turno de ${users.find((u) => u.id === s.user_id)?.name || 'Personal'} ${title} ${label}`}
                           >
                             <strong>{shortName(users.find((u) => u.id === s.user_id))}</strong>
-                            <span>
-                              {s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}
+                            <span className="chip-time">
+                              {s.start_time.slice(0, 5)}–<wbr />
+                              {s.end_time.slice(0, 5)}
                             </span>
                             {halfOf(s) && (
                               <em className="half-marker" title="Medio turno">
@@ -367,6 +424,7 @@ export default function ScheduleBoard({
               draggable={online && !busy}
               aria-label={`Seleccionar a ${u.name}`}
               onDragStart={(e) => drag(e, { userId: u.id })}
+              onDragEnd={endDrag}
               onClick={() => {
                 setSelection({ userId: u.id });
                 setError('');
@@ -384,9 +442,9 @@ export default function ScheduleBoard({
         aria-labelledby="board-dialog-title"
         onCancel={(e) => {
           if (busy) e.preventDefault();
-          else setEditing(null);
+          else setEditingId(null);
         }}
-        onClose={() => setEditing(null)}
+        onClose={() => setEditingId(null)}
       >
         <button
           className="icon-button dialog-close"
@@ -442,6 +500,44 @@ export default function ScheduleBoard({
                 </button>
               ))}
             </div>
+            {(() => {
+              const slot = slotOf(editing.business_date.slice(0, 10), shiftOf(editing));
+              const at = slot.findIndex((s) => s.id === editing.id);
+              const move = (index: number) =>
+                perform(
+                  () =>
+                    onSave({
+                      id: editing.id,
+                      user_id: editing.user_id,
+                      business_date: editing.business_date.slice(0, 10),
+                      shift: shiftOf(editing),
+                      half: halfOf(editing),
+                      index,
+                    }),
+                  true,
+                );
+              return (
+                <div className="board-order">
+                  <span>
+                    Lugar en el turno: {at + 1} de {slot.length}
+                  </span>
+                  <button
+                    className="secondary"
+                    disabled={busy || !online || at <= 0}
+                    onClick={() => move(at - 1)}
+                  >
+                    <ChevronUp size={16} /> Subir
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy || !online || at >= slot.length - 1}
+                    onClick={() => move(at + 1)}
+                  >
+                    <ChevronDown size={16} /> Bajar
+                  </button>
+                </div>
+              );
+            })()}
           </>
         )}
       </dialog>
