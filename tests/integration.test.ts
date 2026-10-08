@@ -668,9 +668,14 @@ test('ficha previa, corte único y contado de ventas alimentan general', async (
     card_cents: '20000',
     declared_cents: '79000',
     register_number: '1',
+    note: 'Me faltaron $25 de efectivo porque se los presté a Memo',
   });
   await apply(c);
   await apply(c);
+  a.equal(
+    (await sql.query('SELECT note FROM cuts WHERE id=$1', [c.payload.id])).rows[0].note,
+    'Me faltaron $25 de efectivo porque se los presté a Memo',
+  );
   await a.rejects(
     () => apply(command('cut.create', { ...c.payload, id: randomUUID() })),
     (e: any) => e.code === '23505',
@@ -931,6 +936,22 @@ test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel 
     ).status,
     403,
   );
+  // Evidence expires after thirty days: the file is removed and the API answers 410.
+  const { purgeExpiredMedia } = await import('../apps/api/src/media.js');
+  a.equal(await purgeExpiredMedia(), 0);
+  await sql.query("UPDATE media_objects SET created_at=now()-interval '31 days' WHERE id=$1", [
+    c.payload.media_id,
+  ]);
+  a.equal(await purgeExpiredMedia(), 1);
+  a.equal(
+    (
+      await fetch(`${base}/api/v1/media/${c.payload.media_id}/content?branch_id=${branch}`, {
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      })
+    ).status,
+    410,
+  );
+  a.equal(await purgeExpiredMedia(), 0);
   const report = await fetch(`${base}/api/v1/reports/export?branch_id=${branch}`, {
     headers: { Authorization: `Bearer ${ownerToken}` },
   });

@@ -29,7 +29,7 @@ import {
 } from '../../../packages/domain/index.js';
 import { modules } from './modules.js';
 import { supplierImport } from './supplier-import.js';
-import { media } from './media.js';
+import { media, purgeExpiredMedia } from './media.js';
 import { prepareMediaStorage } from './storage.js';
 export const app = express();
 app.use(
@@ -962,4 +962,10 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(Number(process.env.PORT || 8080), '0.0.0.0', () =>
     console.log('API Mostrador disponible.'),
   );
+  const purge = () =>
+    purgeExpiredMedia()
+      .then((n) => n && console.log({ status: 'MEDIA_PURGED', removed: n }))
+      .catch(() => console.error({ status: 'MEDIA_PURGE_FAILED' }));
+  void purge();
+  setInterval(purge, 6 * 3600_000).unref();
 }

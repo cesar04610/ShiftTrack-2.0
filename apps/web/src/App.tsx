@@ -30,7 +30,7 @@ import {
 } from '../../../packages/domain/index.js';
 import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
-import ScheduleBoard from './ScheduleBoard';
+import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
 import {
   login,
   logout,
@@ -53,6 +53,7 @@ type Field = {
   options?: { value: string; label: string }[];
   value?: string;
   optional?: boolean;
+  multiline?: boolean;
   placeholder?: string;
   onChange?: (value: string) => void;
 };
@@ -111,6 +112,16 @@ function Form({
                   </option>
                 ))}
               </select>
+            ) : f.multiline ? (
+              <textarea
+                id={`${formId}-${f.name}`}
+                name={f.name}
+                rows={3}
+                maxLength={500}
+                defaultValue={f.value}
+                placeholder={f.placeholder}
+                required={!f.optional}
+              />
             ) : (
               <input
                 id={`${formId}-${f.name}`}
@@ -164,6 +175,46 @@ function Empty({ text = 'Aún no hay registros.' }: { text?: string }) {
       <ClipboardCheck size={30} />
       <p>{text}</p>
     </div>
+  );
+}
+// "lunes 5": weekday and day of the month only, schedules are read one week at a time.
+function dayLabel(date: string) {
+  const label = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${date.slice(0, 10)}T12:00:00Z`));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+function ResolveShortage({ onResolve }: { onResolve: () => Promise<void> }) {
+  const [asking, setAsking] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  async function resolve() {
+    setBusy(true);
+    setError('');
+    try {
+      await onResolve();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+  return asking ? (
+    <span className="inline-confirm">
+      ¿Ya se repuso?
+      <button className="primary" disabled={busy} onClick={resolve}>
+        Sí
+      </button>
+      <button className="secondary" disabled={busy} onClick={() => setAsking(false)}>
+        No
+      </button>
+      {error && <small role="alert">{error}</small>}
+    </span>
+  ) : (
+    <button className="secondary" onClick={() => setAsking(true)}>
+      Repuesto
+    </button>
   );
 }
 function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
@@ -1016,14 +1067,23 @@ export default function App() {
                     </Card>
                   )}
                   {page === 'Horario' && (
-                    <Card title="Mi horario">
+                    <Card title="Mi horario" subtitle="Semana actual, de lunes a domingo">
                       <Table
-                        headers={['Fecha', 'Empleado', 'Entrada', 'Salida']}
+                        headers={['Día', 'Entrada', 'Salida']}
                         rows={data.schedules
-                          .filter((s: any) => s.user_id === user.id)
+                          .filter(
+                            (s: any) =>
+                              s.user_id === user.id &&
+                              s.business_date.slice(0, 10) >= monday(date) &&
+                              s.business_date.slice(0, 10) <= addDays(monday(date), 6),
+                          )
+                          .sort(
+                            (x: any, y: any) =>
+                              x.business_date.localeCompare(y.business_date) ||
+                              x.start_time.localeCompare(y.start_time),
+                          )
                           .map((s: any) => [
-                            s.business_date.slice(0, 10),
-                            user.name,
+                            dayLabel(s.business_date),
                             s.start_time.slice(0, 5),
                             s.end_time.slice(0, 5),
                           ])}
@@ -1557,12 +1617,18 @@ export default function App() {
                   </Card>
                   <Card title="Faltantes de la sucursal">
                     <Table
-                      headers={['Producto', 'Nota', 'Fecha']}
-                      rows={data.shortages.map((s: any) => [
-                        s.product,
-                        s.note,
-                        time(s.occurred_at, b.timezone),
-                      ])}
+                      headers={['Producto', 'Nota', 'Fecha', '']}
+                      rows={data.shortages
+                        .filter((s: any) => !s.resolved)
+                        .map((s: any) => [
+                          s.product,
+                          s.note,
+                          time(s.occurred_at, b.timezone),
+                          <ResolveShortage
+                            key={s.id}
+                            onResolve={() => mutate(`/shortages/${s.id}/resolve`, {})}
+                          />,
+                        ])}
                     />
                   </Card>
                 </>
@@ -1588,6 +1654,14 @@ export default function App() {
                             label: 'Efectivo contado de ventas · MXN',
                             type: 'number',
                           },
+                          {
+                            name: 'note',
+                            label: 'Nota (opcional)',
+                            optional: true,
+                            multiline: true,
+                            placeholder:
+                              'Ej. Me faltaron $25 de efectivo porque se los presté a Memo',
+                          },
                         ]}
                         label="Guardar corte"
                         onSubmit={(v) =>
@@ -1597,6 +1671,7 @@ export default function App() {
                             sales_cents: parseMoney(v.sales),
                             card_cents: parseMoney(v.card),
                             declared_cents: parseMoney(v.declared),
+                            note: (v.note || '').trim(),
                           })
                         }
                       />
@@ -1604,7 +1679,15 @@ export default function App() {
                   )}
                   <Card title="Cortes registrados">
                     <Table
-                      headers={['Fecha', 'Turno', 'Ventas', 'Tarjeta', 'Contado', 'Diferencia']}
+                      headers={[
+                        'Fecha',
+                        'Turno',
+                        'Ventas',
+                        'Tarjeta',
+                        'Contado',
+                        'Diferencia',
+                        'Nota',
+                      ]}
                       rows={data.cuts
                         .filter((c: any) => page === 'Cortes' || c.user_id === user.id)
                         .map((c: any) => [
@@ -1614,6 +1697,7 @@ export default function App() {
                           money(c.card_cents),
                           money(c.declared_cents),
                           money(c.difference_cents || c.difference || '0'),
+                          c.note || '',
                         ])}
                     />
                   </Card>

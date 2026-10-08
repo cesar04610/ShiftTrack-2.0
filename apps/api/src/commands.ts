@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { transaction } from './db.js';
+import { hasColumn, transaction } from './db.js';
 import { digest, validateCommand } from './security.js';
 import {
   assert,
@@ -329,8 +329,9 @@ export async function processCommand(c: Command, deviceId: string) {
         )
       ).rows[0];
       const amounts = cutAmounts(p.sales_cents, p.card_cents, p.declared_cents);
+      const withNote = await hasColumn(db, 'cuts', 'note');
       await db.query(
-        'INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,schedule_id,clock_record_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
+        `INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,schedule_id,clock_record_id${withNote ? ',note' : ''}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14${withNote ? ',$15' : ''})`,
         [
           b.id,
           uuid(p.id),
@@ -346,6 +347,15 @@ export async function processCommand(c: Command, deviceId: string) {
           c.occurred_at,
           schedule?.id || null,
           clock.id,
+          ...(withNote
+            ? [
+                z
+                  .string()
+                  .trim()
+                  .max(500)
+                  .parse(p.note ?? ''),
+              ]
+            : []),
         ],
       );
       await entry(db, c, 'cut', cents(p.declared_cents), cents(p.card_cents), 'Corte de ventas');
