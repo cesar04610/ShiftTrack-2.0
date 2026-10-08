@@ -22,6 +22,24 @@ export async function verifyRuntimeRole() {
     500,
   );
 }
+const knownColumns = new Set<string>();
+// Lets code ship before its migration is applied: only a positive answer is remembered.
+export async function hasColumn(
+  db: { query: (sql: string, values?: unknown[]) => Promise<{ rows: unknown[] }> },
+  table: string,
+  column: string,
+) {
+  const key = `${table}.${column}`;
+  if (knownColumns.has(key)) return true;
+  const found = !!(
+    await db.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2",
+      [table, column],
+    )
+  ).rows.length;
+  if (found) knownColumns.add(key);
+  return found;
+}
 export async function transaction<T>(
   branchId: string,
   fn: (db: pg.PoolClient) => Promise<T>,

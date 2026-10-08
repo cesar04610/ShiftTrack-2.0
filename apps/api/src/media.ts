@@ -1,10 +1,10 @@
 import express from 'express';
 import sharp from 'sharp';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { deviceIdentity, validateCommand, identity } from './security.js';
-import { context, transaction } from './db.js';
+import { context, hasColumn, pool, transaction } from './db.js';
 import { commandSchema } from './commands.js';
 import { assert } from '../../../packages/domain/index.js';
 import { mediaDir as localDir } from './storage.js';
@@ -120,8 +120,39 @@ media.get('/:id/content', async (req, res) => {
     );
     return row;
   });
+  assert(
+    !object.deleted_at,
+    'EVIDENCE_EXPIRED',
+    'La fotografía se eliminó automáticamente después de 30 días.',
+    410,
+  );
   const file = await readFile(`${localDir}/${b.id}/${object.id}`);
   res.setHeader('Content-Type', object.content_type);
   res.setHeader('Cache-Control', 'private, no-store');
   res.send(file);
 });
+
+export const MEDIA_RETENTION_DAYS = 30;
+// Evidence photos live in the API volume, so the API process removes them once they expire.
+export async function purgeExpiredMedia() {
+  if (!(await hasColumn(pool, 'media_objects', 'deleted_at'))) return 0;
+  let removed = 0;
+  for (const branch of (await pool.query('SELECT id FROM branches')).rows) {
+    await transaction(branch.id, async (db) => {
+      const expired = (
+        await db.query(
+          `SELECT id FROM media_objects WHERE deleted_at IS NULL AND created_at < now() - make_interval(days => $1)`,
+          [MEDIA_RETENTION_DAYS],
+        )
+      ).rows;
+      for (const { id } of expired) {
+        await unlink(`${localDir}/${branch.id}/${id}`).catch((err) => {
+          if (err.code !== 'ENOENT') throw err;
+        });
+        await db.query('UPDATE media_objects SET deleted_at=now() WHERE id=$1', [id]);
+        removed += 1;
+      }
+    });
+  }
+  return removed;
+}
