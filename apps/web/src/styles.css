@@ -830,10 +830,13 @@ tbody tr:last-child td {
 .schedule-board {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 12px;
-  height: clamp(380px, calc(100dvh - 230px), 650px);
+  gap: 10px;
+  padding: 16px;
   min-width: 0;
+  border-radius: 16px;
+  box-shadow:
+    0 1px 2px #0f172a0a,
+    0 8px 24px #0f172a0d;
 }
 .schedule-board.is-expanded {
   position: fixed;
@@ -844,18 +847,24 @@ tbody tr:last-child td {
   box-shadow: 0 0 0 12px #f5f7f9;
   background: #fff;
 }
+.schedule-board.is-expanded .board-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .board-heading,
 .board-week {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   flex-shrink: 0;
 }
 .board-heading h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
 }
 .board-week label {
   gap: 2px;
@@ -863,94 +872,118 @@ tbody tr:last-child td {
 }
 .board-week input {
   width: 138px;
-  height: 32px;
+  height: 34px;
   padding: 5px 8px;
 }
 .board-week .secondary {
-  font-size: 11px;
-  padding: 7px 9px;
+  font-size: 12px;
+  padding: 7px 11px;
 }
 .board-week .icon-button {
   padding: 5px;
 }
 .board-hint {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
 }
 .board-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
   border: 1px solid #e2e8f0;
-  border-radius: 9px;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 6px;
 }
 .board-days {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  grid-template-rows: 36px minmax(0, 1fr) minmax(0, 1fr);
-  height: 100%;
+  grid-template-rows: auto auto auto;
+  column-gap: 6px;
 }
 .board-day {
   display: grid;
   grid-template-rows: subgrid;
   grid-row: span 3;
-  border-right: 1px solid #e2e8f0;
   min-width: 0;
-}
-.board-day:last-child {
-  border-right: none;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px #0f172a08;
 }
 .board-day > header {
-  padding: 4px;
-  background: #f8fafc;
+  padding: 8px 4px 6px;
+  background: linear-gradient(#f8fafc, #fff);
   display: flex;
   flex-direction: column;
   align-items: center;
   text-transform: capitalize;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
+  color: #334155;
 }
-.board-day > header span {
-  font-size: 11px;
-  color: #475569;
+.board-day > header .day-short {
+  display: none;
+}
+.board-day > header .day-number {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #0f172a;
 }
 .board-day.today > header {
-  background: #d1fae5;
+  background: linear-gradient(#d1fae5, #ecfdf5);
   color: #065f46;
+}
+.board-day.today > header .day-number {
+  color: #047857;
 }
 .board-slot {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  min-height: 0;
-  border-top: 1px solid #e2e8f0;
+  gap: 5px;
+  padding: 6px 5px 7px;
+  min-height: 150px;
+  border-top: 1px solid #eef2f6;
   background: #fff;
+  transition: background-color 0.15s ease;
 }
 .board-slot[data-shift='afternoon'] {
-  background: #f8fafc;
+  background: #fafbfd;
 }
 .board-slot h3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   margin: 0;
-  color: #64748b;
+  color: #94a3b8;
+}
+.board-slot[data-shift='morning'] h3 svg {
+  color: #f59e0b;
+}
+.board-slot[data-shift='afternoon'] h3 svg {
+  color: #6366f1;
 }
 .board-slot.accepts-chip {
-  outline: 2px dashed #34d399;
-  outline-offset: -3px;
+  background: #f0fdf9;
+}
+.board-slot.is-over {
+  background: #ecfdf5;
+  box-shadow: inset 0 0 0 2px #34d399;
 }
 .board-assigned {
   min-width: 0;
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
+  gap: 5px;
 }
 .person-chip {
   display: flex;
@@ -959,18 +992,29 @@ tbody tr:last-child td {
   justify-content: center;
   position: relative;
   gap: 3px;
-  padding: 5px 7px;
+  padding: 5px 9px;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
-  border-left-width: 3px;
-  border-radius: 5px;
+  border-radius: 9px;
   color: var(--chip-text);
-  width: 64px;
-  height: 32px;
+  width: 72px;
+  height: 36px;
   flex-shrink: 0;
   text-align: left;
   cursor: grab;
   min-width: 0;
+  box-shadow: 0 1px 1px #0f172a0f;
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    opacity 0.14s ease;
+}
+.person-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px #0f172a1f;
+}
+.person-chip:active {
+  cursor: grabbing;
 }
 .person-chip strong {
   display: block;
@@ -978,76 +1022,108 @@ tbody tr:last-child td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.2;
 }
 .person-chip span {
   max-width: 100%;
   overflow: hidden;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
+  opacity: 0.8;
 }
 .person-chip.assigned {
   width: 100%;
-  min-height: 26px;
-  height: 26px;
-  padding: 2px 5px;
+  height: auto;
+  min-height: 42px;
+  padding: 6px 8px;
   gap: 1px;
 }
-.person-chip.assigned strong {
-  font-size: 10px;
-  line-height: 1.1;
+.person-chip.assigned .chip-time {
+  font-variant-numeric: tabular-nums;
 }
-.person-chip.assigned span {
-  font-size: 9px;
-  line-height: 1.1;
+.person-chip.is-dragged {
+  opacity: 0.35;
+  transform: scale(0.97);
+}
+.person-chip.drop-before::before,
+.person-chip.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 4px;
+  background: #10b981;
+  box-shadow: 0 0 0 2px #10b98133;
+  pointer-events: none;
+}
+.person-chip.drop-before::before {
+  top: -5px;
+}
+.person-chip.drop-after::after {
+  bottom: -5px;
 }
 .person-chip.half-shift {
-  border-right: 3px dashed var(--chip-border);
+  border-style: dashed;
 }
 .person-chip .half-marker {
   position: absolute;
-  right: 3px;
-  top: 2px;
-  font-size: 10px;
+  right: 6px;
+  top: 4px;
+  font-size: 11px;
   font-weight: 700;
   font-style: normal;
 }
 .person-chip.half-shift strong {
-  padding-right: 8px;
+  padding-right: 10px;
 }
 .person-chip.chosen {
   outline: 2px solid #047857;
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 .board-assign {
   background: transparent;
-  color: #047857;
-  border: 1px dashed #a7f3d0;
+  color: #059669;
+  border: 1.5px dashed #a7f3d0;
+  border-radius: 8px;
   padding: 0;
-  font-size: 14px;
-  height: 15px;
-  min-height: 15px;
+  font-size: 16px;
+  line-height: 1;
+  height: 24px;
+  min-height: 24px;
   width: 100%;
   flex-shrink: 0;
+  margin-top: auto;
+  transition: background-color 0.15s ease;
+}
+.board-assign:not(:disabled):hover {
+  background: #d1fae5;
+}
+.board-assign:disabled {
+  opacity: 0.45;
 }
 .board-personnel {
   flex-shrink: 0;
   min-width: 0;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e8edf3;
+  border-radius: 12px;
 }
 .board-personnel h3 {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
-  margin: 0 0 5px;
+  font-size: 12px;
+  margin: 0 0 8px;
 }
 .personnel-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  max-height: 86px;
+  gap: 6px;
+  max-height: 110px;
   overflow-y: auto;
   padding: 2px;
 }
@@ -1056,42 +1132,62 @@ tbody tr:last-child td {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: 12px;
   min-height: 22px;
 }
 .board-selection .text-button {
   padding: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .board-success {
-  color: #047857;
-  font-size: 11px;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 120;
+  color: #065f46;
+  font-size: 13px;
+  font-weight: 600;
   background: #ecfdf5;
-  padding: 5px 8px;
-  border-radius: 5px;
+  border: 1px solid #a7f3d0;
+  box-shadow: 0 8px 24px #0f172a26;
+  padding: 9px 16px;
+  border-radius: 999px;
+  pointer-events: none;
 }
 .schedule-board > .notice,
 .schedule-board > .error {
   margin: 0;
-  padding: 6px;
-  font-size: 11px;
+  padding: 8px;
+  font-size: 12px;
+}
+.board-order {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.board-order span {
+  flex-basis: 100%;
+}
+.board-order button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 @media (max-width: 700px) {
-  .personnel-chips .person-chip {
-    width: 52px;
-    height: 32px;
-    padding: 3px 4px;
-  }
   .schedule-board {
-    padding: 8px;
-    gap: 6px;
-    height: clamp(380px, calc(100dvh - 210px), 650px);
-  }
-  .schedule-board.is-expanded {
-    height: calc(100dvh - 16px);
+    padding: 10px 8px;
+    gap: 8px;
+    border-radius: 14px;
   }
   .board-heading h2 {
-    font-size: 14px;
+    font-size: 15px;
   }
   .board-heading {
     align-items: flex-start;
@@ -1109,33 +1205,83 @@ tbody tr:last-child td {
   .board-week > .secondary:last-child {
     display: none;
   }
-  .board-slot {
-    min-width: 0;
-    padding: 3px 2px;
-    gap: 3px;
+  .board-scroll {
+    padding: 3px;
+    border-radius: 12px;
   }
-  .board-slot h3 {
-    font-size: 8px;
+  .board-days {
+    column-gap: 3px;
+  }
+  .board-day {
+    border-radius: 9px;
   }
   .board-day > header {
-    font-size: 9px;
+    padding: 6px 1px 4px;
+    font-size: 10px;
+  }
+  .board-day > header .day-long {
+    display: none;
+  }
+  .board-day > header .day-short {
+    display: inline;
+  }
+  .board-day > header .day-number {
+    font-size: 16px;
+  }
+  .board-slot {
+    padding: 4px 2px 5px;
+    gap: 3px;
+    min-height: 96px;
+  }
+  .board-slot h3 {
+    justify-content: center;
+    font-size: 0;
+    gap: 0;
+  }
+  .board-slot h3 span {
+    display: none;
+  }
+  .board-slot h3 svg {
+    width: 11px;
+    height: 11px;
+  }
+  .board-assigned {
+    gap: 3px;
   }
   .person-chip.assigned {
-    height: 35px;
-    min-height: 35px;
-    padding: 3px;
-    border-left-width: 2px;
+    min-height: 44px;
+    padding: 4px 3px;
+    border-radius: 7px;
   }
   .person-chip.assigned strong {
-    font-size: 9px;
+    font-size: 10px;
+    letter-spacing: -0.2px;
+    line-height: 1.15;
   }
   .person-chip.assigned span {
     white-space: normal;
-    font-size: 7px;
-    letter-spacing: -0.3px;
+    font-size: 9px;
+    line-height: 1.1;
+  }
+  .person-chip.half-shift strong {
+    padding-right: 0;
+  }
+  .person-chip .half-marker {
+    right: 2px;
+    top: 1px;
+    font-size: 9px;
+  }
+  .personnel-chips .person-chip {
+    width: 64px;
+    height: 34px;
+    padding: 4px 6px;
+  }
+  .board-assign {
+    height: 22px;
+    min-height: 22px;
   }
   .board-hint {
-    font-size: 10px;
+    font-size: 11px;
   }
 }
 .board-dialog {
