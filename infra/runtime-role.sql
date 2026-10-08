@@ -3,5 +3,5 @@
 ALTER ROLE shifttrack_app NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public TO shifttrack_app;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO shifttrack_app;
-GRANT DELETE ON device_challenges, device_sessions, auth_sessions, register_leases TO shifttrack_app;
+GRANT DELETE ON device_challenges, device_sessions, auth_sessions, register_leases, schedules TO shifttrack_app;
 REVOKE ALL ON schema_migrations FROM shifttrack_app;

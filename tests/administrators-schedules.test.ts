@@ -416,3 +416,25 @@ test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async ()
   a.deepEqual(await order(), [people.admin.id, people.employee.id, people.superadmin.id]);
   a.ok(first.body.id);
 });
+test('pizarra quita una ficha, exige administrador y protege turnos con corte', async () => {
+  const created = await call('/schedules/board', {
+    branch_id: branch,
+    user_id: people.employee.id,
+    business_date: '2026-11-16',
+    shift: 'afternoon',
+  });
+  a.equal(
+    (await call('/schedules/board/delete', { branch_id: branch, id: created.body.id }, 'employee'))
+      .status,
+    403,
+  );
+  a.equal(
+    (await call('/schedules/board/delete', { branch_id: branch, id: created.body.id })).status,
+    200,
+  );
+  a.equal((await sql.query('SELECT 1 FROM schedules WHERE id=$1', [created.body.id])).rowCount, 0);
+  a.equal(
+    (await call('/schedules/board/delete', { branch_id: branch, id: created.body.id })).status,
+    404,
+  );
+});

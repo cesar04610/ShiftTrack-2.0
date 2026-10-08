@@ -987,6 +987,7 @@ export default function App() {
                       date={date}
                       online={online}
                       onSave={(v) => mutate('/schedules/board', v)}
+                      onRemove={(id) => mutate('/schedules/board/delete', { id })}
                     />
                   )}
                   {isAdmin && page === 'Horarios' && (
@@ -1014,21 +1015,21 @@ export default function App() {
                       />
                     </Card>
                   )}
-                  <Card title={page === 'Horarios' ? 'Horarios del equipo' : 'Mi horario'}>
-                    <Table
-                      headers={['Fecha', 'Empleado', 'Entrada', 'Salida']}
-                      rows={data.schedules
-                        .filter((s: any) => page === 'Horarios' || s.user_id === user.id)
-                        .map((s: any) => [
-                          s.business_date.slice(0, 10),
-                          page === 'Horarios'
-                            ? data.users.find((u: any) => u.id === s.user_id)?.name
-                            : user.name,
-                          s.start_time.slice(0, 5),
-                          s.end_time.slice(0, 5),
-                        ])}
-                    />
-                  </Card>
+                  {page === 'Horario' && (
+                    <Card title="Mi horario">
+                      <Table
+                        headers={['Fecha', 'Empleado', 'Entrada', 'Salida']}
+                        rows={data.schedules
+                          .filter((s: any) => s.user_id === user.id)
+                          .map((s: any) => [
+                            s.business_date.slice(0, 10),
+                            user.name,
+                            s.start_time.slice(0, 5),
+                            s.end_time.slice(0, 5),
+                          ])}
+                      />
+                    </Card>
+                  )}
                 </>
               )}
               {page === 'Registro de entradas' && (
