@@ -9,6 +9,7 @@ import {
 } from 'node:crypto';
 import argon2 from 'argon2';
 import { pool } from './db.js';
+import { SESSION_HOURS, clockInAtLogin, clockOutAtLogout } from './attendance.js';
 import {
   assert,
   canonical,
@@ -27,6 +28,12 @@ function sessionToken(header?: string) {
   return header!.slice(7);
 }
 export async function issueSession(user: User) {
+  const session = await createSession(user);
+  // Attendance runs after the connection above is released; a failure must never block sign-in.
+  await clockInAtLogin(session.user).catch(() => console.error({ status: 'CLOCK_IN_FAILED' }));
+  return session;
+}
+async function createSession(user: User) {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -41,8 +48,8 @@ export async function issueSession(user: User) {
     const accessToken = randomBytes(32).toString('base64url');
     const row = (
       await db.query(
-        'INSERT INTO auth_sessions(token_hash,user_id,auth_version,expires_at) VALUES($1,$2,$3,NULL) RETURNING expires_at',
-        [digest(accessToken), current.id, current.auth_version],
+        `INSERT INTO auth_sessions(token_hash,user_id,auth_version,expires_at) VALUES($1,$2,$3,now()+make_interval(hours=>$4)) RETURNING expires_at`,
+        [digest(accessToken), current.id, current.auth_version, SESSION_HOURS],
       )
     ).rows[0];
     await db.query('DELETE FROM auth_sessions WHERE user_id=$1 AND expires_at<=now()', [
@@ -63,7 +70,16 @@ export async function issueSession(user: User) {
   }
 }
 export async function revokeSession(header?: string) {
-  await pool.query('DELETE FROM auth_sessions WHERE token_hash=$1', [digest(sessionToken(header))]);
+  const ended = (
+    await pool.query('DELETE FROM auth_sessions WHERE token_hash=$1 RETURNING user_id', [
+      digest(sessionToken(header)),
+    ])
+  ).rows[0];
+  if (!ended) return;
+  const user = (
+    await pool.query('SELECT id,role,branch_id FROM users WHERE id=$1', [ended.user_id])
+  ).rows[0];
+  if (user) await clockOutAtLogout(user).catch(() => console.error({ status: 'CLOCK_OUT_FAILED' }));
 }
 export async function identity(header?: string): Promise<User> {
   const user = (

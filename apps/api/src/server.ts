@@ -30,6 +30,7 @@ import {
 import { modules } from './modules.js';
 import { supplierImport } from './supplier-import.js';
 import { media, purgeExpiredMedia } from './media.js';
+import { closeAbandonedClocks } from './attendance.js';
 import { prepareMediaStorage } from './storage.js';
 export const app = express();
 app.use(
@@ -968,4 +969,10 @@ if (process.env.NODE_ENV !== 'test') {
       .catch(() => console.error({ status: 'MEDIA_PURGE_FAILED' }));
   void purge();
   setInterval(purge, 6 * 3600_000).unref();
+  const closeClocks = () =>
+    closeAbandonedClocks()
+      .then((n) => n && console.log({ status: 'CLOCKS_CLOSED', closed: n }))
+      .catch(() => console.error({ status: 'CLOCK_SWEEP_FAILED' }));
+  void closeClocks();
+  setInterval(closeClocks, 5 * 60_000).unref();
 }

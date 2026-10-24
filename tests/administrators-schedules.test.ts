@@ -261,7 +261,18 @@ test('administradores pueden registrar entrada, corte y pagos; caja normal no au
     ).body;
     a.ok(issued.body.allowed_commands.includes('cut.create'));
     a.ok(!issued.body.allowed_commands.includes('supplier.ticket.create'));
-    a.equal((await call('/clock/in', { branch_id: branch }, role)).status, 200);
+    // Signing in already clocked in everyone tied to a branch; the owner has no branch at sign-in.
+    if (role === 'superadmin')
+      a.equal((await call('/clock/in', { branch_id: branch }, role)).status, 200);
+    else
+      a.equal(
+        (
+          await sql.query('SELECT 1 FROM clock_records WHERE user_id=$1 AND clock_out IS NULL', [
+            people[role].id,
+          ])
+        ).rowCount,
+        1,
+      );
     async function apply(type: Command['type'], payload: Record<string, string>) {
       const state = (await sql.query('SELECT * FROM branches WHERE id=$1', [branch])).rows[0];
       if (type === 'supplier.shift.open') payload.previous_close_id = state.last_closed_shift || '';

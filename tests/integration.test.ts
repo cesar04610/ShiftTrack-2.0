@@ -47,7 +47,7 @@ async function token(username: string) {
   );
   a.equal(status, 200);
   a.match(body.access_token, /^[A-Za-z0-9_-]{43}$/);
-  a.equal(body.expires_at, null);
+  a.ok(Date.parse(body.expires_at) > Date.now() + 8.9 * 3600_000);
   return body.access_token as string;
 }
 
@@ -364,6 +364,7 @@ test('eliminar sucursal exige dueño y contraseña, revoca acceso y conserva his
   a.equal(account.status, 201);
   const employeeSession = await token(username);
   const recordId = randomUUID();
+  await sql.query('DELETE FROM clock_records WHERE user_id=$1', [account.body.id]);
   await sql.query(
     'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,CURRENT_DATE,now())',
     [id, recordId, account.body.id],
@@ -477,7 +478,10 @@ test('sesiones opacas: hash en SQL, vencimiento, cierre individual y credenciale
     ])
   ).rows[0];
   a.equal(row.user_id, id);
-  a.equal(row.expires_at, null);
+  // Sessions close by themselves nine hours after signing in.
+  a.ok(
+    +row.expires_at - Date.now() > 8.9 * 3600_000 && +row.expires_at - Date.now() <= 9 * 3600_000,
+  );
   a.notEqual(row.token_hash, first);
   a.equal((await call('/auth/me', undefined, first)).body.id, id);
   a.equal((await call('/auth/logout', {}, first)).status, 200);
@@ -1188,4 +1192,62 @@ test('empleado desactivado conserva registros y sus comandos van a revisión', a
       .count,
     '1',
   );
+});
+
+test('iniciar sesión registra la entrada, cerrar sesión la salida y la sesión vence a las 9 horas', async () => {
+  const { closeAbandonedClocks } = await import('../apps/api/src/attendance.js');
+  const username = `asistencia-${randomUUID().slice(0, 8)}`;
+  const account = await call('/users', {
+    branch_id: branch,
+    username,
+    name: 'Asistencia',
+    role: 'employee',
+    password: 'ShiftTrack-demo-2026!',
+  });
+  a.equal(account.status, 201);
+  const open = async () =>
+    (
+      await sql.query('SELECT * FROM clock_records WHERE user_id=$1 ORDER BY clock_in', [
+        account.body.id,
+      ])
+    ).rows;
+  const first = await token(username);
+  let rows = await open();
+  a.equal(rows.length, 1);
+  a.equal(rows[0].clock_out, null);
+  // A second device does not duplicate the entry, and the exit waits for the last session.
+  const second = await token(username);
+  a.equal((await open()).length, 1);
+  a.equal((await call('/auth/logout', {}, first)).status, 200);
+  a.equal((await open())[0].clock_out, null);
+  a.equal((await call('/auth/logout', {}, second)).status, 200);
+  rows = await open();
+  a.ok(rows[0].clock_out);
+  // Signing in again right away (a reload) continues the same shift.
+  const third = await token(username);
+  rows = await open();
+  a.equal(rows.length, 1);
+  a.equal(rows[0].clock_out, null);
+  a.equal((await call('/auth/logout-on-close', { token: third }, '')).status, 200);
+  a.ok((await open())[0].clock_out);
+  // After a longer pause a new entry starts.
+  await sql.query("UPDATE clock_records SET clock_out=now()-interval '1 hour' WHERE user_id=$1", [
+    account.body.id,
+  ]);
+  const fourth = await token(username);
+  rows = await open();
+  a.equal(rows.length, 2);
+  a.equal(rows[1].clock_out, null);
+  // An expired session closes its entry at the nine-hour mark.
+  await sql.query(
+    "UPDATE auth_sessions SET issued_at=now()-interval '10 hours',expires_at=now()-interval '1 hour' WHERE token_hash=$1",
+    [createHash('sha256').update(fourth).digest('hex')],
+  );
+  await sql.query("UPDATE clock_records SET clock_in=now()-interval '10 hours' WHERE id=$1", [
+    rows[1].id,
+  ]);
+  a.ok((await closeAbandonedClocks()) >= 1);
+  const expired = (await open()).find((r) => r.id === rows[1].id);
+  a.ok(expired.clock_out);
+  a.equal(Math.round((+expired.clock_out - +expired.clock_in) / 3600_000), 9);
 });
