@@ -22,6 +22,7 @@ try {
       await db.query(sql);
       await db.query('INSERT INTO schema_migrations VALUES($1,$2)', [name, hash]);
       await db.query('COMMIT');
+      console.log(`Migración aplicada: ${name}`);
     } catch (e) {
       await db.query('ROLLBACK');
       throw e;
