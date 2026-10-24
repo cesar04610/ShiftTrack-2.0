@@ -13,7 +13,7 @@ import {
   type Command,
 } from '../../../packages/domain/index.js';
 import { z } from 'zod';
-import { notify } from '../../worker/mail.js';
+import { cutDifferenceAlert, supplierDifferenceAlert } from './alerts.js';
 export const commandSchema = z
   .object({
     operation_id: z.uuid(),
@@ -217,6 +217,14 @@ export async function processCommand(c: Command, deviceId: string) {
         b.id,
         active.id,
       ]);
+      await supplierDifferenceAlert(db, b.id, {
+        id: active.id,
+        userId: active.actor_user_id,
+        date: active.business_date.toISOString().slice(0, 10),
+        expected: balance,
+        counted,
+        at: c.occurred_at,
+      });
       balance = counted;
     } else if (
       c.type === 'supplier.ticket.create' ||
@@ -254,21 +262,6 @@ export async function processCommand(c: Command, deviceId: string) {
         );
         balance -= amount;
         await entry(db, c, 'supplier_payment', -amount, 0n, p.note || 'Pago a proveedor');
-        const baseline = (
-          await db.query(
-            `SELECT count(*)::integer samples,coalesce(avg(amount_cents),0)::text average FROM tickets
-         WHERE supplier_id=$1 AND id<>$2 AND NOT voided AND extract(dow FROM occurred_at AT TIME ZONE $3)=extract(dow FROM $4::timestamptz AT TIME ZONE $3)`,
-            [p.supplier_id, p.id, b.timezone, c.occurred_at],
-          )
-        ).rows[0];
-        if (baseline.samples >= 3 && Number(amount) > Number(baseline.average) * 1.2) {
-          const message = `Compra inusual: importe mayor al promedio histórico del proveedor para este día de semana (${baseline.samples} muestras).`;
-          await db.query(
-            'INSERT INTO alerts(branch_id,id,type,message,source_key) VALUES($1,$2,$3,$4,$5)',
-            [b.id, randomUUID(), 'supplier_anomaly', message, p.id],
-          );
-          await notify(db, b.id, `supplier_anomaly:${p.id}`, 'Mostrador · Compra inusual', message);
-        }
       } else if (c.type === 'supplier.balance.add') {
         const amount = cents(p.amount_cents);
         assert(amount > 0n, 'INVALID_AMOUNT', 'El importe debe ser positivo.', 400);
@@ -359,6 +352,14 @@ export async function processCommand(c: Command, deviceId: string) {
         ],
       );
       await entry(db, c, 'cut', cents(p.declared_cents), cents(p.card_cents), 'Corte de ventas');
+      await cutDifferenceAlert(db, b.id, {
+        id: uuid(p.id),
+        userId: c.actor_user_id,
+        date: shiftDate,
+        label: shiftLabel(clock.clock_in, b.timezone),
+        difference: amounts.difference,
+        at: c.occurred_at,
+      });
     } else if (c.type === 'task.complete') {
       if (p.media_id)
         assert(

@@ -384,18 +384,16 @@ test('administradores pueden registrar entrada, corte y pagos; caja normal no au
     2,
   );
 });
-test('Alertas corresponde al súper administrador y no permite cambios desde administrador', async () => {
-  const body = {
-    branch_id: branch,
-    absence_tolerance_minutes: 15,
-    cut_delay_minutes: 30,
-    recipients: [],
-    email_enabled: false,
-  };
-  a.equal((await call('/alerts/settings', body)).status, 403);
+test('Alertas corresponde al súper administrador y el administrador no las recibe', async () => {
   const snapshot = (await call(`/snapshot?branch_id=${branch}`)).body;
   a.deepEqual(snapshot.alerts, []);
-  a.equal(snapshot.alert_settings, null);
+  a.equal(snapshot.alert_settings, undefined);
+  const removed = await fetch(`${base}/api/v1/alerts/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` },
+    body: JSON.stringify({ branch_id: branch }),
+  });
+  a.equal(removed.status, 404);
 });
 test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async () => {
   const date = '2026-11-09';

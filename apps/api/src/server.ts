@@ -31,6 +31,7 @@ import { modules } from './modules.js';
 import { supplierImport } from './supplier-import.js';
 import { media, purgeExpiredMedia } from './media.js';
 import { closeAbandonedClocks } from './attendance.js';
+import { alertsReady } from './alerts.js';
 import { prepareMediaStorage } from './storage.js';
 export const app = express();
 app.use(
@@ -622,14 +623,15 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.catalog = await select('task_catalog');
         result.assignments = await select('task_assignments');
         result.corrections = await select('supplier_corrections');
-        result.alerts = user.role === 'superadmin' ? await select('alerts') : [];
         result.categories = await select('expense_categories');
-        result.alert_settings =
-          user.role === 'superadmin'
-            ? (await db.query('SELECT * FROM alert_settings')).rows[0]
-            : null;
-        result.notifications =
-          user.role === 'superadmin' ? await select('notification_outbox') : [];
+        // Who is working right now and at which register, for the dashboard.
+        result.occupied_registers = (
+          await db.query('SELECT register_number,user_id FROM register_leases')
+        ).rows;
+        result.alerts =
+          user.role === 'superadmin' && (await alertsReady(db))
+            ? (await db.query('SELECT * FROM alert_log ORDER BY occurred_at DESC LIMIT 300')).rows
+            : [];
       }
       return result;
     }),

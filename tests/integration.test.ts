@@ -3,7 +3,6 @@ import { strict as a } from 'node:assert';
 import { randomUUID, generateKeyPairSync, sign, createHash } from 'node:crypto';
 import sharp from 'sharp';
 import ExcelJS from 'exceljs';
-import { SMTPServer } from 'smtp-server';
 import pg from 'pg';
 import { canonical, localTime, type Command } from '../packages/domain/index.js';
 if (process.env.NODE_ENV === 'production' || !process.env.MIGRATION_DATABASE_URL)
@@ -1087,99 +1086,100 @@ test('otro equipo permite tareas y cortes, pero nunca proveedores en paralelo', 
     { code: 'FORBIDDEN' },
   );
 });
-test('worker genera avisos y correo con deduplicación; entrega incierta requiere revisión', async () => {
-  let received = 0;
-  const smtpServer = new SMTPServer({
-    authOptional: true,
-    disabledCommands: ['STARTTLS'],
-    onData(stream, _session, callback) {
-      stream.on('data', () => {});
-      stream.on('end', () => {
-        received++;
-        callback();
-      });
-    },
-  });
-  await new Promise<void>((resolve) => smtpServer.listen(0, '127.0.0.1', resolve));
-  const old = {
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    from: process.env.SMTP_FROM,
-    user: process.env.SMTP_USER,
-    password: process.env.SMTP_PASSWORD,
-  };
-  process.env.SMTP_HOST = '127.0.0.1';
-  process.env.SMTP_PORT = String((smtpServer.server.address() as any).port);
-  process.env.SMTP_FROM = 'demo@shifttrack.invalid';
-  delete process.env.SMTP_USER;
-  delete process.env.SMTP_PASSWORD;
-  try {
-    a.equal(
-      (
-        await call('/alerts/settings', {
-          branch_id: branch,
-          absence_tolerance_minutes: 15,
-          cut_delay_minutes: 30,
-          recipients: ['recipient@shifttrack.invalid'],
-          email_enabled: true,
-        })
-      ).status,
-      200,
-    );
+test('alertas de la tienda: tarde, falta, salida anticipada, sin corte, tarea, corte y proveedores', async () => {
+  const { evaluateAlerts, cutDifferenceAlert, supplierDifferenceAlert } =
+    await import('../apps/api/src/alerts.js');
+  const zone = 'America/Mazatlan';
+  // Wednesday 2026-11-04 at 16:00 local time (UTC-7): the day shifts are over.
+  const now = new Date('2026-11-04T23:00:00Z');
+  const day = '2026-11-04';
+  const late = employee,
+    absent = second;
+  const present = (
+    await sql.query(
+      "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Puntual','employee',$3) RETURNING *",
+      [randomUUID(), `puntual-${randomUUID()}`, branch],
+    )
+  ).rows[0];
+  for (const person of [late, absent, present])
     await sql.query(
       'INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,$5,$6)',
-      [branch, randomUUID(), second.id, localTimeForTest(), '00:00', '00:01'],
+      [branch, randomUUID(), person.id, day, '07:30', '15:00'],
     );
-    const { tick } = await import('../apps/worker/tick.js');
-    await tick();
-    const firstCount = received;
-    a.ok(firstCount >= 2);
-    await tick();
-    a.equal(received, firstCount);
-    const id = randomUUID();
-    await sql.query(
-      "INSERT INTO notification_outbox(branch_id,id,source_key,recipients,subject,body,status,lease_until) VALUES($1,$2,$3,$4,$5,$6,'sending',now()-interval '1 minute')",
-      [
-        branch,
-        id,
-        'uncertain-test',
-        ['recipient@shifttrack.invalid'],
-        'Entrega incierta',
-        'Prueba local',
-      ],
+  const clock = (user: any, entry: string, exit: string) =>
+    sql.query(
+      'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in,clock_out) VALUES($1,$2,$3,$4,$5,$6)',
+      [branch, randomUUID(), user.id, day, entry, exit],
     );
-    const { dispatchMail } = await import('../apps/worker/mail.js');
-    await dispatchMail();
-    a.equal(received, firstCount);
-    a.equal(
-      (await sql.query('SELECT status FROM notification_outbox WHERE id=$1', [id])).rows[0].status,
-      'needs_review',
-    );
-    a.equal(
-      (
-        await call(`/notifications/${id}/retry`, {
-          branch_id: branch,
-          reason: 'Reintento explícito de prueba',
-        })
-      ).status,
-      200,
-    );
-    await dispatchMail();
-    a.equal(received, firstCount + 1);
-  } finally {
-    await sql.query('UPDATE alert_settings SET email_enabled=false WHERE branch_id=$1', [branch]);
-    for (const [key, value] of Object.entries({
-      SMTP_HOST: old.host,
-      SMTP_PORT: old.port,
-      SMTP_FROM: old.from,
-      SMTP_USER: old.user,
-      SMTP_PASSWORD: old.password,
-    })) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    await new Promise<void>((resolve) => smtpServer.close(resolve));
-  }
+  // 08:10 local is 40 minutes late; leaving at 14:00 is an hour early; no cut was made.
+  await clock(late, '2026-11-04T15:10:00Z', '2026-11-04T21:00:00Z');
+  // 07:45 is within the 20 minute tolerance; leaving at 14:55 is within the exit tolerance.
+  await clock(present, '2026-11-04T14:45:00Z', '2026-11-04T21:55:00Z');
+  await sql.query(
+    "INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at) VALUES($1,$2,$3,1,$4,'Mañana',1000,0,1000,1000,0,$5)",
+    [branch, randomUUID(), present.id, day, '2026-11-04T21:50:00Z'],
+  );
+  await sql.query(
+    "INSERT INTO tasks(branch_id,id,user_id,title,due_date) VALUES($1,$2,$3,'Limpiar vitrinas','2026-11-03')",
+    [branch, randomUUID(), present.id],
+  );
+  const kinds = async () =>
+    (
+      await sql.query(
+        'SELECT kind,user_id,message FROM alert_log WHERE branch_id=$1 ORDER BY kind,user_id',
+        [branch],
+      )
+    ).rows;
+  const raised = await transaction(branch, (db) =>
+    evaluateAlerts(db, { id: branch, timezone: zone }, now),
+  );
+  const rows = await kinds();
+  a.equal(raised, 5);
+  a.deepEqual(rows.map((r) => r.kind).sort(), [
+    'absent',
+    'early_exit',
+    'late',
+    'missing_cut',
+    'task_incomplete',
+  ]);
+  a.ok(rows.find((r) => r.kind === 'late' && r.user_id === late.id)!.message.includes('40 min'));
+  a.equal(rows.find((r) => r.kind === 'absent')!.user_id, absent.id);
+  a.equal(rows.find((r) => r.kind === 'task_incomplete')!.user_id, present.id);
+  // Evaluating again never repeats an alert.
+  a.equal(
+    await transaction(branch, (db) => evaluateAlerts(db, { id: branch, timezone: zone }, now)),
+    0,
+  );
+  // Cuts and the supplier cash box only alert above their limits.
+  await transaction(branch, async (db) => {
+    const cut = (difference: string) => ({
+      id: randomUUID(),
+      userId: present.id,
+      date: day,
+      label: 'Mañana',
+      difference,
+      at: now.toISOString(),
+    });
+    await cutDifferenceAlert(db, branch, cut('-2500'));
+    await cutDifferenceAlert(db, branch, cut('2500'));
+    await cutDifferenceAlert(db, branch, cut('-2501'));
+    await cutDifferenceAlert(db, branch, cut('3000'));
+    const shift = (counted: bigint) => ({
+      id: randomUUID(),
+      userId: present.id,
+      date: day,
+      expected: 50000n,
+      counted,
+      at: now.toISOString(),
+    });
+    await supplierDifferenceAlert(db, branch, shift(60000n));
+    await supplierDifferenceAlert(db, branch, shift(60001n));
+    await supplierDifferenceAlert(db, branch, shift(39999n));
+  });
+  const all = await kinds();
+  a.equal(all.filter((r) => r.kind === 'cut_difference').length, 2);
+  a.equal(all.filter((r) => r.kind === 'supplier_difference').length, 2);
+  a.ok(all.find((r) => r.kind === 'cut_difference' && r.message.includes('faltante de $25.01')));
 });
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });

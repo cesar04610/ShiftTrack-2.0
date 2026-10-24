@@ -6,7 +6,6 @@ import type pg from 'pg';
 import { identity, deviceIdentity } from './security.js';
 import { admin, context, owner, transaction, pool } from './db.js';
 import { assert, cents, localTime, type User } from '../../../packages/domain/index.js';
-import { smtp, smtpConfigured } from '../../worker/mail.js';
 export const modules = express.Router();
 async function member(db: pg.PoolClient, branch: string, id: string) {
   assert(
@@ -381,72 +380,6 @@ modules.post('/expense-categories', async (req, res) => {
     ]);
   });
   res.status(201).json({ ok: true });
-});
-modules.post('/alerts/settings', async (req, res) => {
-  const user = await identity(req.headers.authorization);
-  owner(user);
-  const b = await context(user, req.body.branch_id);
-  const p = z
-    .object({
-      absence_tolerance_minutes: z.number().int().min(0).max(240),
-      cut_delay_minutes: z.number().int().min(0).max(240),
-      recipients: z.array(z.email()).max(20),
-      email_enabled: z.boolean(),
-    })
-    .parse(req.body);
-  if (p.email_enabled) {
-    assert(
-      smtpConfigured(),
-      'SMTP_NOT_CONFIGURED',
-      'Configura SMTP en el servidor antes de habilitar correos.',
-      400,
-    );
-    assert(p.recipients.length, 'INVALID_RECIPIENTS', 'Agrega al menos un destinatario.', 400);
-    const transport = smtp();
-    try {
-      await transport.verify();
-    } finally {
-      transport.close();
-    }
-  }
-  await transaction(b.id, async (db) => {
-    await db.query(
-      'INSERT INTO alert_settings VALUES($1,$2,$3,$4,$5) ON CONFLICT(branch_id) DO UPDATE SET absence_tolerance_minutes=$2,cut_delay_minutes=$3,recipients=$4,email_enabled=$5',
-      [b.id, p.absence_tolerance_minutes, p.cut_delay_minutes, p.recipients, p.email_enabled],
-    );
-    await audit(db, b.id, user, 'alerts.settings', p);
-  });
-  res.json({ ok: true });
-});
-modules.post('/notifications/:id/retry', async (req, res) => {
-  const user = await identity(req.headers.authorization);
-  owner(user);
-  const b = await context(user, req.body.branch_id);
-  const p = z.object({ reason: z.string().trim().min(3).max(1000) }).parse(req.body);
-  await transaction(b.id, async (db) => {
-    assert(
-      (
-        await db.query(
-          "UPDATE notification_outbox SET status='pending',next_attempt_at=now() WHERE id=$1 AND status IN ('failed','needs_review') RETURNING id",
-          [z.uuid().parse(req.params.id)],
-        )
-      ).rowCount,
-      'NOT_FOUND',
-      'Aviso no disponible para reintento.',
-      404,
-    );
-    await audit(db, b.id, user, 'notification.retry', { id: req.params.id, reason: p.reason });
-  });
-  res.json({ ok: true });
-});
-modules.post('/alerts/:id/seen', async (req, res) => {
-  const user = await identity(req.headers.authorization);
-  owner(user);
-  const b = await context(user, req.body.branch_id);
-  await transaction(b.id, async (db) => {
-    await db.query('UPDATE alerts SET seen=true WHERE id=$1', [z.uuid().parse(req.params.id)]);
-  });
-  res.json({ ok: true });
 });
 modules.get('/reports/export', async (req, res) => {
   const user = await identity(req.headers.authorization);

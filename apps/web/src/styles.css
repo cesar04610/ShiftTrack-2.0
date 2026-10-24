@@ -1427,3 +1427,111 @@ button.danger-outline:not(:disabled):hover {
     display: block;
   }
 }
+
+.section-label {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.muted {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.active-staff {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.active-staff li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: #f0fdf9;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+}
+.active-staff small {
+  color: #475569;
+}
+.live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 4px #10b98133;
+}
+.alert-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.alert-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+}
+.alert-filters .count {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #0f172a14;
+}
+.alert-filters .primary .count {
+  background: #ffffff33;
+}
+.badge.alert-late,
+.badge.alert-early_exit {
+  background: #fef3c7;
+  color: #92400e;
+}
+.badge.alert-absent,
+.badge.alert-missing_cut,
+.badge.alert-task_incomplete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.badge.alert-cut_difference,
+.badge.alert-supplier_difference {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.cuts-range {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.cuts-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.cuts-range input {
+  width: 170px;
+}
+.cuts-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-variant-numeric: tabular-nums;
+}

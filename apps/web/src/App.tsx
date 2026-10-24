@@ -217,6 +217,157 @@ function ResolveShortage({ onResolve }: { onResolve: () => Promise<void> }) {
     </button>
   );
 }
+const alertGroups = [
+  { key: 'all', label: 'Todas', kinds: [] as string[] },
+  { key: 'schedule', label: 'Horarios', kinds: ['late', 'absent', 'early_exit'] },
+  { key: 'cuts', label: 'Cortes', kinds: ['cut_difference', 'missing_cut'] },
+  { key: 'tasks', label: 'Tareas', kinds: ['task_incomplete'] },
+  { key: 'suppliers', label: 'Proveedores', kinds: ['supplier_difference'] },
+];
+const alertKinds: Record<string, string> = {
+  late: 'Llegó tarde',
+  absent: 'Faltó',
+  early_exit: 'Salió antes',
+  cut_difference: 'Diferencia en corte',
+  missing_cut: 'Sin corte',
+  task_incomplete: 'Tarea sin terminar',
+  supplier_difference: 'Diferencia proveedores',
+};
+function AlertsPanel({ alerts, zone }: { alerts: any[]; zone: string }) {
+  const [group, setGroup] = useState('all');
+  const kinds = alertGroups.find((g) => g.key === group)!.kinds;
+  const shown = alerts.filter((a) => !kinds.length || kinds.includes(a.kind));
+  return (
+    <Card
+      title="Estado de la tienda"
+      subtitle="Registro de lo que requiere tu atención, del más reciente al más antiguo"
+    >
+      <div className="alert-filters" role="group" aria-label="Filtrar alertas">
+        {alertGroups.map((g) => (
+          <button
+            key={g.key}
+            className={group === g.key ? 'primary' : 'secondary'}
+            aria-pressed={group === g.key}
+            onClick={() => setGroup(g.key)}
+          >
+            {g.label}
+            <span className="count">
+              {alerts.filter((a) => !g.kinds.length || g.kinds.includes(a.kind)).length}
+            </span>
+          </button>
+        ))}
+      </div>
+      <Table
+        headers={['Fecha', 'Tipo', 'Detalle']}
+        rows={shown.map((a) => [
+          time(a.occurred_at, zone),
+          <span key={a.id} className={`badge alert-${a.kind}`}>
+            {alertKinds[a.kind] || a.kind}
+          </span>,
+          a.message,
+        ])}
+      />
+    </Card>
+  );
+}
+function CutsPanel({
+  cuts,
+  users,
+  today,
+  zone,
+}: {
+  cuts: any[];
+  users: any[];
+  today: string;
+  zone: string;
+}) {
+  const yesterday = addDays(today, -1);
+  const [from, setFrom] = useState(''),
+    [to, setTo] = useState('');
+  const ranged = !!from && !!to;
+  const start = ranged ? (from <= to ? from : to) : yesterday,
+    end = ranged ? (from <= to ? to : from) : yesterday;
+  const shown = cuts
+    .filter((c) => c.business_date.slice(0, 10) >= start && c.business_date.slice(0, 10) <= end)
+    .sort(
+      (x, y) =>
+        y.business_date.localeCompare(x.business_date) || x.label.localeCompare(y.label, 'es'),
+    );
+  const total = (field: string) =>
+    shown.reduce((sum, c) => sum + BigInt(c[field] || c.difference || '0'), 0n);
+  const label = (date: string) =>
+    new Intl.DateTimeFormat('es-MX', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'UTC',
+    }).format(new Date(`${date}T12:00:00Z`));
+  return (
+    <Card
+      title="Cortes"
+      subtitle={
+        start === end ? `Cortes del ${label(start)}` : `Del ${label(start)} al ${label(end)}`
+      }
+    >
+      <div className="cuts-range">
+        <label>
+          Desde
+          <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label>
+          Hasta
+          <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <button
+          className="secondary"
+          disabled={!from && !to}
+          onClick={() => {
+            setFrom('');
+            setTo('');
+          }}
+        >
+          Ver solo ayer
+        </button>
+      </div>
+      {(from || to) && !ranged && (
+        <p className="muted">
+          Elige las dos fechas para ver el rango. Mientras tanto se muestra ayer.
+        </p>
+      )}
+      <Table
+        headers={[
+          'Fecha',
+          'Turno',
+          'Empleado',
+          'Ventas',
+          'Tarjeta',
+          'Contado',
+          'Diferencia',
+          'Nota',
+        ]}
+        rows={shown.map((c) => [
+          c.business_date.slice(0, 10),
+          c.label,
+          users.find((u) => u.id === c.user_id)?.name || '—',
+          money(c.sales_cents),
+          money(c.card_cents),
+          money(c.declared_cents),
+          money(c.difference_cents || c.difference || '0'),
+          c.note || '',
+        ])}
+      />
+      <div className="cuts-total" aria-live="polite">
+        <strong>
+          Suma de {shown.length} corte{shown.length === 1 ? '' : 's'}
+        </strong>
+        <span>Ventas {money(total('sales_cents'))}</span>
+        <span>Tarjeta {money(total('card_cents'))}</span>
+        <span>Contado {money(total('declared_cents'))}</span>
+        <span>Diferencia {money(total('difference_cents'))}</span>
+      </div>
+    </Card>
+  );
+}
 function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
   return rows.length ? (
     <div className="table-wrap">
@@ -359,6 +510,15 @@ export default function App() {
     };
   }, [user, branchId]);
   useEffect(() => {
+    if (
+      user &&
+      user.role !== 'employee' &&
+      registerNumber == null &&
+      employeeNav.some(([label]) => label === page)
+    )
+      setPage('Inicio');
+  }, [user, registerNumber, page]);
+  useEffect(() => {
     if (!mobile) return;
     const close = (event: KeyboardEvent) => event.key === 'Escape' && setMobile(false);
     document.addEventListener('keydown', close);
@@ -415,7 +575,7 @@ export default function App() {
     setPrepared(result.prepared);
     setDeviceId((await getDevice()).id);
     setOnline(!result.offline);
-    setPage('Horario');
+    setPage(result.user.role === 'employee' ? 'Horario' : 'Inicio');
     let list;
     if (result.offline) {
       const cached = (await db.caches.get(`branches:${result.user.id}`))?.value;
@@ -519,11 +679,13 @@ export default function App() {
     employeeOptions = (data?.users || [])
       .filter((u: any) => u.active)
       .map((u: any) => ({ value: u.id, label: u.name }));
+  // Administrators only see the employee menu while they work at a register.
   const nav = employeeNav.filter(
     ([label]) =>
-      label !== 'Caja proveedores' ||
-      isAdmin ||
-      (prepared && registerNumber === data?.branch.supplier_register),
+      (!isAdmin || registerNumber != null) &&
+      (label !== 'Caja proveedores' ||
+        isAdmin ||
+        (prepared && registerNumber === data?.branch.supplier_register)),
   );
   const managementNav = adminNav.filter(
     ([label]) => label !== 'Alertas' || user.role === 'superadmin',
@@ -954,19 +1116,48 @@ export default function App() {
                       </button>
                     </Card>
                   </div>
-                  <Card title="Turnos del día">
+                  <Card
+                    title="Turnos del día"
+                    subtitle="Quién está activo ahora y el historial de entradas y salidas"
+                  >
+                    <h3 className="section-label">Activos ahora</h3>
+                    {data.clock.some((r: any) => !r.clock_out) ? (
+                      <ul className="active-staff">
+                        {data.clock
+                          .filter((r: any) => !r.clock_out)
+                          .sort((x: any, y: any) => Date.parse(x.clock_in) - Date.parse(y.clock_in))
+                          .map((r: any) => {
+                            const lease = (data.occupied_registers || []).find(
+                              (x: any) => x.user_id === r.user_id,
+                            );
+                            return (
+                              <li key={r.id}>
+                                <span className="live-dot" aria-hidden="true" />
+                                <strong>
+                                  {data.users.find((u: any) => u.id === r.user_id)?.name ||
+                                    r.user_id}
+                                </strong>
+                                <span className="badge">
+                                  {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
+                                </span>
+                                <small>activo desde las {clockHour(r.clock_in, b.timezone)}</small>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    ) : (
+                      <p className="muted">Nadie está activo en este momento.</p>
+                    )}
+                    <h3 className="section-label">Historial del día</h3>
                     <Table
                       headers={['Empleado', 'Entrada', 'Salida']}
                       rows={data.clock
-                        .filter((r: any) => r.business_date.slice(0, 10) === date)
+                        .filter((r: any) => r.clock_out && r.business_date.slice(0, 10) === date)
+                        .sort((x: any, y: any) => Date.parse(y.clock_out) - Date.parse(x.clock_out))
                         .map((r: any) => [
                           data.users.find((u: any) => u.id === r.user_id)?.name || r.user_id,
-                          time(r.clock_in, b.timezone),
-                          r.clock_out ? (
-                            time(r.clock_out, b.timezone)
-                          ) : (
-                            <span className="badge">En turno</span>
-                          ),
+                          clockHour(r.clock_in, b.timezone),
+                          clockHour(r.clock_out, b.timezone),
                         ])}
                     />
                   </Card>
@@ -1618,12 +1809,15 @@ export default function App() {
                   </Card>
                 </>
               )}
-              {(page === 'Mi corte' || page === 'Cortes') && (
+              {page === 'Cortes' && (
+                <CutsPanel cuts={data.cuts} users={data.users} today={date} zone={b.timezone} />
+              )}
+              {page === 'Mi corte' && (
                 <>
-                  {page === 'Mi corte' && !canCapture && (
+                  {!canCapture && (
                     <div className="notice">Selecciona una caja para registrar tu corte.</div>
                   )}
-                  {page === 'Mi corte' && canCapture && (
+                  {canCapture && (
                     <Card title="Capturar mi corte">
                       <p>
                         El corte corresponde a la hora en que iniciaste sesión. Mañana: desde las
@@ -1674,7 +1868,7 @@ export default function App() {
                         'Nota',
                       ]}
                       rows={data.cuts
-                        .filter((c: any) => page === 'Cortes' || c.user_id === user.id)
+                        .filter((c: any) => c.user_id === user.id)
                         .map((c: any) => [
                           c.business_date.slice(0, 10),
                           c.label,
@@ -1874,97 +2068,7 @@ export default function App() {
                   </Card>
                 </>
               )}
-              {page === 'Alertas' && (
-                <>
-                  <Card title="Configuración de avisos">
-                    <Form
-                      fields={[
-                        {
-                          name: 'absence_tolerance_minutes',
-                          label: 'Tolerancia de ausencia · minutos',
-                          type: 'number',
-                          value: String(data.alert_settings?.absence_tolerance_minutes || 15),
-                        },
-                        {
-                          name: 'cut_delay_minutes',
-                          label: 'Demora de corte · minutos',
-                          type: 'number',
-                          value: String(data.alert_settings?.cut_delay_minutes || 30),
-                        },
-                        {
-                          name: 'recipients',
-                          label: 'Destinatarios de correo · separados por coma',
-                          optional: true,
-                          value: (data.alert_settings?.recipients || []).join(','),
-                        },
-                        {
-                          name: 'email_enabled',
-                          label: 'Envío de correos',
-                          value: data.alert_settings?.email_enabled ? 'yes' : 'no',
-                          options: [
-                            { value: 'no', label: 'Deshabilitado' },
-                            { value: 'yes', label: 'Habilitado · verificar SMTP del servidor' },
-                          ],
-                        },
-                      ]}
-                      onSubmit={(v) =>
-                        mutate('/alerts/settings', {
-                          absence_tolerance_minutes: Number(v.absence_tolerance_minutes),
-                          cut_delay_minutes: Number(v.cut_delay_minutes),
-                          recipients: v.recipients
-                            ? v.recipients.split(',').map((s) => s.trim())
-                            : [],
-                          email_enabled: v.email_enabled === 'yes',
-                        })
-                      }
-                    />
-                    <p>
-                      El envío de correos requiere configuración y prueba de SMTP antes de
-                      habilitarse.
-                    </p>
-                  </Card>
-                  <Card title="Avisos de la sucursal">
-                    <Table
-                      headers={['Tipo', 'Aviso', 'Estado', '']}
-                      rows={(data.alerts || []).map((a: any) => [
-                        a.type,
-                        a.message,
-                        a.resolved ? 'Resuelto' : a.seen ? 'Visto' : 'Nuevo',
-                        !a.seen && (
-                          <button
-                            className="text-button"
-                            onClick={() => mutate(`/alerts/${a.id}/seen`, {}).catch(notify)}
-                          >
-                            Marcar visto
-                          </button>
-                        ),
-                      ])}
-                    />
-                  </Card>
-                  <Card title="Historial de correo">
-                    <Table
-                      headers={['Asunto', 'Estado', 'Intentos', 'Detalle', '']}
-                      rows={(data.notifications || []).map((n: any) => [
-                        n.subject,
-                        n.status,
-                        n.attempts,
-                        n.last_error || '—',
-                        ['failed', 'needs_review'].includes(n.status) && (
-                          <Form
-                            fields={[{ name: 'reason', label: 'Motivo de reintento' }]}
-                            label="Reintentar envío"
-                            onSubmit={(v) => mutate(`/notifications/${n.id}/retry`, v)}
-                          />
-                        ),
-                      ])}
-                    />
-                    <p>
-                      Un envío aceptado por SMTP no garantiza entrega al buzón. Reintentar una
-                      entrega incierta puede duplicar un correo.
-                    </p>
-                  </Card>
-                </>
-              )}
+              {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}
               {page === 'Configuración' && (
                 <>
                   {user.role === 'superadmin' ? (
@@ -2181,6 +2285,13 @@ function Stat({
       <p>{foot}</p>
     </div>
   );
+}
+function clockHour(value: string, zone: string) {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: zone,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
 }
 function time(value: string, zone: string) {
   return new Intl.DateTimeFormat('es-MX', {
