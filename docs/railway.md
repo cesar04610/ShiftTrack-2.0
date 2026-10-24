@@ -65,3 +65,9 @@ La API de Railway rechazó `volumeInstanceBackupScheduleUpdate` con «Not Author
 ## Migración 008: empleados por sucursal
 
 La migración `008-users-per-branch.sql` agrega `users.deleted_at` y sustituye la unicidad global del nombre por un índice único de cuentas no eliminadas por sucursal. Conserva usuarios, contraseñas e historial existentes. El runtime comprueba la nueva columna antes de servir solicitudes. El login valida contraseña antes de ofrecer sucursales; confirmaciones internas validan el ID de cuenta, evitando ambigüedad cuando dos cuentas comparten nombre.
+
+## Migraciones automáticas en cada despliegue (opcional)
+
+La imagen incluye `dist/scripts/migrate.js`, que aplica solo las migraciones pendientes (idempotente, con bloqueo para evitar ejecuciones simultáneas). En Railway, servicio `ShiftTrack-2.0` → Settings → Deploy → **Pre-deploy Command**: `node dist/scripts/migrate.js`. Si una migración falla, el despliegue se detiene y la versión anterior sigue activa.
+
+Requiere en ese servicio la variable `MIGRATION_DATABASE_URL`, creada como **referencia** a la del PostgreSQL (`${{Postgres.DATABASE_URL}}`), nunca copiando el valor. Compromiso de seguridad: el servicio API recibe así una credencial con propiedad de tablas además de `DATABASE_URL` (rol restringido). Quitar la variable y el comando restablece la separación anterior. `scripts/provision.ts` sigue siendo el proceso para la primera preparación y el rol restringido.
