@@ -252,7 +252,12 @@ export async function login(username: string, password: string, branchId?: strin
     onlineCredentials = { user, password };
     session = null;
     privateKey = null;
-    return { user, prepared: !!session, offline: false };
+    return {
+      user,
+      prepared: !!session,
+      offline: false,
+      sessionEnd: result.expires_at ? Date.parse(result.expires_at) : null,
+    };
   } catch (e) {
     if (!(e instanceof ApiError && e.code === 'NETWORK')) {
       await logout();
@@ -315,7 +320,7 @@ export async function login(username: string, password: string, branchId?: strin
       throw e;
     }
     await db.meta.put({ id: `attempts:${username}`, value: { count: 0, until: 0 } });
-    return { user: prepared.user, prepared: true, offline: true };
+    return { user: prepared.user, prepared: true, offline: true, sessionEnd: null };
   }
 }
 export async function trustedNow() {
@@ -612,7 +617,11 @@ export async function enqueue(
           (r: any) => r.user_id === user.id && Date.parse(r.clock_in) <= Date.parse(occurred_at),
         )
         .sort((a: any, b: any) => Date.parse(b.clock_in) - Date.parse(a.clock_in))[0];
-      assert(cutClock, 'CLOCK_REQUIRED', 'Registra tu entrada antes de guardar el corte.');
+      assert(
+        cutClock,
+        'CLOCK_REQUIRED',
+        'Inicia sesión con conexión para registrar tu entrada antes de guardar el corte.',
+      );
       assert(
         !(cached?.cuts || []).some(
           (r: any) =>

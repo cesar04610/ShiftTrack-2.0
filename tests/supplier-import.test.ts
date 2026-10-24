@@ -80,7 +80,7 @@ before(async () => {
 after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await pool.end();
-  for (const table of ['processed_operations', 'audit_events', 'suppliers'])
+  for (const table of ['clock_records', 'processed_operations', 'audit_events', 'suppliers'])
     await db.query(`DELETE FROM ${table} WHERE branch_id=$1`, [branch]);
   await db.query(
     'DELETE FROM auth_sessions WHERE user_id IN(SELECT id FROM users WHERE branch_id=$1)',

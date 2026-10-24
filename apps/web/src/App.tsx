@@ -256,7 +256,6 @@ const adminNav = [
 ] as const;
 const employeeNav = [
   ['Horario', CalendarDays],
-  ['Registro de entradas', Timer],
   ['Tareas', ClipboardCheck],
   ['Caja proveedores', Wallet],
   ['Faltantes', PackageX],
@@ -291,11 +290,20 @@ export default function App() {
     [mobile, setMobile] = useState(false),
     [prepared, setPrepared] = useState(false),
     [deviceId, setDeviceId] = useState(''),
+    [loginNotice, setLoginNotice] = useState(''),
+    [sessionEnd, setSessionEnd] = useState<number | null>(null),
     [now, setNow] = useState(Date.now());
   const currentScope = useRef({ user: user?.id, branch: branchId }),
     refreshGeneration = useRef(0);
   currentScope.current = { user: user?.id, branch: branchId };
-  const notify = (e: unknown) => setMessage(e instanceof Error ? e.message : String(e));
+  const notify = (e: unknown) => {
+    // The server ended this session (9 hours, password change or deactivation): go back to sign-in.
+    if (e instanceof ApiError && e.code === 'UNAUTHENTICATED' && hasOnlineSession()) {
+      void endSession('Tu sesión terminó. Inicia sesión de nuevo.');
+      return;
+    }
+    setMessage(e instanceof Error ? e.message : String(e));
+  };
   async function refresh(remote = true) {
     if (!user || !branchId) return;
     const generation = ++refreshGeneration.current,
@@ -351,6 +359,12 @@ export default function App() {
     };
   }, [user, branchId]);
   useEffect(() => {
+    if (!mobile) return;
+    const close = (event: KeyboardEvent) => event.key === 'Escape' && setMobile(false);
+    document.addEventListener('keydown', close);
+    return () => document.removeEventListener('keydown', close);
+  }, [mobile]);
+  useEffect(() => {
     if (user?.role === 'superadmin' && page === 'Configuración')
       request('/branches?include_archived=true').then(setAllBranches).catch(notify);
     if (user && user.role !== 'employee' && page === 'Configuración' && branchId)
@@ -392,6 +406,8 @@ export default function App() {
       throw error;
     }
     setLoginBranches([]);
+    setLoginNotice('');
+    setSessionEnd(result.sessionEnd);
     setRegisterNumber(null);
     setRegisterChosen(false);
     setData(null);
@@ -412,8 +428,14 @@ export default function App() {
     setBranchId(result.user.branch_id || list[0]?.id || '');
     setPending(await listPending());
   }
+  async function endSession(notice: string) {
+    await signOut();
+    setLoginNotice(notice);
+  }
   async function signOut() {
     await logout();
+    setSessionEnd(null);
+    setLoginNotice('');
     setRegisterNumber(null);
     setUser(null);
     setData(null);
@@ -438,6 +460,11 @@ export default function App() {
     synchronize();
   }
   const expired = !!expiresAt() && Date.parse(expiresAt()!) <= now;
+  // Sessions close by themselves after 9 hours, in case someone forgets to sign out.
+  useEffect(() => {
+    if (user && sessionEnd && now >= sessionEnd)
+      void endSession('Tu sesión se cerró automáticamente después de 9 horas.');
+  }, [now, sessionEnd, user]);
   if (!user)
     return (
       <div className="login-page">
@@ -452,7 +479,12 @@ export default function App() {
         </div>
         <div className="login-card">
           <h2>Bienvenido</h2>
-          <p>Ingresa con tu usuario y contraseña.</p>
+          <p>Ingresa con tu usuario y contraseña. Al iniciar sesión se registra tu entrada.</p>
+          {loginNotice && (
+            <div className="notice" role="status">
+              {loginNotice}
+            </div>
+          )}
           <Form
             fields={[
               {
@@ -516,7 +548,6 @@ export default function App() {
     Cortes: 'Ventas, efectivo contado y diferencias.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
-    'Registro de entradas': 'Registra tu entrada y salida del día.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
     Configuración: 'Sucursales, cajas y accesos preparados.',
     Reportes: 'Consulta la actividad registrada de esta sucursal.',
@@ -538,6 +569,9 @@ export default function App() {
   );
   return (
     <div className={`app ${isAdmin ? '' : 'employee-app'}`}>
+      {mobile && (
+        <div className="sidebar-backdrop" aria-hidden="true" onClick={() => setMobile(false)} />
+      )}
       <aside className={mobile ? 'sidebar show' : 'sidebar'}>
         <div className="sidebar-brand">
           <div className="brand-icon">
@@ -759,8 +793,8 @@ export default function App() {
           {!!registerNumber && !prepared && (
             <div className="notice">
               Este equipo aún no tiene tu acceso offline preparado. Puedes consultar horarios y
-              registrar tu entrada con conexión. Para habilitar las capturas operativas, usa un
-              equipo registrado por el dueño en tu misma sucursal.
+              iniciar sesión con conexión, que registra tu entrada. Para habilitar las capturas
+              operativas, usa un equipo registrado por el dueño en tu misma sucursal.
             </div>
           )}
           {pending.length > 0 && (
@@ -1090,55 +1124,6 @@ export default function App() {
                       />
                     </Card>
                   )}
-                </>
-              )}
-              {page === 'Registro de entradas' && (
-                <>
-                  <Card title="Mi turno de hoy">
-                    <div className="clock-display">
-                      <Timer size={42} />
-                      <h2>
-                        {data.clock.some((r: any) => r.user_id === user.id && !r.clock_out)
-                          ? 'Tu turno está en curso'
-                          : 'Listo para registrar tu turno'}
-                      </h2>
-                      <p>El turno se clasifica según tu hora de entrada.</p>
-                      <div className="button-row">
-                        <button
-                          className="primary"
-                          disabled={!online}
-                          onClick={() => mutate('/clock/in', {}).catch(notify)}
-                        >
-                          Registrar entrada
-                        </button>
-                        <button
-                          className="secondary"
-                          disabled={!online}
-                          onClick={() => mutate('/clock/out', {}).catch(notify)}
-                        >
-                          Registrar salida
-                        </button>
-                      </div>
-                    </div>
-                  </Card>
-                  <Card title="Mis registros de entrada y salida">
-                    <Table
-                      headers={['Fecha', 'Entrada', 'Salida', 'Horas']}
-                      rows={data.clock
-                        .filter((r: any) => r.user_id === user.id)
-                        .map((r: any) => [
-                          r.business_date.slice(0, 10),
-                          time(r.clock_in, b.timezone),
-                          r.clock_out ? time(r.clock_out, b.timezone) : 'En curso',
-                          r.clock_out
-                            ? (
-                                (Date.parse(r.clock_out) - Date.parse(r.clock_in)) /
-                                3600000
-                              ).toFixed(2)
-                            : '—',
-                        ])}
-                    />
-                  </Card>
                 </>
               )}
               {(page === 'Tareas' || page === 'Gestionar tareas') && (
@@ -1641,9 +1626,9 @@ export default function App() {
                   {page === 'Mi corte' && canCapture && (
                     <Card title="Capturar mi corte">
                       <p>
-                        El corte corresponde a tu registro de entrada. Mañana: desde las 05:00 hasta
-                        antes de las 15:00. Tarde: desde las 15:00 hasta antes de las 05:00 del día
-                        siguiente. La hora de cierre no cambia el turno.
+                        El corte corresponde a la hora en que iniciaste sesión. Mañana: desde las
+                        05:00 hasta antes de las 15:00. Tarde: desde las 15:00 hasta antes de las
+                        05:00 del día siguiente. La hora de cierre no cambia el turno.
                       </p>
                       <Form
                         fields={[
