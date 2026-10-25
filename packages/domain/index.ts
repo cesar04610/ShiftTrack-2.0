@@ -121,3 +121,38 @@ export type User = {
   auth_version: number;
   active: boolean;
 };
+
+// Spanish names for audit_events.action, shared by the report screen and its Excel export.
+export const auditActions: Record<string, string> = {
+  'supplier.create': 'Alta de proveedor',
+  'supplier.update': 'Edición de proveedor',
+  'suppliers.import': 'Importación de proveedores',
+  'supplier.ticket.create': 'Ticket de compra',
+  'supplier.ticket.void': 'Ticket anulado',
+  'supplier.balance.add': 'Fondo a caja proveedores',
+  'supplier.shift.open': 'Apertura caja proveedores',
+  'supplier.shift.close': 'Cierre caja proveedores',
+  'supplier.shift.reconcile': 'Cierre pendiente reconciliado',
+  'supplier.correction': 'Corrección a ticket',
+  'supplier.pause.request': 'Pausa de caja solicitada',
+  'supplier.pause.cancel': 'Pausa de caja cancelada',
+  'cut.create': 'Corte de caja',
+  'task.complete': 'Tarea completada',
+  'task.revert': 'Tarea reabierta',
+  'task.catalog.create': 'Tarea creada en catálogo',
+  'task.assignment.deactivate': 'Asignación de tarea desactivada',
+  'shortage.create': 'Faltante reportado',
+  'shortage.resolve': 'Faltante resuelto',
+  'schedule.create': 'Horario creado',
+  'schedule.update': 'Horario modificado',
+  'schedule.delete': 'Horario eliminado',
+  'schedules.clone': 'Semana de horarios copiada',
+  'treasury.movement': 'Movimiento de caja general',
+  'treasury.opening': 'Apertura de caja general',
+  'user.create': 'Usuario creado',
+  'user.update': 'Usuario modificado',
+  'user.deactivate': 'Usuario desactivado',
+  'user.delete': 'Usuario eliminado',
+  'register.release': 'Caja liberada',
+  'branch.deactivate': 'Sucursal eliminada',
+};

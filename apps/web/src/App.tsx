@@ -30,6 +30,7 @@ import {
 } from '../../../packages/domain/index.js';
 import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
+import Reports from './Reports';
 import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
 import {
   login,
@@ -499,8 +500,6 @@ export default function App() {
     const generation = ++refreshGeneration.current,
       userId = user.id;
     const loaded = await snapshot(user, branchId, remote);
-    if (user.role !== 'employee' && remote)
-      loaded.analytics = await request(`/analytics?branch_id=${branchId}`);
     const loadedPending = await listPending();
     if (
       currentScope.current.user !== userId ||
@@ -767,7 +766,7 @@ export default function App() {
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
     Configuración: 'Sucursales, cajas y accesos preparados.',
-    Reportes: 'Consulta la actividad registrada de esta sucursal.',
+    Reportes: 'Gastos, personal, operación y auditoría de esta sucursal por periodo.',
   };
   const supplierForm = (
     <Form
@@ -2053,96 +2052,14 @@ export default function App() {
                 </>
               )}
               {page === 'Reportes' && (
-                <>
-                  <button
-                    className="primary export-button"
-                    onClick={() =>
-                      download(
-                        `/reports/export?branch_id=${branchId}`,
-                        'mostrador-reportes.xlsx',
-                      ).catch(notify)
-                    }
-                  >
-                    Exportar Excel
-                  </button>
-                  <Card title="Asistencia registrada">
-                    <Table
-                      headers={['Empleado', 'Fecha', 'Entrada', 'Salida', 'Horas']}
-                      rows={data.clock.map((r: any) => [
-                        data.users.find((u: any) => u.id === r.user_id)?.name,
-                        r.business_date.slice(0, 10),
-                        time(r.clock_in, b.timezone),
-                        r.clock_out ? time(r.clock_out, b.timezone) : 'En curso',
-                        r.clock_out
-                          ? ((Date.parse(r.clock_out) - Date.parse(r.clock_in)) / 3600000).toFixed(
-                              2,
-                            )
-                          : '—',
-                      ])}
-                    />
-                  </Card>
-                  <Card
-                    title="Horarios sin registro de entrada recibido"
-                    subtitle="La ausencia de un registro no confirma ausencia física; puede haber pendientes sin sincronizar."
-                  >
-                    <Table
-                      headers={['Empleado', 'Fecha', 'Horario']}
-                      rows={(data.analytics?.absences || []).map((r: any) => [
-                        r.name,
-                        r.business_date.slice(0, 10),
-                        `${r.start_time} – ${r.end_time}`,
-                      ])}
-                    />
-                  </Card>
-                  <Card title="Auditoría de operaciones">
-                    <Table
-                      headers={['Acción', 'Fecha de recepción', 'Empleado']}
-                      rows={data.audit.map((a: any) => [
-                        a.action,
-                        time(a.received_at, b.timezone),
-                        data.users.find((u: any) => u.id === a.actor_user_id)?.name ||
-                          a.actor_user_id,
-                      ])}
-                    />
-                  </Card>
-                  <Card title="Compras por proveedor">
-                    <Table
-                      headers={['Proveedor', 'Tickets', 'Compras brutas', 'Neto tras correcciones']}
-                      rows={(data.analytics?.spending || []).map((r: any) => [
-                        r.company,
-                        r.tickets,
-                        money(r.gross_cents),
-                        money(r.net_cents),
-                      ])}
-                    />
-                  </Card>
-                  <Card title="Tendencia diaria de cortes">
-                    <Table
-                      headers={['Fecha', 'Ventas', 'Tarjeta', 'Contado', 'Diferencia']}
-                      rows={(data.analytics?.daily || []).map((r: any) => [
-                        r.business_date.slice(0, 10),
-                        money(r.sales_cents),
-                        money(r.card_cents),
-                        money(r.declared_cents),
-                        money(r.difference_cents),
-                      ])}
-                    />
-                  </Card>
-                  <Card title="Promedios por empleado, caja y día">
-                    <Table
-                      headers={['Empleado', 'Caja', 'Día', 'Muestras', 'Promedio de ventas']}
-                      rows={(data.analytics?.baselines || []).map((r: any) => [
-                        r.name,
-                        r.register_number,
-                        ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][
-                          r.weekday
-                        ],
-                        r.samples,
-                        money(r.average_cents),
-                      ])}
-                    />
-                  </Card>
-                </>
+                <Reports
+                  key={branchId}
+                  branchId={branchId}
+                  branchName={b.name}
+                  zone={b.timezone}
+                  today={date}
+                  onError={notify}
+                />
               )}
               {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}
               {page === 'Configuración' && (

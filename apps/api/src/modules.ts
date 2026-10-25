@@ -1,7 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import ExcelJS from 'exceljs';
 import type pg from 'pg';
 import { identity, deviceIdentity } from './security.js';
 import { admin, context, owner, transaction, pool } from './db.js';
@@ -380,37 +379,6 @@ modules.post('/expense-categories', async (req, res) => {
     ]);
   });
   res.status(201).json({ ok: true });
-});
-modules.get('/reports/export', async (req, res) => {
-  const user = await identity(req.headers.authorization);
-  admin(user);
-  const b = await context(user, req.query.branch_id as string, true);
-  const book = new ExcelJS.Workbook();
-  await transaction(b.id, async (db) => {
-    for (const [table, label] of [
-      ['clock_records', 'Asistencia'],
-      ['schedules', 'Horarios'],
-      ['tasks', 'Tareas'],
-      ['tickets', 'Tickets'],
-      ['cuts', 'Cortes'],
-      ['treasury_entries', 'Caja general'],
-    ]) {
-      const rows = (await db.query(`SELECT * FROM ${table} ORDER BY id`)).rows;
-      const sheet = book.addWorksheet(label);
-      if (rows.length) {
-        sheet.columns = Object.keys(rows[0]).map((key) => ({ header: key, key, width: 24 }));
-        for (const row of rows) sheet.addRow(row);
-      }
-      sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    }
-  });
-  res.setHeader(
-    'Content-Type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  );
-  res.setHeader('Content-Disposition', 'attachment; filename="shifttrack-reportes.xlsx"');
-  await book.xlsx.write(res);
-  res.end();
 });
 modules.get('/analytics', async (req, res) => {
   const user = await identity(req.headers.authorization);
