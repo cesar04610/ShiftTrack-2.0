@@ -169,7 +169,7 @@ function Card({
     </section>
   );
 }
-function Empty({ text = 'Aún no hay registros.' }: { text?: string }) {
+function Empty({ text = 'Todavía no hay nada por aquí.' }: { text?: string }) {
   return (
     <div className="empty">
       <ClipboardCheck size={30} />
@@ -216,6 +216,37 @@ function ResolveShortage({ onResolve }: { onResolve: () => Promise<void> }) {
       Repuesto
     </button>
   );
+}
+// Each store has its own palette (see :root[data-store] in styles.css).
+const storeKeyOf = (name?: string) =>
+  /madeira/i.test(name || '') ? 'madeira' : /quates|cuates/i.test(name || '') ? 'quates' : '';
+const storeNames: Record<string, string> = { madeira: 'Madeira', quates: 'Quates' };
+const storeColors: Record<string, string> = {
+  madeira: '#3d2319',
+  quates: '#0f3633',
+  '': '#111827',
+};
+function rememberedStore() {
+  try {
+    return localStorage.getItem('shifttrack-store') || '';
+  } catch {
+    return '';
+  }
+}
+function greetingFor(name: string, zone: string) {
+  const hour = Number(
+    new Intl.DateTimeFormat('es-MX', { hour: 'numeric', hourCycle: 'h23', timeZone: zone }).format(
+      new Date(),
+    ),
+  );
+  const hello = hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const today = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: zone,
+  }).format(new Date());
+  return `${hello}, ${name.trim().split(/\s+/)[0]}. Hoy es ${today}.`;
 }
 const alertGroups = [
   { key: 'all', label: 'Todas', kinds: [] as string[] },
@@ -368,7 +399,15 @@ function CutsPanel({
     </Card>
   );
 }
-function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
+function Table({
+  headers,
+  rows,
+  empty,
+}: {
+  headers: string[];
+  rows: ReactNode[][];
+  empty?: string;
+}) {
   return rows.length ? (
     <div className="table-wrap">
       <table>
@@ -391,7 +430,7 @@ function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
       </table>
     </div>
   ) : (
-    <Empty />
+    <Empty text={empty} />
   );
 }
 const adminNav = [
@@ -518,6 +557,21 @@ export default function App() {
     )
       setPage('Inicio');
   }, [user, registerNumber, page]);
+  const store = user
+    ? storeKeyOf(branches.find((x) => x.id === branchId)?.name || data?.branch?.name)
+    : rememberedStore();
+  useEffect(() => {
+    document.documentElement.dataset.store = store;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', storeColors[store] || storeColors['']);
+    if (user && store)
+      try {
+        localStorage.setItem('shifttrack-store', store);
+      } catch {
+        /* La apariencia recordada es solo una comodidad. */
+      }
+  }, [store, user]);
   useEffect(() => {
     if (!mobile) return;
     const close = (event: KeyboardEvent) => event.key === 'Escape' && setMobile(false);
@@ -636,6 +690,7 @@ export default function App() {
             Mostrador <span>2.0</span>
           </h1>
           <p>Tu operación, en orden.</p>
+          {store && <span className="store-tag">{storeNames[store]}</span>}
         </div>
         <div className="login-card">
           <h2>Bienvenido</h2>
@@ -911,7 +966,11 @@ export default function App() {
                 {isManagementPage ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}
               </span>
               <h1>{!registerChosen ? 'Selecciona la caja en la que estás' : page}</h1>
-              <p>{meta[page]}</p>
+              {registerChosen && b && (page === 'Horario' || page === 'Inicio') ? (
+                <p className="greeting">{greetingFor(user.name, b.timezone)}</p>
+              ) : (
+                <p>{meta[page]}</p>
+              )}
             </div>
             <span className="date-label">
               {new Intl.DateTimeFormat('es-MX', {
@@ -1294,6 +1353,7 @@ export default function App() {
                   {page === 'Horario' && (
                     <Card title="Mi horario" subtitle="Semana actual, de lunes a domingo">
                       <Table
+                        empty="No tienes turnos esta semana. ¡Disfruta tu descanso!"
                         headers={['Día', 'Entrada', 'Salida']}
                         rows={data.schedules
                           .filter(
@@ -1470,7 +1530,7 @@ export default function App() {
                         ))
                     ) : (
                       <Card title="Tareas">
-                        <Empty text="No hay tareas asignadas." />
+                        <Empty text="Hoy no tienes tareas pendientes. ¡Buen trabajo!" />
                       </Card>
                     )}
                   </div>
