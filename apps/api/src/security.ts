@@ -102,7 +102,15 @@ export async function passwordAccounts(
       `SELECT u.*,p.hash,(u.role='superadmin' OR EXISTS(SELECT 1 FROM branches b WHERE b.id=u.branch_id AND b.active)) AS branch_active
  FROM users u JOIN password_credentials p ON p.user_id=u.id
  WHERE username=$1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR u.branch_id=$2) AND ($3::uuid IS NULL OR u.id=$3)`,
-      [username.trim().toLowerCase(), branchId || null, userId || null],
+      [
+        username
+          .trim()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase(),
+        branchId || null,
+        userId || null,
+      ],
     )
   ).rows;
   const matches: User[] = [];

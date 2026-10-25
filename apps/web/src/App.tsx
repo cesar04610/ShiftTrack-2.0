@@ -1243,7 +1243,7 @@ export default function App() {
                         },
                         {
                           name: 'password',
-                          label: 'Contraseña inicial · mínimo 12 caracteres',
+                          label: 'Contraseña inicial · mínimo 4 caracteres',
                           type: 'password',
                         },
                       ]}
@@ -2315,7 +2315,7 @@ export default function App() {
                       { name: 'old_password', label: 'Contraseña actual', type: 'password' },
                       {
                         name: 'password',
-                        label: 'Nueva contraseña · mínimo 12 caracteres',
+                        label: 'Nueva contraseña · mínimo 4 caracteres',
                         type: 'password',
                       },
                     ]}
