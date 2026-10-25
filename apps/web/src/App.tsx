@@ -1895,11 +1895,6 @@ export default function App() {
                   )}
                   {canCapture && (
                     <Card title="Capturar mi corte">
-                      <p>
-                        El corte corresponde a la hora en que iniciaste sesión. Mañana: desde las
-                        05:00 hasta antes de las 15:00. Tarde: desde las 15:00 hasta antes de las
-                        05:00 del día siguiente. La hora de cierre no cambia el turno.
-                      </p>
                       <Form
                         fields={[
                           { name: 'sales', label: 'Ventas totales · MXN', type: 'number' },
