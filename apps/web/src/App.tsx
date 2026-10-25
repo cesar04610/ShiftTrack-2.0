@@ -1713,26 +1713,42 @@ export default function App() {
                       )}
                     </Card>
                   )}
-                  <Card title="Tickets de compra y pago">
+                  <Card title="Tickets de compra y pago · hoy">
                     <Table
+                      empty="Aún no hay tickets registrados hoy."
                       headers={['Fecha', 'Proveedor', 'Importe', 'Estado', 'Nota', '']}
-                      rows={(data.tickets || []).map((t: any) => [
-                        time(t.occurred_at, b.timezone),
-                        data.suppliers.find((s: any) => s.id === t.supplier_id)?.company,
-                        money(t.amount_cents),
-                        t.voided ? 'Anulado' : 'Registrado',
-                        t.note,
-                        deviceReady && !t.voided && t.actor_user_id === user.id ? (
-                          <Form
-                            fields={[{ name: 'reason', label: 'Motivo' }]}
-                            label="Anular"
-                            onSubmit={(v) =>
-                              command('supplier.ticket.void', { id: t.id, reason: v.reason })
-                            }
-                          />
-                        ) : null,
-                      ])}
+                      rows={(data.tickets || [])
+                        .filter((t: any) => localTime(t.occurred_at, b.timezone).date === date)
+                        .map((t: any) => [
+                          time(t.occurred_at, b.timezone),
+                          data.suppliers.find((s: any) => s.id === t.supplier_id)?.company,
+                          money(t.amount_cents),
+                          t.voided ? 'Anulado' : 'Registrado',
+                          t.note,
+                          deviceReady && !t.voided && t.actor_user_id === user.id ? (
+                            <Form
+                              fields={[{ name: 'reason', label: 'Motivo' }]}
+                              label="Anular"
+                              onSubmit={(v) =>
+                                command('supplier.ticket.void', { id: t.id, reason: v.reason })
+                              }
+                            />
+                          ) : null,
+                        ])}
                     />
+                    <p>
+                      <strong>
+                        Total de gastos de hoy:{' '}
+                        {money(
+                          (data.tickets || [])
+                            .filter(
+                              (t: any) =>
+                                !t.voided && localTime(t.occurred_at, b.timezone).date === date,
+                            )
+                            .reduce((s: bigint, t: any) => s + BigInt(t.amount_cents), 0n),
+                        )}
+                      </strong>
+                    </p>
                   </Card>
                 </>
               )}
