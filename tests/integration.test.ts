@@ -955,14 +955,27 @@ test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel 
     410,
   );
   a.equal(await purgeExpiredMedia(), 0);
-  const report = await fetch(`${base}/api/v1/reports/export?branch_id=${branch}`, {
+  const shift = (days: number) =>
+    new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  const period = `from=${shift(-180)}&to=${shift(180)}`;
+  const summary = (await call(`/reports?branch_id=${branch}&${period}`)).body;
+  a.equal(summary.expenses.by_supplier.length, 1);
+  a.equal(summary.expenses.totals.net_cents, '27000');
+  a.equal(summary.operations.tasks.length, 1);
+  a.equal(
+    (await call(`/reports?branch_id=${branch}&${period}`, undefined, employeeToken)).status,
+    403,
+  );
+  a.equal((await call(`/reports?branch_id=${branch}&from=2026-02-01&to=2026-01-01`)).status, 400);
+  const report = await fetch(`${base}/api/v1/reports/export?branch_id=${branch}&${period}`, {
     headers: { Authorization: `Bearer ${ownerToken}` },
   });
   a.equal(report.status, 200);
   const book = new ExcelJS.Workbook();
   await book.xlsx.load(Buffer.from(await report.arrayBuffer()) as any);
-  a.equal(book.getWorksheet('Tickets')!.rowCount, 2);
-  a.equal(book.getWorksheet('Tareas')!.rowCount, 2);
+  // Title, blank line and headings come before the data.
+  a.equal(book.getWorksheet('Tickets')!.rowCount, 4);
+  a.equal(book.getWorksheet('Tareas')!.rowCount, 4);
   const analytics = (await call(`/analytics?branch_id=${branch}`)).body;
   a.equal(analytics.spending.find((s: any) => s.id === supplier).net_cents, '27000');
   a.equal(analytics.baselines[0].average_cents, '100000');
