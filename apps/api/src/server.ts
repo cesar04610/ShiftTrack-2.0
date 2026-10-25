@@ -110,7 +110,7 @@ app.post('/api/v1/auth/logout-on-close', async (req, res) => {
 app.post('/api/v1/auth/change-password', async (req, res) => {
   const user = await identity(req.headers.authorization),
     body = z
-      .object({ old_password: z.string().min(1).max(256), password: z.string().min(12).max(256) })
+      .object({ old_password: z.string().min(1).max(256), password: z.string().min(4).max(256) })
       .parse(req.body);
   const hash = await argon2.hash(body.password);
   await transaction(user.branch_id || '', async (db) => {
@@ -646,7 +646,7 @@ app.post('/api/v1/users', async (req, res) => {
       name: z.string().min(1).max(100),
       role: z.enum(['superadmin', 'admin', 'employee']),
       branch_id: z.uuid(),
-      password: z.string().min(12).max(256),
+      password: z.string().min(4).max(256),
     })
     .parse(req.body);
   const b = await context(u, p.branch_id);

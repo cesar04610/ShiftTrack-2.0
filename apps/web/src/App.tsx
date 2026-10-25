@@ -1243,7 +1243,7 @@ export default function App() {
                         },
                         {
                           name: 'password',
-                          label: 'Contraseña inicial · mínimo 12 caracteres',
+                          label: 'Contraseña inicial · mínimo 4 caracteres',
                           type: 'password',
                         },
                       ]}
@@ -1895,11 +1895,6 @@ export default function App() {
                   )}
                   {canCapture && (
                     <Card title="Capturar mi corte">
-                      <p>
-                        El corte corresponde a la hora en que iniciaste sesión. Mañana: desde las
-                        05:00 hasta antes de las 15:00. Tarde: desde las 15:00 hasta antes de las
-                        05:00 del día siguiente. La hora de cierre no cambia el turno.
-                      </p>
                       <Form
                         fields={[
                           { name: 'sales', label: 'Ventas totales · MXN', type: 'number' },
@@ -2315,7 +2310,7 @@ export default function App() {
                       { name: 'old_password', label: 'Contraseña actual', type: 'password' },
                       {
                         name: 'password',
-                        label: 'Nueva contraseña · mínimo 12 caracteres',
+                        label: 'Nueva contraseña · mínimo 4 caracteres',
                         type: 'password',
                       },
                     ]}
