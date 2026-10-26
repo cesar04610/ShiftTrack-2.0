@@ -696,7 +696,7 @@ test('el corte conserva el turno de entrada al cerrar tarde o al día siguiente'
   for (const [entry, label, date] of [
     ['2026-09-30T12:00:00Z', 'Mañana', '2026-09-30'],
     ['2026-09-30T22:00:00Z', 'Tarde', '2026-09-30'],
-    ['2026-10-01T11:30:00Z', 'Tarde', '2026-09-30'],
+    ['2026-10-01T10:30:00Z', 'Tarde', '2026-09-30'],
   ]) {
     const clock = randomUUID(),
       id = randomUUID();
@@ -724,7 +724,7 @@ test('el corte conserva el turno de entrada al cerrar tarde o al día siguiente'
 });
 function localTimeForTest() {
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Mazatlan',
+    timeZone: 'America/Chihuahua',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -849,7 +849,7 @@ test('correcciones esperan equipo pausado; original y contado permanecen intacto
   );
 });
 test('turno del día anterior exige conteo antes de permitir pagos', async () => {
-  const yesterday = localTime(new Date(Date.now() - 86400000), 'America/Mazatlan').date,
+  const yesterday = localTime(new Date(Date.now() - 86400000), 'America/Chihuahua').date,
     id = randomUUID();
   await sql.query(
     "INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,opening_cents) VALUES($1,$2,$3,$4,now()-interval '1 day',221000)",
@@ -1263,4 +1263,56 @@ test('iniciar sesión registra la entrada, cerrar sesión la salida y la sesión
   const expired = (await open()).find((r) => r.id === rows[1].id);
   a.ok(expired.clock_out);
   a.equal(Math.round((+expired.clock_out - +expired.clock_in) / 3600_000), 9);
+});
+test('administración captura un corte olvidado una sola vez y lo liga a la entrada del turno', async () => {
+  const day = '2026-01-15',
+    clock = randomUUID();
+  await sql.query(
+    "INSERT INTO clock_records VALUES($1,$2,$3,$4,($4::date+time '07:02') AT TIME ZONE 'America/Chihuahua',($4::date+time '14:55') AT TIME ZONE 'America/Chihuahua')",
+    [branch, clock, second.id, day],
+  );
+  const cut = {
+    branch_id: branch,
+    operation_id: randomUUID(),
+    user_id: second.id,
+    business_date: day,
+    label: 'Mañana',
+    register_number: '2',
+    sales_cents: '150000',
+    card_cents: '40000',
+    declared_cents: '108000',
+    note: 'Olvidó capturarlo',
+  };
+  a.equal((await call('/cuts/manual', cut, employeeToken)).status, 403);
+  a.equal((await call('/cuts/manual', cut, ownerToken)).status, 201);
+  // Same operation again is accepted without a second cut; a new one for that shift is refused.
+  a.equal((await call('/cuts/manual', cut, ownerToken)).status, 201);
+  a.equal(
+    (await call('/cuts/manual', { ...cut, operation_id: randomUUID() }, ownerToken)).status,
+    409,
+  );
+  const saved = (
+    await sql.query('SELECT * FROM cuts WHERE user_id=$1 AND business_date=$2', [second.id, day])
+  ).rows;
+  a.equal(saved.length, 1);
+  a.equal(saved[0].clock_record_id, clock);
+  a.equal(saved[0].difference_cents, '-2000');
+  a.match(saved[0].note, /^Capturado por .* · Olvidó capturarlo$/);
+  const money = (
+    await sql.query(
+      "SELECT cash_cents::text,bank_cents::text FROM treasury_entries WHERE source_id=$1 AND kind='cut'",
+      [cut.operation_id],
+    )
+  ).rows;
+  a.deepEqual(money, [{ cash_cents: '108000', bank_cents: '40000' }]);
+  a.equal(
+    (
+      await call(
+        '/cuts/manual',
+        { ...cut, operation_id: randomUUID(), business_date: '2999-01-01' },
+        ownerToken,
+      )
+    ).status,
+    400,
+  );
 });

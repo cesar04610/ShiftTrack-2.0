@@ -137,6 +137,7 @@ export const auditActions: Record<string, string> = {
   'supplier.pause.request': 'Pausa de caja solicitada',
   'supplier.pause.cancel': 'Pausa de caja cancelada',
   'cut.create': 'Corte de caja',
+  'cut.manual': 'Corte capturado por administración',
   'task.complete': 'Tarea completada',
   'task.revert': 'Tarea reabierta',
   'task.catalog.create': 'Tarea creada en catálogo',
