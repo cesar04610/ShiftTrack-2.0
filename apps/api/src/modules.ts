@@ -2,9 +2,18 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type pg from 'pg';
-import { identity, deviceIdentity } from './security.js';
+import { identity, deviceIdentity, digest } from './security.js';
+import { cutDifferenceAlert } from './alerts.js';
 import { admin, context, owner, transaction, pool } from './db.js';
-import { assert, cents, localTime, type User } from '../../../packages/domain/index.js';
+import {
+  assert,
+  cents,
+  cutAmounts,
+  localTime,
+  shiftBusinessDate,
+  shiftLabel,
+  type User,
+} from '../../../packages/domain/index.js';
 export const modules = express.Router();
 async function member(db: pg.PoolClient, branch: string, id: string) {
   assert(
@@ -376,6 +385,141 @@ modules.post('/expense-categories', async (req, res) => {
       b.id,
       randomUUID(),
       z.string().trim().min(1).max(100).parse(req.body.name),
+    ]);
+  });
+  res.status(201).json({ ok: true });
+});
+// An administrator captures a cut the employee forgot, for a shift that already happened.
+modules.post('/cuts/manual', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  admin(user);
+  const b = await context(user, req.body.branch_id);
+  const p = z
+    .object({
+      operation_id: z.uuid(),
+      user_id: z.uuid(),
+      business_date: z.iso.date(),
+      label: z.enum(['Mañana', 'Tarde']),
+      register_number: z.coerce.number().int().min(1).max(b.register_count),
+      sales_cents: z.string(),
+      card_cents: z.string(),
+      declared_cents: z.string(),
+      note: z.string().trim().max(500).default(''),
+    })
+    .parse(req.body);
+  assert(
+    p.business_date <= localTime(new Date(), b.timezone).date,
+    'INVALID_DATE',
+    'El corte no puede ser de una fecha futura.',
+    400,
+  );
+  const amounts = cutAmounts(p.sales_cents, p.card_cents, p.declared_cents);
+  await transaction(b.id, async (db) => {
+    await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [b.id]);
+    const hash = digest(JSON.stringify({ actor: user.id, ...p }));
+    const existing = (
+      await db.query('SELECT * FROM processed_operations WHERE id=$1', [p.operation_id])
+    ).rows[0];
+    if (existing) {
+      assert(
+        existing.request_hash === hash,
+        'VERSION_CONFLICT',
+        'Identificador reutilizado con otro corte.',
+      );
+      return;
+    }
+    await member(db, b.id, p.user_id);
+    const employee = (await db.query('SELECT name FROM users WHERE id=$1', [p.user_id])).rows[0];
+    assert(
+      !(
+        await db.query('SELECT 1 FROM cuts WHERE user_id=$1 AND business_date=$2 AND label=$3', [
+          p.user_id,
+          p.business_date,
+          p.label,
+        ])
+      ).rowCount,
+      'DUPLICATE_BUSINESS_RECORD',
+      `${employee.name} ya tiene corte del turno de ${p.label.toLowerCase()} de ese día.`,
+    );
+    // Tie the cut to the entry of that shift when there is one, as an employee's own cut would be.
+    const clock = (
+      await db.query(
+        `SELECT c.* FROM clock_records c WHERE c.user_id=$1
+           AND c.clock_in BETWEEN ($2::date AT TIME ZONE $3) AND (($2::date+2) AT TIME ZONE $3)
+           AND NOT EXISTS(SELECT 1 FROM cuts x WHERE x.clock_record_id=c.id)
+         ORDER BY c.clock_in`,
+        [p.user_id, p.business_date, b.timezone],
+      )
+    ).rows.find(
+      (c) =>
+        shiftBusinessDate(c.clock_in, b.timezone) === p.business_date &&
+        shiftLabel(c.clock_in, b.timezone) === p.label,
+    );
+    const schedule = (
+      await db.query(
+        `SELECT id FROM schedules WHERE user_id=$1 AND business_date=$2
+           AND (start_time<time '15:00')=$3 ORDER BY start_time LIMIT 1`,
+        [p.user_id, p.business_date, p.label === 'Mañana'],
+      )
+    ).rows[0];
+    // Dated inside the shift, never later than now, so it cannot shadow a later shift's cut.
+    const occurred = (
+      await db.query(
+        `SELECT least(now(), coalesce($1::timestamptz,
+           ($2::date + (CASE WHEN $3 THEN time '14:59' ELSE time '23:59' END)) AT TIME ZONE $4)) AS at`,
+        [clock?.clock_out || null, p.business_date, p.label === 'Mañana', b.timezone],
+      )
+    ).rows[0].at;
+    const id = p.operation_id,
+      note = [`Capturado por ${user.name}`, p.note].filter(Boolean).join(' · ');
+    await db.query(
+      `INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,schedule_id,clock_record_id,note)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [
+        b.id,
+        id,
+        p.user_id,
+        p.register_number,
+        p.business_date,
+        p.label,
+        p.sales_cents,
+        p.card_cents,
+        p.declared_cents,
+        amounts.expected,
+        amounts.difference,
+        occurred,
+        schedule?.id || null,
+        clock?.id || null,
+        note,
+      ],
+    );
+    await db.query(
+      'INSERT INTO treasury_entries(branch_id,id,source_id,kind,cash_cents,bank_cents,note,actor_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+      [
+        b.id,
+        randomUUID(),
+        id,
+        'cut',
+        cents(p.declared_cents).toString(),
+        cents(p.card_cents).toString(),
+        'Corte de ventas capturado por administración',
+        user.id,
+      ],
+    );
+    await cutDifferenceAlert(db, b.id, {
+      id,
+      userId: p.user_id,
+      date: p.business_date,
+      label: p.label,
+      difference: amounts.difference,
+      at: new Date(occurred).toISOString(),
+    });
+    await audit(db, b.id, user, 'cut.manual', { id, ...p });
+    await db.query('INSERT INTO processed_operations VALUES($1,$2,$3,$4)', [
+      b.id,
+      id,
+      hash,
+      { operation_id: id, status: 'confirmed' },
     ]);
   });
   res.status(201).json({ ok: true });

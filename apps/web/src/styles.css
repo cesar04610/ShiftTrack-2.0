@@ -1851,3 +1851,17 @@ main > * {
     max-width: none;
   }
 }
+.manual-cut {
+  border: 1px solid var(--line);
+  background: var(--accent-soft);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 14px 0 20px;
+}
+.manual-cut > p {
+  font-size: 12px;
+  margin: 0 0 6px;
+}
+.manual-cut-toggle {
+  margin-bottom: 16px;
+}

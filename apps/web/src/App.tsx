@@ -307,13 +307,21 @@ function CutsPanel({
   users,
   today,
   zone,
+  registerCount,
+  onManual,
 }: {
   cuts: any[];
   users: any[];
   today: string;
   zone: string;
+  registerCount: number;
+  onManual: (values: Record<string, string>) => Promise<void>;
 }) {
   const yesterday = addDays(today, -1);
+  const [adding, setAdding] = useState(false);
+  const people = users
+    .filter((u) => u.active && !u.deleted_at && u.role !== 'superadmin')
+    .sort((x, y) => x.name.localeCompare(y.name, 'es'));
   const [from, setFrom] = useState(''),
     [to, setTo] = useState('');
   const ranged = !!from && !!to;
@@ -341,6 +349,54 @@ function CutsPanel({
         start === end ? `Cortes del ${label(start)}` : `Del ${label(start)} al ${label(end)}`
       }
     >
+      <div className="manual-cut-toggle">
+        <button className="secondary" onClick={() => setAdding(!adding)}>
+          {adding ? 'Cancelar captura' : 'Agregar corte pasado'}
+        </button>
+      </div>
+      {adding && (
+        <div className="manual-cut">
+          <p>
+            Para cuando un empleado olvidó capturar su corte. Queda registrado que lo capturaste tú
+            y entra a caja general igual que un corte normal.
+          </p>
+          <Form
+            label="Guardar corte"
+            fields={[
+              {
+                name: 'user_id',
+                label: 'Empleado',
+                options: people.map((u) => ({ value: u.id, label: u.name })),
+              },
+              { name: 'business_date', label: 'Fecha del turno', type: 'date', value: yesterday },
+              {
+                name: 'label',
+                label: 'Turno',
+                options: [
+                  { value: 'Mañana', label: 'Mañana' },
+                  { value: 'Tarde', label: 'Tarde' },
+                ],
+              },
+              {
+                name: 'register_number',
+                label: 'Caja',
+                options: Array.from({ length: registerCount }, (_, i) => ({
+                  value: String(i + 1),
+                  label: `Caja ${i + 1}`,
+                })),
+              },
+              { name: 'sales', label: 'Ventas totales · MXN', type: 'number' },
+              { name: 'card', label: 'Pagos con tarjeta · MXN', type: 'number' },
+              { name: 'declared', label: 'Efectivo contado de ventas · MXN', type: 'number' },
+              { name: 'note', label: 'Nota (opcional)', optional: true, multiline: true },
+            ]}
+            onSubmit={async (v) => {
+              await onManual(v);
+              setAdding(false);
+            }}
+          />
+        </div>
+      )}
       <div className="cuts-range">
         <label>
           Desde
@@ -974,7 +1030,7 @@ export default function App() {
             <span className="date-label">
               {new Intl.DateTimeFormat('es-MX', {
                 dateStyle: 'medium',
-                timeZone: b?.timezone || 'America/Mazatlan',
+                timeZone: b?.timezone || 'America/Chihuahua',
               }).format(new Date())}
             </span>
           </div>
@@ -1885,7 +1941,26 @@ export default function App() {
                 </>
               )}
               {page === 'Cortes' && (
-                <CutsPanel cuts={data.cuts} users={data.users} today={date} zone={b.timezone} />
+                <CutsPanel
+                  cuts={data.cuts}
+                  users={data.users}
+                  today={date}
+                  zone={b.timezone}
+                  registerCount={b.register_count}
+                  onManual={(v) =>
+                    mutate('/cuts/manual', {
+                      operation_id: v.operation_id,
+                      user_id: v.user_id,
+                      business_date: v.business_date,
+                      label: v.label,
+                      register_number: v.register_number,
+                      sales_cents: parseMoney(v.sales),
+                      card_cents: parseMoney(v.card),
+                      declared_cents: parseMoney(v.declared),
+                      note: (v.note || '').trim(),
+                    })
+                  }
+                />
               )}
               {page === 'Mi corte' && (
                 <>
@@ -2133,7 +2208,7 @@ export default function App() {
                         <Form
                           fields={[
                             { name: 'name', label: 'Nombre de sucursal' },
-                            { name: 'timezone', label: 'Zona horaria', value: 'America/Mazatlan' },
+                            { name: 'timezone', label: 'Zona horaria', value: 'America/Chihuahua' },
                             {
                               name: 'register_count',
                               label: 'Cantidad de cajas',

@@ -160,7 +160,7 @@ app.post('/api/v1/branches', async (req, res) => {
   const b = z
     .object({
       name: z.string().trim().min(1).max(100),
-      timezone: z.string().default('America/Mazatlan'),
+      timezone: z.string().default('America/Chihuahua'),
       register_count: z.number().int().min(1).max(100),
       supplier_register: z.number().int().positive(),
     })

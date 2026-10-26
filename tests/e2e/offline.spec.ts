@@ -53,7 +53,7 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     if (username === first) firstId = (await r.json()).id;
   }
   const due = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Mazatlan',
+    timeZone: 'America/Chihuahua',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
