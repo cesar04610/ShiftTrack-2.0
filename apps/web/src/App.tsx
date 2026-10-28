@@ -25,6 +25,7 @@ import {
   money,
   parseMoney,
   localTime,
+  shiftBusinessDate,
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
@@ -819,6 +820,13 @@ export default function App() {
     cash = treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
     bank = treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
   const date = b ? localTime(new Date(), b.timezone).date : new Date().toISOString().slice(0, 10);
+  // Tasks follow the work day (05:00 to 05:00): an afternoon shift past midnight still sees its own.
+  const workDay = b ? shiftBusinessDate(new Date(now), b.timezone) : date;
+  const visibleTasks = (data?.tasks || []).filter((t: any) =>
+    page === 'Gestionar tareas'
+      ? true
+      : t.user_id === user?.id && t.due_date.slice(0, 10) === workDay,
+  );
   const meta: Record<string, string> = {
     Inicio: 'Un vistazo a la operación de tu sucursal.',
     Usuarios: 'Cuentas, permisos y conservación del historial.',
@@ -1210,8 +1218,12 @@ export default function App() {
                     />
                     <Stat
                       title="Tareas pendientes"
-                      value={String(data.tasks.filter((t: any) => !t.completed_at).length)}
-                      foot="Asignadas al equipo"
+                      value={String(
+                        data.tasks.filter(
+                          (t: any) => !t.completed_at && t.due_date.slice(0, 10) === workDay,
+                        ).length,
+                      )}
+                      foot="Del día de hoy, asignadas al equipo"
                       icon={<ClipboardCheck />}
                     />
                   </div>
@@ -1530,70 +1542,69 @@ export default function App() {
                     </div>
                   )}
                   <div className="tasks-list">
-                    {data.tasks.some(
-                      (t: any) => page === 'Gestionar tareas' || t.user_id === user.id,
-                    ) ? (
-                      data.tasks
-                        .filter((t: any) => page === 'Gestionar tareas' || t.user_id === user.id)
-                        .map((t: any) => (
-                          <Card
-                            key={t.id}
-                            title={t.title}
-                            subtitle={`${t.due_date.slice(0, 10)} · Prioridad ${t.priority}`}
-                          >
-                            <div className="task-state">
-                              {t.completed_at ? (
-                                <span className="badge">
-                                  <Check size={14} />
-                                  Completada
-                                </span>
-                              ) : (
-                                <span className="badge amber-badge">Pendiente</span>
-                              )}
-                              {isAdmin && page === 'Gestionar tareas' && (
-                                <span>{data.users.find((u: any) => u.id === t.user_id)?.name}</span>
-                              )}
-                            </div>
-                            {t.note && <p>{t.note}</p>}
-                            {page === 'Tareas' &&
-                              t.user_id === user.id &&
-                              canCapture &&
-                              !t.completed_at && (
-                                <PhotoForm
-                                  onSubmit={(note, photo) =>
-                                    command('task.complete', { id: t.id, note }, photo)
-                                  }
-                                />
-                              )}
-                            {isAdmin && page === 'Gestionar tareas' && t.completed_at && (
-                              <button
-                                className="text-button"
-                                onClick={() => mutate(`/tasks/${t.id}/revert`, {}).catch(notify)}
-                              >
-                                Reabrir tarea
-                              </button>
+                    {visibleTasks.length ? (
+                      visibleTasks.map((t: any) => (
+                        <Card
+                          key={t.id}
+                          title={t.title}
+                          subtitle={`${t.due_date.slice(0, 10)} · Prioridad ${t.priority}`}
+                        >
+                          <div className="task-state">
+                            {t.completed_at ? (
+                              <span className="badge">
+                                <Check size={14} />
+                                Completada
+                              </span>
+                            ) : t.due_date.slice(0, 10) < workDay ? (
+                              <span className="badge danger-badge">No realizada</span>
+                            ) : (
+                              <span className="badge amber-badge">Pendiente</span>
                             )}
-                            {t.media_id && (
-                              <button
-                                className="text-button"
-                                onClick={async () => {
-                                  try {
-                                    const local = await db.media.get(t.media_id);
-                                    const url = local
-                                      ? URL.createObjectURL(local.blob)
-                                      : await imageUrl(t.media_id, branchId);
-                                    const win = window.open(url, '_blank', 'noopener');
-                                    setTimeout(() => URL.revokeObjectURL(url), 60000);
-                                  } catch (e) {
-                                    notify(e);
-                                  }
-                                }}
-                              >
-                                Ver fotografía
-                              </button>
+                            {isAdmin && page === 'Gestionar tareas' && (
+                              <span>{data.users.find((u: any) => u.id === t.user_id)?.name}</span>
                             )}
-                          </Card>
-                        ))
+                          </div>
+                          {t.note && <p>{t.note}</p>}
+                          {page === 'Tareas' &&
+                            t.user_id === user.id &&
+                            canCapture &&
+                            !t.completed_at &&
+                            t.due_date.slice(0, 10) === workDay && (
+                              <PhotoForm
+                                onSubmit={(note, photo) =>
+                                  command('task.complete', { id: t.id, note }, photo)
+                                }
+                              />
+                            )}
+                          {isAdmin && page === 'Gestionar tareas' && t.completed_at && (
+                            <button
+                              className="text-button"
+                              onClick={() => mutate(`/tasks/${t.id}/revert`, {}).catch(notify)}
+                            >
+                              Reabrir tarea
+                            </button>
+                          )}
+                          {t.media_id && (
+                            <button
+                              className="text-button"
+                              onClick={async () => {
+                                try {
+                                  const local = await db.media.get(t.media_id);
+                                  const url = local
+                                    ? URL.createObjectURL(local.blob)
+                                    : await imageUrl(t.media_id, branchId);
+                                  const win = window.open(url, '_blank', 'noopener');
+                                  setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                } catch (e) {
+                                  notify(e);
+                                }
+                              }}
+                            >
+                              Ver fotografía
+                            </button>
+                          )}
+                        </Card>
+                      ))
                     ) : (
                       <Card title="Tareas">
                         <Empty text="Hoy no tienes tareas pendientes. ¡Buen trabajo!" />

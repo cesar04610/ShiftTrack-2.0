@@ -199,12 +199,9 @@ function Bars({ items }: { items: { label: string; value: bigint; foot: string }
     </div>
   );
 }
-const Pill = ({ children, tone }: { children: ReactNode; tone?: 'warn' | 'muted' }) => (
-  <span
-    className={`badge${tone === 'warn' ? ' amber-badge' : tone === 'muted' ? ' muted-badge' : ''}`}
-  >
-    {children}
-  </span>
+const tones = { warn: ' amber-badge', muted: ' muted-badge', danger: ' danger-badge' };
+const Pill = ({ children, tone }: { children: ReactNode; tone?: 'warn' | 'muted' | 'danger' }) => (
+  <span className={`badge${tone ? tones[tone] : ''}`}>{children}</span>
 );
 
 export default function Reports({
@@ -559,8 +556,9 @@ function Staff({ r, zone }: { r: any; zone: string }) {
         <Tile
           title="Tareas cumplidas"
           value={t.tasks ? `${Math.round((t.tasks_done / t.tasks) * 100)}%` : '—'}
-          foot={`${t.tasks_done} de ${t.tasks}`}
+          foot={`${t.tasks_done} de ${t.tasks} · ${t.tasks_missed} no realizadas`}
           icon={<ClipboardCheck />}
+          tone={t.tasks_missed ? 'warn' : undefined}
         />
       </div>
       <Section
@@ -595,7 +593,16 @@ function Staff({ r, zone }: { r: any; zone: string }) {
               p.absences ? <Pill tone="warn">{p.absences}</Pill> : 0,
               p.late ? <Pill tone="warn">{p.late}</Pill> : 0,
               p.early_exit ? <Pill tone="warn">{p.early_exit}</Pill> : 0,
-              p.tasks ? `${p.tasks_done}/${p.tasks}` : '—',
+              p.tasks ? (
+                <>
+                  {p.tasks_done}/{p.tasks}
+                  {p.tasks_missed > 0 && (
+                    <small className="report-sub">{p.tasks_missed} no realizadas</small>
+                  )}
+                </>
+              ) : (
+                '—'
+              ),
             ],
           }))}
         />
@@ -654,9 +661,15 @@ function Operations({
   onError: (e: unknown) => void;
 }) {
   const t = r.totals;
-  const [status, setStatus] = useState<'all' | 'pending' | 'done'>('all');
+  const [status, setStatus] = useState<'all' | 'pending' | 'done' | 'missed'>('all');
   const tasks = r.tasks.filter((x: any) =>
-    status === 'all' ? true : status === 'done' ? x.completed_at : !x.completed_at,
+    status === 'all'
+      ? true
+      : status === 'done'
+        ? x.completed_at
+        : status === 'missed'
+          ? x.missed
+          : !x.completed_at && !x.missed,
   );
   async function photo(id: string) {
     try {
@@ -680,8 +693,9 @@ function Operations({
         <Tile
           title="Tareas del periodo"
           value={String(t.tasks)}
-          foot={`${t.tasks_done} cumplidas · ${t.tasks - t.tasks_done} pendientes`}
+          foot={`${t.tasks_done} cumplidas · ${t.tasks_missed} no realizadas · ${t.tasks - t.tasks_done - t.tasks_missed} pendientes`}
           icon={<ClipboardCheck />}
+          tone={t.tasks_missed ? 'warn' : undefined}
         />
       </div>
       <Section title="Faltantes de producto">
@@ -708,6 +722,7 @@ function Operations({
             <option value="all">Todas</option>
             <option value="pending">Pendientes</option>
             <option value="done">Cumplidas</option>
+            <option value="missed">No realizadas</option>
           </select>
         }
       >
@@ -727,6 +742,8 @@ function Operations({
               priorities[x.priority] || x.priority,
               x.completed_at ? (
                 <Pill>Cumplida {when(x.completed_at, zone, false)}</Pill>
+              ) : x.missed ? (
+                <Pill tone="danger">No realizada</Pill>
               ) : (
                 <Pill tone="warn">Pendiente</Pill>
               ),
