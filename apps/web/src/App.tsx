@@ -1018,9 +1018,12 @@ export default function App() {
                 {registerNumber ? 'Cambiar caja' : 'Seleccionar caja'}
               </button>
             )}
-            <span className={`connection ${online ? '' : 'offline'}`}>
+            <span
+              className={`connection ${online ? '' : 'offline'}`}
+              title={online ? 'Conectado' : 'Sin conexión'}
+            >
               {online ? <Wifi size={15} /> : <WifiOff size={15} />}{' '}
-              {online ? 'Conectado' : 'Sin conexión'}
+              <span className="connection-label">{online ? 'Conectado' : 'Sin conexión'}</span>
             </span>
             <button
               className="icon-button"
