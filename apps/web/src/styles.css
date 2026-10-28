@@ -1916,3 +1916,57 @@ main > * {
 .card:has(.search-select) {
   overflow: visible;
 }
+/* Celular: la sucursal se recorta y el estado de conexión queda solo como ícono,
+   para que la barra superior quepa sin desplazamiento lateral. */
+@media (max-width: 720px) {
+  .topbar-left {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .topbar-left select,
+  .topbar-left strong {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar-right {
+    flex-shrink: 0;
+  }
+  .topbar-right .text-button {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .connection {
+    padding: 6px;
+  }
+  .connection-label {
+    display: none;
+  }
+  .topbar-left select {
+    min-width: 92px;
+  }
+}
+@media (max-width: 380px) {
+  .topbar {
+    padding: 0 10px;
+  }
+  .topbar-left,
+  .topbar-right {
+    gap: 4px;
+  }
+  .topbar-left select {
+    padding-left: 8px;
+    padding-right: 4px;
+  }
+  .topbar-right .text-button {
+    font-size: 11px;
+  }
+}
+/* Sin espacio para todo: el administrador ve su caja en el pie de página. */
+@media (max-width: 345px) {
+  .topbar-right:has(> .text-button) > strong {
+    display: none;
+  }
+}
