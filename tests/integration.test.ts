@@ -1354,3 +1354,59 @@ test('administración captura un corte olvidado una sola vez y lo liga a la entr
     400,
   );
 });
+test('un súper administrador elimina administradores y dueños solo con su contraseña', async () => {
+  const hash = (
+    await sql.query(
+      "SELECT p.hash FROM password_credentials p JOIN users u ON u.id=p.user_id WHERE username='cesar' AND role='superadmin'",
+    )
+  ).rows[0].hash;
+  const person = async (role: string) => {
+    const id = randomUUID();
+    const row = (
+      await sql.query(
+        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [
+          id,
+          `${role}-${id.slice(0, 8)}`,
+          `Cuenta ${role}`,
+          role,
+          role === 'superadmin' ? null : branch,
+        ],
+      )
+    ).rows[0];
+    await sql.query('INSERT INTO password_credentials VALUES($1,$2)', [id, hash]);
+    return row;
+  };
+  const manager = await person('admin'),
+    colleague = await person('admin'),
+    partner = await person('superadmin');
+  const managerToken = (await issueSession(manager)).access_token;
+  const remove = (target: any, body: object, as = ownerToken) =>
+    call(`/users/${target.id}/delete`, { branch_id: branch, ...body }, as);
+  // Employees and administrators cannot remove administrators.
+  a.equal((await remove(colleague, {}, employeeToken)).status, 403);
+  a.equal(
+    (await remove(colleague, { password: 'ShiftTrack-demo-2026!' }, managerToken)).status,
+    403,
+  );
+  // An owner must type their own correct password.
+  a.equal((await remove(colleague, {})).body.code, 'WRONG_PASSWORD');
+  a.equal((await remove(colleague, { password: 'equivocada' })).body.code, 'WRONG_PASSWORD');
+  a.equal((await remove(manager, { password: 'ShiftTrack-demo-2026!' })).status, 200);
+  const gone = (await sql.query('SELECT active,deleted_at FROM users WHERE id=$1', [manager.id]))
+    .rows[0];
+  a.equal(gone.active, false);
+  a.ok(gone.deleted_at);
+  // Their open sessions end at once.
+  a.equal((await call(`/snapshot?branch_id=${branch}`, undefined, managerToken)).status, 401);
+  a.equal((await remove(partner, { password: 'ShiftTrack-demo-2026!' })).status, 200);
+  const cesar = (
+    await sql.query("SELECT id FROM users WHERE username='cesar' AND role='superadmin'")
+  ).rows[0];
+  a.equal((await remove(cesar, { password: 'ShiftTrack-demo-2026!' })).status, 403);
+  a.equal(
+    (await sql.query('SELECT deleted_at FROM users WHERE id=$1', [colleague.id])).rows[0]
+      .deleted_at,
+    null,
+  );
+});
