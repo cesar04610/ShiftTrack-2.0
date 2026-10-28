@@ -30,6 +30,7 @@ import {
 } from '../../../packages/domain/index.js';
 import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
+import SearchSelect from './SearchSelect';
 import Reports from './Reports';
 import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
 import {
@@ -51,7 +52,9 @@ type Field = {
   name: string;
   label: string;
   type?: string;
-  options?: { value: string; label: string }[];
+  options?: { value: string; label: string; hint?: string }[];
+  // Long lists: type part of a name instead of scrolling a dropdown.
+  searchable?: boolean;
   value?: string;
   optional?: boolean;
   multiline?: boolean;
@@ -97,7 +100,15 @@ function Form({
         {fields.map((f) => (
           <div className="field" key={f.name}>
             <label htmlFor={`${formId}-${f.name}`}>{f.label}</label>
-            {f.options ? (
+            {f.options && f.searchable ? (
+              <SearchSelect
+                id={`${formId}-${f.name}`}
+                name={f.name}
+                options={f.options}
+                required={!f.optional}
+                placeholder={f.placeholder}
+              />
+            ) : f.options ? (
               <select
                 id={`${formId}-${f.name}`}
                 name={f.name}
@@ -1643,9 +1654,15 @@ export default function App() {
                           {
                             name: 'supplier_id',
                             label: 'Proveedor',
+                            searchable: true,
+                            placeholder: 'Escribe parte del nombre',
                             options: data.suppliers
                               .filter((s: any) => s.active)
-                              .map((s: any) => ({ value: s.id, label: s.company })),
+                              .map((s: any) => ({
+                                value: s.id,
+                                label: s.company,
+                                hint: s.product_type || undefined,
+                              })),
                           },
                           { name: 'amount', label: 'Importe · MXN', type: 'number' },
                           { name: 'note', label: 'Nota', optional: true },

@@ -708,7 +708,8 @@ test('el corte conserva el turno de entrada al cerrar tarde o al día siguiente'
       command('cut.create', {
         id,
         clock_record_id: clock,
-        register_number: '1',
+        // Another register, so these $0 cuts never mix with the sales averages checked later.
+        register_number: '2',
         sales_cents: '0',
         card_cents: '0',
         declared_cents: '0',

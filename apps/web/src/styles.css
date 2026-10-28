@@ -1865,3 +1865,54 @@ main > * {
 .manual-cut-toggle {
   margin-bottom: 16px;
 }
+/* Buscador de proveedores: lista de resultados bajo el campo de texto. */
+.search-select {
+  position: relative;
+}
+.search-select input {
+  width: 100%;
+}
+.search-select-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px #0f172a1f;
+}
+.search-select-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.search-select-list li.active {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+.search-select-list small {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.search-select-list .search-select-empty {
+  cursor: default;
+  color: var(--muted);
+  font-size: 12px;
+}
+/* La lista de resultados puede salir de la tarjeta que contiene el buscador. */
+.card:has(.search-select) {
+  overflow: visible;
+}
