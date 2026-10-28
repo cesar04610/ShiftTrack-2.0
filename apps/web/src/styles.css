@@ -1916,6 +1916,10 @@ main > * {
 .card:has(.search-select) {
   overflow: visible;
 }
+.danger-badge {
+  color: #b42318;
+  background: #fef3f2;
+}
 /* Celular: la sucursal se recorta y el estado de conexión queda solo como ícono,
    para que la barra superior quepa sin desplazamiento lateral. */
 @media (max-width: 720px) {

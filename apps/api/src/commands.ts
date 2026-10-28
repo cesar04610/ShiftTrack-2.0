@@ -372,11 +372,25 @@ export async function processCommand(c: Command, deviceId: string) {
           'DEPENDENCY_PENDING',
           'La fotografía aún no está confirmada.',
         );
-      const result = await db.query(
-        'UPDATE tasks SET completed_at=$3,note=$4,media_id=$5 WHERE id=$1 AND user_id=$2 AND completed_at IS NULL RETURNING id',
-        [uuid(p.id), c.actor_user_id, c.occurred_at, p.note || '', p.media_id || null],
+      const task = (
+        await db.query(
+          'SELECT due_date::text AS due_date FROM tasks WHERE id=$1 AND user_id=$2 AND completed_at IS NULL FOR UPDATE',
+          [uuid(p.id), c.actor_user_id],
+        )
+      ).rows[0];
+      assert(task, 'NOT_FOUND', 'Tarea no disponible para este empleado.', 404);
+      // A task belongs to its work day (05:00 to 05:00); once that day is over it stays undone.
+      assert(
+        task.due_date === shiftBusinessDate(c.occurred_at, b.timezone),
+        'TASK_EXPIRED',
+        'Esta tarea no es del día de hoy y ya no se puede completar.',
       );
-      assert(result.rowCount, 'NOT_FOUND', 'Tarea no disponible para este empleado.', 404);
+      await db.query('UPDATE tasks SET completed_at=$2,note=$3,media_id=$4 WHERE id=$1', [
+        uuid(p.id),
+        c.occurred_at,
+        p.note || '',
+        p.media_id || null,
+      ]);
     } else if (c.type === 'shortage.create') {
       await db.query(
         'INSERT INTO shortages(branch_id,id,actor_user_id,product,note,occurred_at) VALUES($1,$2,$3,$4,$5,$6)',

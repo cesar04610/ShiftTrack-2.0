@@ -5,7 +5,7 @@ import type pg from 'pg';
 import { identity } from './security.js';
 import { admin, context, transaction } from './db.js';
 import { alertsReady } from './alerts.js';
-import { assert, auditActions, money } from '../../../packages/domain/index.js';
+import { assert, auditActions, money, shiftBusinessDate } from '../../../packages/domain/index.js';
 
 export const reports = express.Router();
 
@@ -85,11 +85,15 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
          ORDER BY a.occurred_at DESC`,
       )
     : [];
-  const tasks = await rows(
-    `SELECT t.id,t.user_id,u.name AS employee,t.title,t.due_date::text AS date,t.priority,t.completed_at,t.note,t.media_id
-     FROM tasks t JOIN users u ON u.id=t.user_id
-     WHERE t.due_date BETWEEN $1 AND $2 ORDER BY t.due_date DESC,u.name`,
-  );
+  // Undone tasks from a work day that already ended can no longer be done: they were missed.
+  const workDay = shiftBusinessDate(new Date(), zone);
+  const tasks = (
+    await rows(
+      `SELECT t.id,t.user_id,u.name AS employee,t.title,t.due_date::text AS date,t.priority,t.completed_at,t.note,t.media_id
+       FROM tasks t JOIN users u ON u.id=t.user_id
+       WHERE t.due_date BETWEEN $1 AND $2 ORDER BY t.due_date DESC,u.name`,
+    )
+  ).map((t) => ({ ...t, missed: !t.completed_at && t.date < workDay }));
   const schedules = await rows(
     `SELECT s.user_id,count(*)::integer AS scheduled,
        sum(extract(epoch FROM (s.end_time-s.start_time)))/3600 AS scheduled_hours
@@ -114,6 +118,7 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
         missing_cut: 0,
         tasks: 0,
         tasks_done: 0,
+        tasks_missed: 0,
       });
     return people.get(id);
   };
@@ -142,6 +147,7 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
     const p = person(t.user_id, t.employee);
     p.tasks++;
     if (t.completed_at) p.tasks_done++;
+    if (t.missed) p.tasks_missed++;
   }
   const staff = [...people.values()]
     .map(({ days, ...p }) => ({
@@ -220,6 +226,7 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
         early_exit: staff.reduce((s, p) => s + p.early_exit, 0),
         tasks: tasks.length,
         tasks_done: tasks.filter((t) => t.completed_at).length,
+        tasks_missed: tasks.filter((t) => t.missed).length,
       },
       people: staff,
       attendance,
@@ -232,6 +239,7 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
         shortages_open: shortages.filter((s) => !s.resolved).length,
         tasks: tasks.length,
         tasks_done: tasks.filter((t) => t.completed_at).length,
+        tasks_missed: tasks.filter((t) => t.missed).length,
       },
       shortages,
       tasks,
@@ -348,6 +356,7 @@ reports.get('/reports/export', async (req, res) => {
       'Salidas anticipadas',
       'Tareas',
       'Tareas cumplidas',
+      'Tareas no realizadas',
     ],
     r.staff.people.map((p) => [
       p.employee,
@@ -360,6 +369,7 @@ reports.get('/reports/export', async (req, res) => {
       p.early_exit,
       p.tasks,
       p.tasks_done,
+      p.tasks_missed,
     ]),
   );
   sheet(
@@ -405,7 +415,11 @@ reports.get('/reports/export', async (req, res) => {
       t.title,
       t.employee,
       t.priority === 'alta' ? 'Alta' : 'Normal',
-      t.completed_at ? `Cumplida ${localDate(t.completed_at, zone)}` : 'Pendiente',
+      t.completed_at
+        ? `Cumplida ${localDate(t.completed_at, zone)}`
+        : t.missed
+          ? 'No realizada'
+          : 'Pendiente',
       t.note,
     ]),
   );

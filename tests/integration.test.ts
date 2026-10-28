@@ -4,7 +4,7 @@ import { randomUUID, generateKeyPairSync, sign, createHash } from 'node:crypto';
 import sharp from 'sharp';
 import ExcelJS from 'exceljs';
 import pg from 'pg';
-import { canonical, localTime, type Command } from '../packages/domain/index.js';
+import { canonical, localTime, shiftBusinessDate, type Command } from '../packages/domain/index.js';
 if (process.env.NODE_ENV === 'production' || !process.env.MIGRATION_DATABASE_URL)
   throw Error('Las pruebas requieren la base local de desarrollo.');
 process.env.NODE_ENV = 'test';
@@ -868,7 +868,8 @@ test('turno del día anterior exige conteo antes de permitir pagos', async () =>
   );
 });
 test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel real', async () => {
-  const date = localTimeForTest();
+  // Tasks belong to the work day, which runs until 05:00 the next morning.
+  const date = shiftBusinessDate(new Date(), 'America/Chihuahua');
   a.equal(
     (await call('/tasks/catalog', { branch_id: branch, title: 'Aseo diario', priority: 'normal' }))
       .status,
@@ -981,6 +982,42 @@ test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel 
   a.equal(analytics.spending.find((s: any) => s.id === supplier).net_cents, '27000');
   a.equal(analytics.baselines[0].average_cents, '100000');
   a.equal((await call(`/analytics?branch_id=${branch}`, undefined, employeeToken)).status, 403);
+});
+test('una tarea solo se completa en su día de trabajo; después queda como no realizada', async () => {
+  const today = shiftBusinessDate(new Date(), 'America/Chihuahua');
+  const shift = (days: number) =>
+    new Date(Date.parse(`${today}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+  const task = async (due: string) => {
+    const id = randomUUID();
+    await sql.query(
+      "INSERT INTO tasks(branch_id,id,user_id,title,due_date) VALUES($1,$2,$3,'Acomodar refrescos',$4)",
+      [branch, id, employee.id, due],
+    );
+    return id;
+  };
+  const current = await task(today);
+  await apply(command('task.complete', { id: current, note: '' }));
+  a.ok(
+    (await sql.query('SELECT completed_at FROM tasks WHERE id=$1', [current])).rows[0].completed_at,
+  );
+  // Yesterday's work day is over and tomorrow's has not started: neither can be done now.
+  for (const due of [shift(-1), shift(1)]) {
+    const id = await task(due);
+    await a.rejects(() => apply(command('task.complete', { id, note: '' })), {
+      code: 'TASK_EXPIRED',
+    });
+    a.equal(
+      (await sql.query('SELECT completed_at FROM tasks WHERE id=$1', [id])).rows[0].completed_at,
+      null,
+    );
+  }
+  const report = (await call(`/reports?branch_id=${branch}&from=${shift(-1)}&to=${shift(1)}`)).body
+    .operations;
+  a.ok(report.tasks.filter((t: any) => t.missed).every((t: any) => t.date < today));
+  a.ok(report.tasks.some((t: any) => t.missed && t.date === shift(-1)));
+  a.equal(report.tasks.find((t: any) => t.date === shift(1)).missed, false);
+  // Leave no undone tasks behind for the alert test that follows.
+  await sql.query("DELETE FROM tasks WHERE branch_id=$1 AND title='Acomodar refrescos'", [branch]);
 });
 test('gasto y retiro bancario online tienen efecto único al repetir el identificador', async () => {
   const before = (

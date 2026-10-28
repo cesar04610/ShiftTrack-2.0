@@ -174,12 +174,14 @@ export async function evaluateAlerts(
       at: s.ended_at,
       message: `${s.name} faltó el ${short(day(s.business_date))}: no registró entrada en su horario (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}).`,
     });
+  // A task is missed once its work day ends at 05:00 the next morning.
+  const workDay = shiftBusinessDate(now, zone);
   const tasks = (
     await db.query(
-      `SELECT t.*,u.name,((t.due_date+1) AT TIME ZONE $3) AS overdue_at
+      `SELECT t.*,u.name,((t.due_date+1)+time '05:00') AT TIME ZONE $3 AS overdue_at
        FROM tasks t JOIN users u ON u.id=t.user_id
        WHERE t.completed_at IS NULL AND t.due_date<$1::date AND t.due_date>=$1::date-$2::integer`,
-      [today, TASK_LOOKBACK_DAYS, zone],
+      [workDay, TASK_LOOKBACK_DAYS, zone],
     )
   ).rows;
   for (const t of tasks)
@@ -189,7 +191,7 @@ export async function evaluateAlerts(
       userId: t.user_id,
       date: day(t.due_date),
       at: t.overdue_at,
-      message: `${t.name} no terminó la tarea «${t.title}» del ${short(day(t.due_date))}.`,
+      message: `${t.name} no realizó la tarea «${t.title}» del ${short(day(t.due_date))}.`,
     });
   return raised;
 }
