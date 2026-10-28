@@ -1332,7 +1332,7 @@ export default function App() {
                       onSubmit={(v) => mutate('/users', v)}
                     />
                   </Card>
-                  {deletingUser && (
+                  {deletingUser && deletingUser.role === 'employee' && (
                     <Card title="Eliminar empleado">
                       <p>
                         ¿Eliminar a {deletingUser.name} de esta sucursal? Su cuenta dejará de
@@ -1353,6 +1353,37 @@ export default function App() {
                       >
                         Confirmar eliminación
                       </button>
+                      <button className="secondary" onClick={() => setDeletingUser(null)}>
+                        Cancelar
+                      </button>
+                    </Card>
+                  )}
+                  {deletingUser && deletingUser.role !== 'employee' && (
+                    <Card title={`Eliminar ${labels[deletingUser.role].toLowerCase()}`}>
+                      <p>
+                        ¿En realidad deseas eliminar a <strong>{deletingUser.name}</strong> (
+                        {labels[deletingUser.role].toLowerCase()})? Su cuenta dejará de existir para
+                        entrar al sistema
+                        {deletingUser.role === 'superadmin' ? ' en todas las sucursales' : ''} y se
+                        cerrarán sus sesiones abiertas. Sus registros anteriores se conservarán.
+                      </p>
+                      <p>Para confirmar, escribe la contraseña con la que entraste.</p>
+                      <Form
+                        key={deletingUser.id}
+                        fields={[{ name: 'password', label: 'Tu contraseña', type: 'password' }]}
+                        label="Sí, eliminar"
+                        onSubmit={async (v) => {
+                          await request(`/users/${deletingUser.id}/delete`, {
+                            branch_id: branchId,
+                            password: v.password,
+                          });
+                          setDeletingUser(null);
+                          await refresh();
+                          setMessage(
+                            `${deletingUser.name} fue eliminado. Su historial se conserva.`,
+                          );
+                        }}
+                      />
                       <button className="secondary" onClick={() => setDeletingUser(null)}>
                         Cancelar
                       </button>
@@ -1381,11 +1412,9 @@ export default function App() {
                                   Desactivar
                                 </button>
                               )}
-                              {u.role === 'employee' && (
-                                <button className="danger-link" onClick={() => setDeletingUser(u)}>
-                                  Eliminar empleado
-                                </button>
-                              )}
+                              <button className="danger-link" onClick={() => setDeletingUser(u)}>
+                                Eliminar {labels[u.role].toLowerCase()}
+                              </button>
                             </>
                           ) : null,
                         ])}

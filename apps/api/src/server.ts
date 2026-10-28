@@ -719,16 +719,58 @@ app.post('/api/v1/users/:id/delete', async (req, res) => {
   admin(actor);
   const id = z.uuid().parse(req.params.id),
     branch = await context(actor, req.body.branch_id);
+  const password = z.string().max(256).optional().parse(req.body.password);
   await transaction(branch.id, async (db) => {
     await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [branch.id]);
+    // Lock every owner too, so two owners cannot delete each other at the same time.
+    await db.query(
+      "SELECT id FROM users WHERE role='superadmin' AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+    );
     const target = (await db.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [id])).rows[0];
     assert(target, 'NOT_FOUND', 'Cuenta no encontrada.', 404);
-    assert(
-      target.role === 'employee' && target.branch_id === branch.id,
-      'FORBIDDEN',
-      'Solo puedes eliminar empleados de esta sucursal.',
-      403,
-    );
+    assert(target.id !== actor.id, 'FORBIDDEN', 'No puedes eliminar tu propia cuenta.', 403);
+    if (target.role === 'employee')
+      assert(
+        target.branch_id === branch.id,
+        'FORBIDDEN',
+        'Solo puedes eliminar empleados de esta sucursal.',
+        403,
+      );
+    else {
+      // Administrators and owners: only an owner, and only after typing their own password.
+      assert(
+        actor.role === 'superadmin',
+        'FORBIDDEN',
+        'Solo un súper administrador puede eliminar administradores.',
+        403,
+      );
+      assert(
+        target.role === 'superadmin' || target.branch_id === branch.id,
+        'FORBIDDEN',
+        'Solo puedes eliminar administradores de esta sucursal.',
+        403,
+      );
+      let confirmed = false;
+      try {
+        confirmed =
+          !!password && !!(await checkPassword(actor.username, password, undefined, actor.id));
+      } catch {
+        confirmed = false;
+      }
+      assert(confirmed, 'WRONG_PASSWORD', 'La contraseña no es correcta.', 403);
+      if (target.role === 'superadmin' && !target.deleted_at)
+        assert(
+          (
+            await db.query(
+              "SELECT 1 FROM users WHERE role='superadmin' AND active AND deleted_at IS NULL AND id<>$1",
+              [id],
+            )
+          ).rowCount,
+          'LAST_OWNER',
+          'Debe quedar al menos un súper administrador activo.',
+          409,
+        );
+    }
     assert(
       !(
         await db.query(
@@ -737,7 +779,7 @@ app.post('/api/v1/users/:id/delete', async (req, res) => {
         )
       ).rowCount,
       'OPEN_SHIFT',
-      'Cierra el turno de proveedores del empleado antes de eliminarlo.',
+      'Cierra el turno de proveedores de esta persona antes de eliminarla.',
       409,
     );
     if (!target.deleted_at) {
@@ -750,6 +792,7 @@ app.post('/api/v1/users/:id/delete', async (req, res) => {
         id,
         username: target.username,
         name: target.name,
+        role: target.role,
       });
     }
   });
