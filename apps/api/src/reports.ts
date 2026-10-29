@@ -5,6 +5,7 @@ import type pg from 'pg';
 import { identity } from './security.js';
 import { admin, context, transaction } from './db.js';
 import { alertsReady } from './alerts.js';
+import { auditDetails } from './audit-detail.js';
 import { assert, auditActions, money, shiftBusinessDate } from '../../../packages/domain/index.js';
 
 export const reports = express.Router();
@@ -163,11 +164,12 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
      FROM shortages s JOIN users u ON u.id=s.actor_user_id
      WHERE ${day('s.occurred_at')} BETWEEN $1 AND $2 ORDER BY s.occurred_at DESC`,
   );
-  const audit = await rows(
+  const auditRows = await rows(
     `SELECT a.id,a.action,a.received_at,a.payload,coalesce(u.name,'Sistema') AS employee
      FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
      WHERE ${day('a.received_at')} BETWEEN $1 AND $2 ORDER BY a.received_at DESC LIMIT 2000`,
   );
+  const audit = await auditDetails(db, auditRows);
 
   const live = tickets.filter((t) => !t.voided);
   const sum = (list: any[], key: string) => list.reduce((s, r) => s + BigInt(r[key] ?? 0), 0n);

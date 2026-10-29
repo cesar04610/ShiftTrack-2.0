@@ -901,9 +901,6 @@ tbody tr:last-child td {
   font-size: 12px;
   justify-content: flex-start;
 }
-.continue-without-register {
-  margin-top: 16px;
-}
 .schedule-board {
   display: flex;
   flex-direction: column;
@@ -1815,6 +1812,25 @@ main > * {
   cursor: pointer;
   color: var(--accent);
   font-size: 11px;
+}
+.audit-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-width: 420px;
+  font-size: 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+.audit-detail dt {
+  color: var(--muted, #64748b);
+}
+.audit-detail dd {
+  margin: 0;
+  font-weight: 600;
+  word-break: break-word;
 }
 .report-detail pre {
   max-width: 340px;

@@ -429,7 +429,7 @@ export async function processCommand(c: Command, deviceId: string) {
       randomUUID(),
       c.actor_user_id,
       c.type,
-      { operation_id: c.operation_id, device_id: deviceId, occurred_at: c.occurred_at },
+      { operation_id: c.operation_id, device_id: deviceId, occurred_at: c.occurred_at, data: p },
     ]);
     return result;
   });
