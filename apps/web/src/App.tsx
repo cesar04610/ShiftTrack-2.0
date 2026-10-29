@@ -532,7 +532,7 @@ export default function App() {
     [branches, setBranches] = useState<any[]>([]),
     [branchId, setBranchId] = useState(''),
     [registerNumber, setRegisterNumber] = useState<number | null>(null),
-    [registerChosen, setRegisterChosen] = useState(false),
+    [registerPicked, setRegisterChosen] = useState(false),
     [adminMenuOpen, setAdminMenuOpen] = useState(true),
     [allBranches, setAllBranches] = useState<any[]>([]),
     [deletingBranch, setDeletingBranch] = useState<any>(null),
@@ -798,6 +798,8 @@ export default function App() {
       </div>
     );
   const isAdmin = user.role !== 'employee',
+    // Administrators go straight to the reports; they pick a register from the top bar only when needed.
+    registerChosen = isAdmin || registerPicked,
     employeeOptions = (data?.users || [])
       .filter((u: any) => u.active)
       .map((u: any) => ({ value: u.id, label: u.name }));
@@ -998,25 +1000,48 @@ export default function App() {
             )}
           </div>
           <div className="topbar-right">
-            {registerNumber && <strong>Caja {registerNumber}</strong>}
-            {isAdmin && registerChosen && (
-              <button
-                className="text-button"
+            {!isAdmin && registerNumber && <strong>Caja {registerNumber}</strong>}
+            {isAdmin && (
+              <select
+                aria-label="Caja de trabajo"
+                className="register-select"
+                value={registerNumber ?? ''}
                 disabled={busy || !online}
-                onClick={() => {
+                onChange={(e) => {
+                  const next = e.target.value ? Number(e.target.value) : null;
                   setBusy(true);
-                  leaveRegister(branchId, online)
-                    .then(() => {
-                      setRegisterNumber(null);
-                      setRegisterChosen(false);
-                      setPrepared(false);
-                    })
+                  (async () => {
+                    if (registerNumber != null) await leaveRegister(branchId, online);
+                    setRegisterNumber(null);
+                    setPrepared(false);
+                    if (next != null) {
+                      const result = await selectRegister(next, online, branchId);
+                      setRegisterNumber(next);
+                      setPrepared(result.prepared);
+                      setDeviceId((await getDevice(branchId)).id);
+                      await refresh(online);
+                    }
+                  })()
                     .catch(notify)
                     .finally(() => setBusy(false));
                 }}
               >
-                {registerNumber ? 'Cambiar caja' : 'Seleccionar caja'}
-              </button>
+                <option value="">Sin caja</option>
+                {Array.from(
+                  {
+                    length:
+                      b?.register_count ||
+                      branches.find((x) => x.id === branchId)?.register_count ||
+                      1,
+                  },
+                  (_, i) => (
+                    <option value={i + 1} key={i + 1}>
+                      Caja {i + 1}
+                      {i + 1 === b?.supplier_register ? ' · Proveedores' : ''}
+                    </option>
+                  ),
+                )}
+              </select>
             )}
             <span
               className={`connection ${online ? '' : 'offline'}`}
@@ -1178,19 +1203,6 @@ export default function App() {
                   await refresh(online);
                 }}
               />
-              {isAdmin && (
-                <button
-                  className="secondary continue-without-register"
-                  disabled={busy}
-                  onClick={() => {
-                    setRegisterChosen(true);
-                    setRegisterNumber(null);
-                    setPrepared(false);
-                  }}
-                >
-                  Continuar sin caja
-                </button>
-              )}
             </Card>
           ) : (!data || data.branch.id !== branchId) && page !== 'Configuración' ? (
             <Card title="Preparando datos">

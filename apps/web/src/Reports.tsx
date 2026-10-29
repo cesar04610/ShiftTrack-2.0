@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   ClipboardCheck,
@@ -810,14 +810,21 @@ function Audit({ r, zone }: { r: any; zone: string }) {
         headers={['Fecha', 'Acción', 'Usuario', 'Detalle']}
         rows={events.map((e: any) => ({
           key: e.id,
-          text: `${actions[e.action] || e.action} ${e.employee} ${JSON.stringify(e.payload)}`,
+          text: `${actions[e.action] || e.action} ${e.employee} ${e.detail.map((d: any) => `${d.label} ${d.value}`).join(' ')}`,
           cells: [
             when(e.received_at, zone),
             actions[e.action] || e.action,
             e.employee,
             <details className="report-detail">
               <summary>Ver</summary>
-              <pre>{JSON.stringify(e.payload, null, 2)}</pre>
+              <dl className="audit-detail">
+                {e.detail.map((d: any) => (
+                  <Fragment key={d.label}>
+                    <dt>{d.label}</dt>
+                    <dd>{d.value}</dd>
+                  </Fragment>
+                ))}
+              </dl>
             </details>,
           ],
         }))}
