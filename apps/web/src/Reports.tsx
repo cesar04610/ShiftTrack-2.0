@@ -119,12 +119,14 @@ function Grid({
   empty,
   footer,
   search = true,
+  className,
 }: {
   headers: string[];
   rows: { key: string; cells: ReactNode[]; text: string }[];
   empty: string;
   footer?: ReactNode[];
   search?: boolean;
+  className?: string;
 }) {
   const [query, setQuery] = useState('');
   const shown = query
@@ -149,7 +151,7 @@ function Grid({
         />
       )}
       <div className="table-wrap">
-        <table>
+        <table className={className}>
           <thead>
             <tr>
               {headers.map((h) => (
@@ -161,7 +163,9 @@ function Grid({
             {shown.map((r) => (
               <tr key={r.key}>
                 {r.cells.map((c, i) => (
-                  <td key={i}>{c}</td>
+                  <td key={i} data-label={headers[i]}>
+                    {c}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -806,6 +810,7 @@ function Audit({ r, zone }: { r: any; zone: string }) {
       }
     >
       <Grid
+        className="audit-table"
         empty="Sin operaciones con este filtro."
         headers={['Fecha', 'Acción', 'Usuario', 'Detalle']}
         rows={events.map((e: any) => ({

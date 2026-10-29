@@ -45,6 +45,7 @@ type Lookups = {
   cuts: Map<string, any>;
   commands: Map<string, any>;
   entries: Map<string, any>;
+  matched: Map<string, string>;
 };
 
 async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
@@ -73,6 +74,22 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
       )
     ).rows.map((r) => [r.source_id, r]),
   );
+  // Confirmed captures of other kinds are found by who made them and the moment they happened.
+  const matched = new Map<string, string>();
+  const sources: Record<string, string> = {
+    'task.complete': 'SELECT id FROM tasks WHERE user_id=$1 AND completed_at=$2 LIMIT 1',
+    'shortage.create': 'SELECT id FROM shortages WHERE actor_user_id=$1 AND occurred_at=$2 LIMIT 1',
+    'cut.create': 'SELECT id FROM cuts WHERE user_id=$1 AND occurred_at=$2 LIMIT 1',
+  };
+  for (const e of events) {
+    const at = e.payload?.occurred_at;
+    if (!sources[e.action] || e.payload?.data?.id || !e.actor_user_id || !at) continue;
+    const found = (await db.query(sources[e.action], [e.actor_user_id, at])).rows[0];
+    if (found) {
+      matched.set(e.id, found.id);
+      ids.add(found.id);
+    }
+  }
   const list = [...ids];
   const named = async (sql: string) =>
     new Map<string, string>((await db.query(sql, [list])).rows.map((r) => [r.id, r.name]));
@@ -110,6 +127,7 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
     cuts: new Map(cutRows.rows.map((r) => [r.id, r])),
     commands,
     entries,
+    matched,
   };
 }
 
@@ -121,6 +139,7 @@ function describe(e: any, k: Lookups): DetailLine[] {
     ...(raw.data ?? {}),
     ...raw,
   };
+  if (!p.id && k.matched.has(e.id)) p.id = k.matched.get(e.id);
   const lines: DetailLine[] = [];
   const add = (label: string, value: unknown) => {
     if (value !== undefined && value !== null && value !== '')

@@ -165,7 +165,7 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
      WHERE ${day('s.occurred_at')} BETWEEN $1 AND $2 ORDER BY s.occurred_at DESC`,
   );
   const auditRows = await rows(
-    `SELECT a.id,a.action,a.received_at,a.payload,coalesce(u.name,'Sistema') AS employee
+    `SELECT a.id,a.action,a.received_at,a.payload,a.actor_user_id,coalesce(u.name,'Sistema') AS employee
      FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
      WHERE ${day('a.received_at')} BETWEEN $1 AND $2 ORDER BY a.received_at DESC LIMIT 2000`,
   );

@@ -1990,3 +1990,45 @@ main > * {
     display: none;
   }
 }
+
+@media (max-width: 720px) {
+  .audit-table,
+  .audit-table tbody,
+  .audit-table tr,
+  .audit-table td {
+    display: block;
+    width: 100%;
+  }
+  .audit-table thead {
+    display: none;
+  }
+  .audit-table tr {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line, #e2e8f0);
+  }
+  .audit-table td {
+    padding: 3px 0;
+    border: 0;
+  }
+  .audit-table td[data-label]:not(:last-child)::before {
+    content: attr(data-label) ': ';
+    color: var(--muted, #64748b);
+    font-size: 12px;
+  }
+  .audit-table td:first-child {
+    font-size: 12px;
+    color: var(--muted, #64748b);
+  }
+  .audit-table td:nth-child(2) {
+    font-weight: 700;
+  }
+  .audit-detail {
+    max-width: none;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .audit-detail dt {
+    margin-top: 6px;
+    font-size: 11px;
+  }
+}
