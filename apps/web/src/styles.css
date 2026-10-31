@@ -2032,3 +2032,18 @@ main > * {
     font-size: 11px;
   }
 }
+
+/* El selector de caja tiene ancho propio: no crece con sus opciones ni invade el de sucursal. */
+.topbar-right .register-select {
+  flex: 0 0 auto;
+  width: 150px;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .topbar-right .register-select {
+    width: 112px;
+    height: 38px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+}
