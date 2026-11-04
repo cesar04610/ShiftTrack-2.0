@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assert } from '../../../packages/domain/index.js';
 import { identity } from './security.js';
+import { writeAudit } from './audit-detail.js';
 import { admin, context, transaction } from './db.js';
 
 const MAX_ROWS = 2000;
@@ -309,16 +310,11 @@ supplierImport.post(
         skipped: rows.length - adding.length,
         message: 'Registro guardado correctamente.',
       };
-      await db.query(
-        'INSERT INTO audit_events(branch_id,id,actor_user_id,action,payload) VALUES($1,$2,$3,$4,$5)',
-        [
-          branch.id,
-          randomUUID(),
-          user.id,
-          'suppliers.import',
-          { operation_id: input.operation_id, file_sha256: hash, ...saved },
-        ],
-      );
+      await writeAudit(db, branch.id, user.id, 'suppliers.import', {
+        operation_id: input.operation_id,
+        file_sha256: hash,
+        ...saved,
+      });
       await db.query('INSERT INTO processed_operations VALUES($1,$2,$3,$4)', [
         branch.id,
         input.operation_id,

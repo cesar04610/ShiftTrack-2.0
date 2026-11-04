@@ -2,6 +2,8 @@
 
 > Actualización del 4 de octubre de 2026: las reglas actuales sustituyen las referencias históricas a ocho horas, reservas de dos minutos y equipo designado. Las sesiones, cajas y concesiones nuevas no vencen por tiempo. Al seleccionar caja online se prepara automáticamente un equipo de esa sucursal; proveedores depende de la caja configurada. La salida libera la caja y un administrador puede liberar una sesión abandonada con contraseña. El corte nuevo queda vinculado a la entrada real (05:00–antes de 15:00 mañana; 15:00–antes de 05:00 tarde), con fecha anterior para entradas antes de 05:00. No se solicita horario opcional. La migración 007 conserva el historial.
 
+> Actualización de noviembre de 2026: las sesiones en línea vencen a las 9 horas de iniciar sesión (constante `SESSION_HOURS`, aplicada por la API y por la pantalla, que cierra la sesión al cumplirse). Esto sustituye cualquier referencia anterior a sesiones sin vencimiento o de ocho horas. La reserva de caja y el acceso offline no vencen por tiempo.
+
 El usuario pidió alojar la aplicación en Railway y retirar Firebase. Los documentos originales 02/03 describen la arquitectura anterior y permanecen como referencia. No se requieren cuentas de servicio, claves de Google, Auth Emulator ni bucket GCS.
 
 ## Proyecto y estado remoto verificado
@@ -38,7 +40,7 @@ Crear PostgreSQL 17 con una identidad propietaria de migraciones y `shifttrack_a
 
 La migración 006 agrega sucursales activas, cantidad de cajas y reservas online; aplicar antes de iniciar esta versión, con la identidad de migraciones. El rol de aplicación recibe los permisos de `register_leases` sin propiedad de la tabla. Las credenciales administrativas usadas para migrar deben retirarse del servicio después del despliegue.
 
-La migración 005 agrega `auth_sessions`; no altera usuarios ni importes. El login verifica Argon2 y emite un token opaco aleatorio de 256 bits con vencimiento fijo de ocho horas. SQL conserva SHA-256 del token; el navegador lo guarda en `sessionStorage`, por pestaña. Cada petición revisa vencimiento, estado y versión de la cuenta. El cierre online borra esa sesión, cambiar contraseña revoca todas y la baja lógica impide acceso de inmediato. El cierre offline solo borra el acceso local; el token remoto conserva su vencimiento original.
+La migración 005 agrega `auth_sessions`; no altera usuarios ni importes. El login verifica Argon2 y emite un token opaco aleatorio de 256 bits con vencimiento fijo de nueve horas. SQL conserva SHA-256 del token; el navegador lo guarda en `sessionStorage`, por pestaña. Cada petición revisa vencimiento, estado y versión de la cuenta. El cierre online borra esa sesión, cambiar contraseña revoca todas y la baja lógica impide acceso de inmediato. El cierre offline solo borra el acceso local; el token remoto conserva su vencimiento original.
 
 Los permisos y concesiones offline siguen firmados por usuario y equipo. No se borran IndexedDB ni pendientes; una cuenta modificada envía capturas antiguas a revisión. La cuenta `cesar` se creó con la contraseña proporcionada privadamente por el propietario. `scripts/provision.ts` es el proceso administrativo temporal: aplica migraciones, configura el rol restringido y crea al dueño únicamente si falta. No restablece contraseñas existentes. Las credenciales de migración no se entregan al servicio API; no hay contraseña predeterminada de producción. No publicar una ruta pública sin protección para crear al dueño.
 
