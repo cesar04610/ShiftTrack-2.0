@@ -345,7 +345,7 @@ export default function Reports({
           {tab === 'Operación' && (
             <Operations r={data.operations} zone={zone} branchId={branchId} onError={onError} />
           )}
-          {tab === 'Auditoría' && <Audit r={data.audit} zone={zone} />}
+          {tab === 'Auditoría' && <Audit branchId={branchId} from={from} to={to} zone={zone} />}
         </div>
       )}
     </div>
@@ -766,33 +766,63 @@ function Operations({
   );
 }
 
-function Audit({ r, zone }: { r: any; zone: string }) {
+type AuditPage = { events: any[]; total: number; actions: string[]; people: string[] };
+// The log is paged by the server (filters included), so no period is ever cut short.
+function Audit({
+  branchId,
+  from,
+  to,
+  zone,
+}: {
+  branchId: string;
+  from: string;
+  to: string;
+  zone: string;
+}) {
   const [action, setAction] = useState(''),
-    [person, setPerson] = useState('');
-  const names = useMemo(
-    () => [...new Set<string>(r.events.map((e: any) => e.employee))].sort(),
-    [r.events],
-  );
-  const kinds = useMemo(
-    () => [...new Set<string>(r.events.map((e: any) => e.action))].sort(),
-    [r.events],
-  );
-  const events = r.events.filter(
-    (e: any) => (!action || e.action === action) && (!person || e.employee === person),
-  );
+    [person, setPerson] = useState(''),
+    [page, setPage] = useState<AuditPage | null>(null),
+    [loading, setLoading] = useState(false),
+    [error, setError] = useState('');
+  const query = (offset: number) =>
+    `/reports/audit?branch_id=${branchId}&from=${from}&to=${to}&offset=${offset}` +
+    `&action=${encodeURIComponent(action)}&person=${encodeURIComponent(person)}`;
+  useEffect(() => {
+    let current = true;
+    setLoading(true);
+    setError('');
+    request(query(0))
+      .then((r) => current && setPage(r))
+      .catch((e) => current && setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => current && setLoading(false));
+    return () => {
+      current = false;
+    };
+  }, [branchId, from, to, action, person]);
+  const more = () => {
+    if (!page) return;
+    setLoading(true);
+    request(query(page.events.length))
+      .then((r) => setPage({ ...r, events: [...page.events, ...r.events] }))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  };
+  const events = page?.events ?? [];
   return (
     <Section
       title="Bitácora de operaciones"
       subtitle={
-        r.truncated
-          ? 'Se muestran las 2,000 operaciones más recientes; acorta el periodo para ver el resto.'
-          : `${r.events.length} operaciones en el periodo`
+        page
+          ? `Mostrando ${events.length} de ${page.total} operaciones en el periodo`
+          : loading
+            ? 'Cargando…'
+            : ''
       }
       aside={
         <div className="report-filters">
           <select value={action} onChange={(e) => setAction(e.target.value)}>
             <option value="">Todas las acciones</option>
-            {kinds.map((k) => (
+            {(page?.actions ?? []).map((k) => (
               <option key={k} value={k}>
                 {actions[k] || k}
               </option>
@@ -800,7 +830,7 @@ function Audit({ r, zone }: { r: any; zone: string }) {
           </select>
           <select value={person} onChange={(e) => setPerson(e.target.value)}>
             <option value="">Todos los usuarios</option>
-            {names.map((n) => (
+            {(page?.people ?? []).map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
@@ -809,6 +839,11 @@ function Audit({ r, zone }: { r: any; zone: string }) {
         </div>
       }
     >
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
       <Grid
         className="audit-table"
         empty="Sin operaciones con este filtro."
@@ -834,6 +869,11 @@ function Audit({ r, zone }: { r: any; zone: string }) {
           ],
         }))}
       />
+      {page && events.length < page.total && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          {loading ? 'Cargando…' : `Cargar más (${page.total - events.length} restantes)`}
+        </button>
+      )}
     </Section>
   );
 }

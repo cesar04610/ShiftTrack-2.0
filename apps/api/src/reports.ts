@@ -164,34 +164,6 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
      FROM shortages s JOIN users u ON u.id=s.actor_user_id
      WHERE ${day('s.occurred_at')} BETWEEN $1 AND $2 ORDER BY s.occurred_at DESC`,
   );
-  const auditRows = await rows(
-    `SELECT a.id,a.action,a.received_at,a.payload,a.actor_user_id,coalesce(u.name,'Sistema') AS employee
-     FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
-     WHERE ${day('a.received_at')} BETWEEN $1 AND $2 ORDER BY a.received_at DESC LIMIT 2000`,
-  );
-  // Signing in registers the employee's attendance, so each entry also shows up as an operation.
-  const entries = await rows(
-    `SELECT c.id,c.clock_in AS received_at,c.clock_out,c.business_date::text AS business_date,
-       c.user_id AS actor_user_id,u.name AS employee,u.role
-     FROM clock_records c JOIN users u ON u.id=c.user_id
-     WHERE ${day('c.clock_in')} BETWEEN $1 AND $2 ORDER BY c.clock_in DESC LIMIT 2000`,
-  );
-  const merged = [
-    ...auditRows,
-    ...entries.map((c) => ({
-      id: c.id,
-      action: 'clock.in',
-      received_at: c.received_at,
-      payload: {},
-      actor_user_id: c.actor_user_id,
-      employee: c.employee,
-      clock: { role: c.role, business_date: c.business_date, clock_out: c.clock_out },
-    })),
-  ]
-    .sort((a, b) => +new Date(b.received_at) - +new Date(a.received_at))
-    .slice(0, 2000);
-  const audit = await auditDetails(db, merged, zone);
-
   const live = tickets.filter((t) => !t.voided);
   const sum = (list: any[], key: string) => list.reduce((s, r) => s + BigInt(r[key] ?? 0), 0n);
   const suppliers = new Map<string, any>();
@@ -267,9 +239,86 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
       shortages,
       tasks,
     },
-    audit: { events: audit, truncated: audit.length === 2000 },
   };
 }
+
+const PAGE = 100;
+const EXPORT_LIMIT = 50_000;
+// Audit rows, entries and exits of the working day in one ordered stream, filtered and paged in SQL.
+const auditStream = (day: (c: string) => string) => `
+  SELECT a.id::text AS id,a.action,a.received_at AS at,a.payload,a.actor_user_id,
+         coalesce(u.name,'Sistema') AS employee,NULL::jsonb AS clock
+  FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
+  WHERE ${day('a.received_at')} BETWEEN $1 AND $2
+  UNION ALL
+  SELECT c.id::text,'clock.in',c.clock_in,'{}'::jsonb,c.user_id,u.name,
+         jsonb_build_object('role',u.role,'business_date',c.business_date::text,'clock_in',c.clock_in,'clock_out',c.clock_out)
+  FROM clock_records c JOIN users u ON u.id=c.user_id
+  WHERE ${day('c.clock_in')} BETWEEN $1 AND $2
+  UNION ALL
+  SELECT c.id::text||':out','clock.out',c.clock_out,'{}'::jsonb,c.user_id,u.name,
+         jsonb_build_object('role',u.role,'business_date',c.business_date::text,'clock_in',c.clock_in,'clock_out',c.clock_out)
+  FROM clock_records c JOIN users u ON u.id=c.user_id
+  WHERE c.clock_out IS NOT NULL AND ${day('c.clock_out')} BETWEEN $1 AND $2`;
+
+export async function auditPage(
+  db: pg.PoolClient,
+  zone: string,
+  from: string,
+  to: string,
+  opts: { action?: string; person?: string; offset?: number; limit?: number },
+) {
+  const stream = auditStream((c) => `(${c} AT TIME ZONE $3)::date`);
+  const base = [from, to, zone];
+  const filter = `($4='' OR action=$4) AND ($5='' OR employee=$5)`;
+  const filters = [opts.action ?? '', opts.person ?? ''];
+  const [page, total, facets] = await Promise.all([
+    db.query(`SELECT * FROM (${stream}) s WHERE ${filter} ORDER BY at DESC,id LIMIT $6 OFFSET $7`, [
+      ...base,
+      ...filters,
+      opts.limit ?? PAGE,
+      opts.offset ?? 0,
+    ]),
+    db.query(`SELECT count(*)::int AS n FROM (${stream}) s WHERE ${filter}`, [...base, ...filters]),
+    db.query(
+      `SELECT array_agg(DISTINCT action) AS actions,array_agg(DISTINCT employee) AS people FROM (${stream}) s`,
+      base,
+    ),
+  ]);
+  const events = (
+    await auditDetails(
+      db,
+      page.rows.map((r) => ({ ...r, received_at: r.at })),
+      zone,
+    )
+  ).map((e: any) => ({
+    id: e.id,
+    action: e.action,
+    received_at: e.received_at,
+    employee: e.employee,
+    detail: e.detail,
+  }));
+  return {
+    events,
+    total: total.rows[0].n,
+    actions: (facets.rows[0].actions ?? []).sort(),
+    people: (facets.rows[0].people ?? []).sort(),
+  };
+}
+
+reports.get('/reports/audit', async (req, res) => {
+  const { b, from, to } = await load(req);
+  const q = z
+    .object({
+      action: z.string().max(100).optional(),
+      person: z.string().max(200).optional(),
+      offset: z.coerce.number().int().min(0).default(0),
+    })
+    .parse(req.query);
+  res.json(
+    await transaction(b.id, (db) => auditPage(db, b.timezone, from, to, { ...q, limit: PAGE })),
+  );
+});
 
 reports.get('/reports', async (req, res) => {
   const { b, from, to } = await load(req);
@@ -294,7 +343,10 @@ const pesos = (value: string | null) => (value == null ? '' : money(value));
 // One sheet per section, with headings in Spanish and only the chosen range.
 reports.get('/reports/export', async (req, res) => {
   const { b, from, to } = await load(req);
-  const r = await transaction(b.id, (db) => build(db, b.timezone, from, to));
+  const [r, audit] = await transaction(b.id, async (db) => [
+    await build(db, b.timezone, from, to),
+    await auditPage(db, b.timezone, from, to, { limit: EXPORT_LIMIT }),
+  ]);
   const zone = b.timezone;
   const book = new ExcelJS.Workbook();
   const sheet = (name: string, headers: string[], data: unknown[][]) => {
@@ -448,11 +500,12 @@ reports.get('/reports/export', async (req, res) => {
   );
   sheet(
     'Auditoría',
-    ['Fecha', 'Acción', 'Usuario'],
-    r.audit.events.map((a) => [
+    ['Fecha', 'Acción', 'Usuario', 'Detalle'],
+    audit.events.map((a: any) => [
       localDate(a.received_at, zone),
       auditActions[a.action] || a.action,
       a.employee,
+      a.detail.map((d: any) => `${d.label}: ${d.value}`).join(' · '),
     ]),
   );
   res.setHeader(

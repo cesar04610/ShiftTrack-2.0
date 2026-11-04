@@ -1,3 +1,4 @@
+import { writeAudit } from './audit-detail.js';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -29,13 +30,7 @@ async function member(db: pg.PoolClient, branch: string, id: string) {
   );
 }
 async function audit(db: pg.PoolClient, b: string, u: User, action: string, payload: unknown) {
-  await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
-    b,
-    randomUUID(),
-    u.id,
-    action,
-    payload,
-  ]);
+  await writeAudit(db, b, u.id, action, payload as Record<string, unknown>);
 }
 modules.post('/schedules/clone', async (req, res) => {
   const user = await identity(req.headers.authorization);

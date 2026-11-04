@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { admin, context, transaction } from './db.js';
 import { identity } from './security.js';
+import { writeAudit } from './audit-detail.js';
 import { assert } from '../../../packages/domain/index.js';
 export const schedules = express.Router();
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
@@ -63,13 +64,11 @@ schedules.post('/board/delete', async (req, res) => {
         409,
       );
       await db.query('DELETE FROM schedules WHERE id=$1', [p.id]);
-      await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
-        branch.id,
-        randomUUID(),
-        actor.id,
-        'schedule.delete',
-        { id: p.id, user_id: existing.user_id, business_date: existing.business_date },
-      ]);
+      await writeAudit(db, branch.id, actor.id, 'schedule.delete', {
+        id: p.id,
+        user_id: existing.user_id,
+        business_date: existing.business_date,
+      });
       return { id: p.id, ok: true };
     }),
   );
@@ -141,13 +140,10 @@ async function save(
         p.end_time,
       ]);
     await place(db, branch, scheduleId, p, id ? index : (index ?? Infinity), !id);
-    await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
-      branch,
-      randomUUID(),
-      actor,
-      id ? 'schedule.update' : 'schedule.create',
-      { id: scheduleId, ...p },
-    ]);
+    await writeAudit(db, branch, actor, id ? 'schedule.update' : 'schedule.create', {
+      id: scheduleId,
+      ...p,
+    });
     return { id: scheduleId, ok: true };
   });
 }

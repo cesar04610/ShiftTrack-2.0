@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { money } from '../../../packages/domain/index.js';
 
 export type DetailLine = { label: string; value: string };
@@ -155,6 +156,8 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
 }
 
 function describe(e: any, k: Lookups, zone: string): DetailLine[] {
+  // Rows written since the snapshot was introduced already carry their readable detail.
+  if (Array.isArray(e.payload?.detail) && e.payload.detail.length) return e.payload.detail;
   const raw = e.payload ?? {};
   const op = raw.operation_id;
   const p: Record<string, any> = {
@@ -304,7 +307,8 @@ function describe(e: any, k: Lookups, zone: string): DetailLine[] {
       add('Caja', p.register_number);
       add('Usuario que la tenía', user(p.user_id));
       break;
-    case 'clock.in': {
+    case 'clock.in':
+    case 'clock.out': {
       const at = (v: string) =>
         new Intl.DateTimeFormat('es-MX', {
           timeZone: zone,
@@ -314,10 +318,20 @@ function describe(e: any, k: Lookups, zone: string): DetailLine[] {
       add('Empleado', e.employee);
       add('Rol', roles[e.clock.role] ?? e.clock.role);
       add('Fecha del turno', day(e.clock.business_date));
-      add('Entrada (inicio de sesión)', at(e.received_at));
+      add('Entrada (inicio de sesión)', at(e.clock.clock_in));
       add('Salida', e.clock.clock_out ? at(e.clock.clock_out) : 'Sesión en curso');
       break;
     }
+    case 'register.select':
+    case 'register.leave':
+      add('Caja', p.register_number);
+      break;
+    case 'auth.login_failed':
+      add('Resultado', 'Contraseña incorrecta para esta cuenta');
+      break;
+    case 'auth.password_change':
+      add('Resultado', 'El usuario cambió su contraseña y sus sesiones se cerraron');
+      break;
     case 'branch.deactivate':
       add('Sucursal', p.name);
       break;
@@ -334,4 +348,37 @@ export async function auditDetails(db: pg.PoolClient, events: any[], zone: strin
   if (!events.length) return events;
   const found = await lookups(db, events);
   return events.map((e) => ({ ...e, payload: undefined, detail: describe(e, found, zone) }));
+}
+
+// The single way to write an audit row: the readable detail is captured at that moment, so the
+// log keeps saying what happened even if names or records change later.
+export async function writeAudit(
+  db: pg.PoolClient,
+  branch: string,
+  actor: string | null,
+  action: string,
+  payload: Record<string, unknown>,
+  zone = 'America/Chihuahua',
+) {
+  let detail: DetailLine[] = [];
+  // A savepoint keeps a failed lookup from aborting the financial transaction around it.
+  await db.query('SAVEPOINT audit_detail');
+  try {
+    const employee = actor
+      ? ((await db.query('SELECT name FROM users WHERE id=$1', [actor])).rows[0]?.name ?? 'Sistema')
+      : 'Sistema';
+    const [event] = await auditDetails(
+      db,
+      [{ id: randomUUID(), action, payload, actor_user_id: actor, employee }],
+      zone,
+    );
+    detail = event.detail;
+    await db.query('RELEASE SAVEPOINT audit_detail');
+  } catch {
+    await db.query('ROLLBACK TO SAVEPOINT audit_detail');
+  }
+  await db.query(
+    'INSERT INTO audit_events(branch_id,id,actor_user_id,action,payload) VALUES($1,$2,$3,$4,$5)',
+    [branch, randomUUID(), actor, action, { ...payload, ...(detail.length ? { detail } : {}) }],
+  );
 }

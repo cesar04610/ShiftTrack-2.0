@@ -1,4 +1,5 @@
 import { schedules } from './schedules.js';
+import { writeAudit } from './audit-detail.js';
 import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -73,7 +74,10 @@ app.post(
       body.username,
       body.password,
       body.branch_id === 'owner' ? undefined : body.branch_id,
-    );
+    ).catch(async (error) => {
+      await recordFailedLogin(body.username, body.branch_id).catch(() => undefined);
+      throw error;
+    });
     const users =
       body.branch_id === 'owner' ? matched.filter((u) => u.role === 'superadmin') : matched;
     assert(users.length, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos.', 401);
@@ -136,6 +140,7 @@ app.post('/api/v1/auth/change-password', async (req, res) => {
     await db.query('UPDATE password_credentials SET hash=$2 WHERE user_id=$1', [user.id, hash]);
     await db.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1', [user.id]);
     await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [user.id]);
+    if (user.branch_id) await audit(db, user.branch_id, user, 'auth.password_change', {});
   });
   res.json({ ok: true });
 });
@@ -242,6 +247,27 @@ app.post(
     res.json({ ok: true });
   },
 );
+// A wrong password is logged under the branch of the account it tried, when that is unambiguous.
+async function recordFailedLogin(username: string, branchId?: string) {
+  const accounts = (
+    await pool.query(
+      `SELECT id,branch_id FROM users WHERE username=$1 AND deleted_at IS NULL AND branch_id IS NOT NULL
+       AND ($2::uuid IS NULL OR branch_id=$2)`,
+      [
+        username
+          .trim()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase(),
+        branchId && branchId !== 'owner' ? branchId : null,
+      ],
+    )
+  ).rows;
+  if (accounts.length !== 1) return;
+  await transaction(accounts[0].branch_id, (db) =>
+    writeAudit(db, accounts[0].branch_id, accounts[0].id, 'auth.login_failed', {}),
+  );
+}
 async function reserveRegister(req: express.Request, heartbeat = false) {
   const user = await identity(req.headers.authorization);
   const selectedBranch = await context(user, req.body.branch_id, req.body.register_number === null);
@@ -249,9 +275,14 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     admin(user);
     await transaction(selectedBranch.id, async (db) => {
       await db.query('SELECT id FROM branches WHERE id=$1 FOR UPDATE', [selectedBranch.id]);
-      await db.query('DELETE FROM register_leases WHERE session_hash=$1', [
-        digest(req.headers.authorization!.slice(7)),
-      ]);
+      const left = await db.query(
+        'DELETE FROM register_leases WHERE session_hash=$1 RETURNING register_number',
+        [digest(req.headers.authorization!.slice(7))],
+      );
+      if (left.rowCount)
+        await audit(db, selectedBranch.id, user, 'register.leave', {
+          register_number: left.rows[0].register_number,
+        });
     });
     return { register_number: null, device_id: null };
   }
@@ -362,6 +393,8 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
         [selectedBranch.id, register_number, sessionHash, user.id, deviceId],
       )
     ).rows[0];
+    if (!heartbeat && (!held || held.session_hash !== sessionHash))
+      await audit(db, selectedBranch.id, user, 'register.select', { register_number });
     return lease;
   });
 }
@@ -945,13 +978,7 @@ app.post('/api/v1/treasury/movements', async (req, res) => {
   res.status(201).json({ ok: true });
 });
 async function audit(db: any, branch: string, user: User, action: string, payload: unknown) {
-  await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
-    branch,
-    randomUUID(),
-    user.id,
-    action,
-    payload,
-  ]);
+  await writeAudit(db, branch, user.id, action, payload as Record<string, unknown>);
 }
 async function employee(db: any, branch: string, id: string) {
   assert(

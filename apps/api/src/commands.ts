@@ -13,6 +13,7 @@ import {
   type Command,
 } from '../../../packages/domain/index.js';
 import { z } from 'zod';
+import { writeAudit } from './audit-detail.js';
 import { cutDifferenceAlert, supplierDifferenceAlert } from './alerts.js';
 export const commandSchema = z
   .object({
@@ -424,13 +425,12 @@ export async function processCommand(c: Command, deviceId: string) {
       hash,
       result,
     ]);
-    await db.query('INSERT INTO audit_events VALUES($1,$2,$3,$4,$5,now())', [
-      b.id,
-      randomUUID(),
-      c.actor_user_id,
-      c.type,
-      { operation_id: c.operation_id, device_id: deviceId, occurred_at: c.occurred_at, data: p },
-    ]);
+    await writeAudit(db, b.id, c.actor_user_id, c.type, {
+      operation_id: c.operation_id,
+      device_id: deviceId,
+      occurred_at: c.occurred_at,
+      data: p,
+    });
     return result;
   });
 }

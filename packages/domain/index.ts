@@ -125,6 +125,11 @@ export type User = {
 // Spanish names for audit_events.action, shared by the report screen and its Excel export.
 export const auditActions: Record<string, string> = {
   'clock.in': 'Entrada al turno',
+  'clock.out': 'Salida del turno',
+  'auth.login_failed': 'Intento de acceso fallido',
+  'auth.password_change': 'Cambio de contraseña',
+  'register.select': 'Caja seleccionada',
+  'register.leave': 'Caja dejada',
   'supplier.create': 'Alta de proveedor',
   'supplier.update': 'Edición de proveedor',
   'suppliers.import': 'Importación de proveedores',
