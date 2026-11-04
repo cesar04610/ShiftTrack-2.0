@@ -115,7 +115,7 @@ modules.post('/tasks/assignments', async (req, res) => {
       'INSERT INTO task_assignments(branch_id,id,catalog_id,user_id,recurrence,start_date,weekdays) VALUES($1,$2,$3,$4,$5,$6,$7)',
       [b.id, randomUUID(), p.catalog_id, p.user_id, p.recurrence, p.start_date, p.weekdays],
     );
-    await generateTasks(db, b.id, localTime(new Date(), b.timezone).date);
+    await generateTasks(db, b.id, shiftBusinessDate(new Date(), b.timezone));
   });
   res.status(201).json({ ok: true });
 });

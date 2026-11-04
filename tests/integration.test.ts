@@ -1141,9 +1141,10 @@ test('alertas de la tienda: tarde, falta, salida anticipada, sin corte, tarea, c
   const { evaluateAlerts, cutDifferenceAlert, supplierDifferenceAlert } =
     await import('../apps/api/src/alerts.js');
   const zone = 'America/Mazatlan';
-  // Wednesday 2026-11-04 at 16:00 local time (UTC-7): the day shifts are over.
-  const now = new Date('2026-11-04T23:00:00Z');
-  const day = '2026-11-04';
+  // Wednesday 2026-09-02 at 16:00 local time (UTC-7): the day shifts are over. A date well in the past keeps
+  // this test apart from records other tests create around the real current date.
+  const now = new Date('2026-09-02T23:00:00Z');
+  const day = '2026-09-02';
   const late = employee,
     absent = second;
   const present = (
@@ -1163,15 +1164,15 @@ test('alertas de la tienda: tarde, falta, salida anticipada, sin corte, tarea, c
       [branch, randomUUID(), user.id, day, entry, exit],
     );
   // 08:10 local is 40 minutes late; leaving at 14:00 is an hour early; no cut was made.
-  await clock(late, '2026-11-04T15:10:00Z', '2026-11-04T21:00:00Z');
+  await clock(late, '2026-09-02T15:10:00Z', '2026-09-02T21:00:00Z');
   // 07:45 is within the 20 minute tolerance; leaving at 14:55 is within the exit tolerance.
-  await clock(present, '2026-11-04T14:45:00Z', '2026-11-04T21:55:00Z');
+  await clock(present, '2026-09-02T14:45:00Z', '2026-09-02T21:55:00Z');
   await sql.query(
     "INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at) VALUES($1,$2,$3,1,$4,'Mañana',1000,0,1000,1000,0,$5)",
-    [branch, randomUUID(), present.id, day, '2026-11-04T21:50:00Z'],
+    [branch, randomUUID(), present.id, day, '2026-09-02T21:50:00Z'],
   );
   await sql.query(
-    "INSERT INTO tasks(branch_id,id,user_id,title,due_date) VALUES($1,$2,$3,'Limpiar vitrinas','2026-11-03')",
+    "INSERT INTO tasks(branch_id,id,user_id,title,due_date) VALUES($1,$2,$3,'Limpiar vitrinas','2026-09-01')",
     [branch, randomUUID(), present.id],
   );
   const kinds = async () =>
