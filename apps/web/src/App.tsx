@@ -17,7 +17,6 @@ import {
   RefreshCw,
   Wifi,
   WifiOff,
-  ArrowUpRight,
   Check,
   Menu,
 } from 'lucide-react';
@@ -1241,32 +1240,6 @@ export default function App() {
                       foot="Del día de hoy, asignadas al equipo"
                       icon={<ClipboardCheck />}
                     />
-                  </div>
-                  <div className="grid">
-                    <Card title="Actividad reciente" subtitle="Últimos movimientos de caja general">
-                      <Table
-                        headers={['Concepto', 'Efectivo', 'Banco']}
-                        rows={treasury
-                          .slice(-6)
-                          .reverse()
-                          .map((t: any) => [t.note, money(t.cash_cents), money(t.bank_cents)])}
-                      />
-                    </Card>
-                    <Card title="Tu sucursal">
-                      <div className="branch-info">
-                        <div className="branch-symbol">
-                          <Store size={34} />
-                        </div>
-                        <h3>{b.name}</h3>
-                        <p>{b.timezone}</p>
-                        <span className="badge">
-                          {b.initialized ? 'Saldos inicializados' : 'Apertura pendiente'}
-                        </span>
-                      </div>
-                      <button className="text-button" onClick={() => setPage('Caja general')}>
-                        Ver caja general <ArrowUpRight size={15} />
-                      </button>
-                    </Card>
                   </div>
                   <Card
                     title="Turnos del día"
