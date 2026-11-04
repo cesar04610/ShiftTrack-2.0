@@ -46,6 +46,7 @@ type Lookups = {
   commands: Map<string, any>;
   entries: Map<string, any>;
   matched: Map<string, string>;
+  shifts: Map<string, any>;
 };
 
 async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
@@ -90,10 +91,25 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
       ids.add(found.id);
     }
   }
+  // A closed supplier shift is found by the instant it closed, which is the time the command carries.
+  const shiftOf = new Map<string, string>();
+  for (const e of events) {
+    const at = e.payload?.occurred_at;
+    if (!e.action.startsWith('supplier.shift.c') && e.action !== 'supplier.shift.reconcile')
+      continue;
+    if (!at) continue;
+    const found = (
+      await db.query('SELECT id FROM supplier_shifts WHERE closed_at=$1 LIMIT 1', [at])
+    ).rows[0];
+    if (found) {
+      shiftOf.set(e.id, found.id);
+      ids.add(found.id);
+    }
+  }
   const list = [...ids];
   const named = async (sql: string) =>
     new Map<string, string>((await db.query(sql, [list])).rows.map((r) => [r.id, r.name]));
-  const [users, suppliers, tickets, tasks, shortages, cutRows] = await Promise.all([
+  const [users, suppliers, tickets, tasks, shortages, cutRows, shiftRows] = await Promise.all([
     named('SELECT id,name FROM users WHERE id=ANY($1::uuid[])'),
     named('SELECT id,company AS name FROM suppliers WHERE id=ANY($1::uuid[])'),
     db
@@ -117,7 +133,13 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
        FROM cuts c JOIN users u ON u.id=c.user_id WHERE c.id=ANY($1::uuid[])`,
       [list],
     ),
+    db.query(
+      `SELECT sh.id,u.name AS employee,sh.expected_cents::text,sh.counted_cents::text,sh.difference_cents::text
+       FROM supplier_shifts sh JOIN users u ON u.id=sh.actor_user_id WHERE sh.id=ANY($1::uuid[])`,
+      [list],
+    ),
   ]);
+  for (const [eventId, shiftId] of shiftOf) matched.set(eventId, shiftId);
   return {
     users,
     suppliers,
@@ -128,10 +150,11 @@ async function lookups(db: pg.PoolClient, events: any[]): Promise<Lookups> {
     commands,
     entries,
     matched,
+    shifts: new Map(shiftRows.rows.map((r) => [r.id, r])),
   };
 }
 
-function describe(e: any, k: Lookups): DetailLine[] {
+function describe(e: any, k: Lookups, zone: string): DetailLine[] {
   const raw = e.payload ?? {};
   const op = raw.operation_id;
   const p: Record<string, any> = {
@@ -149,7 +172,7 @@ function describe(e: any, k: Lookups): DetailLine[] {
   const supplier = (id: unknown) =>
     isId(id) ? (k.suppliers.get(id) ?? 'Proveedor eliminado') : id;
   const ticket = (id: unknown) => (isId(id) ? (k.tickets.get(id) ?? 'Ticket no disponible') : id);
-  const money_ = (label: string, v: unknown) => v !== undefined && add(label, amount(v));
+  const money_ = (label: string, v: unknown) => v != null && add(label, amount(v));
   const action: string = e.action;
   switch (action) {
     case 'supplier.create':
@@ -179,9 +202,14 @@ function describe(e: any, k: Lookups): DetailLine[] {
       add('Responsable', e.employee);
       break;
     case 'supplier.shift.close':
-    case 'supplier.shift.reconcile':
-      money_('Efectivo contado', p.counted_cents);
+    case 'supplier.shift.reconcile': {
+      const shift = k.shifts.get(p.id);
+      add('Responsable del turno', shift?.employee);
+      money_('Efectivo esperado', shift?.expected_cents);
+      money_('Efectivo contado', shift?.counted_cents ?? p.counted_cents);
+      money_('Diferencia', shift?.difference_cents);
       break;
+    }
     case 'supplier.correction':
       add('Ticket', ticket(p.ticket_id));
       add('Tipo', correctionKinds[p.type] ?? p.type);
@@ -276,6 +304,20 @@ function describe(e: any, k: Lookups): DetailLine[] {
       add('Caja', p.register_number);
       add('Usuario que la tenía', user(p.user_id));
       break;
+    case 'clock.in': {
+      const at = (v: string) =>
+        new Intl.DateTimeFormat('es-MX', {
+          timeZone: zone,
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        }).format(new Date(v));
+      add('Empleado', e.employee);
+      add('Rol', roles[e.clock.role] ?? e.clock.role);
+      add('Fecha del turno', day(e.clock.business_date));
+      add('Entrada (inicio de sesión)', at(e.received_at));
+      add('Salida', e.clock.clock_out ? at(e.clock.clock_out) : 'Sesión en curso');
+      break;
+    }
     case 'branch.deactivate':
       add('Sucursal', p.name);
       break;
@@ -288,8 +330,8 @@ function describe(e: any, k: Lookups): DetailLine[] {
 }
 
 // Turns raw audit rows into readable "label: value" lines so the report never shows ids or JSON.
-export async function auditDetails(db: pg.PoolClient, events: any[]) {
+export async function auditDetails(db: pg.PoolClient, events: any[], zone: string) {
   if (!events.length) return events;
   const found = await lookups(db, events);
-  return events.map((e) => ({ ...e, payload: undefined, detail: describe(e, found) }));
+  return events.map((e) => ({ ...e, payload: undefined, detail: describe(e, found, zone) }));
 }

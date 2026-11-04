@@ -169,7 +169,28 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
      FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
      WHERE ${day('a.received_at')} BETWEEN $1 AND $2 ORDER BY a.received_at DESC LIMIT 2000`,
   );
-  const audit = await auditDetails(db, auditRows);
+  // Signing in registers the employee's attendance, so each entry also shows up as an operation.
+  const entries = await rows(
+    `SELECT c.id,c.clock_in AS received_at,c.clock_out,c.business_date::text AS business_date,
+       c.user_id AS actor_user_id,u.name AS employee,u.role
+     FROM clock_records c JOIN users u ON u.id=c.user_id
+     WHERE ${day('c.clock_in')} BETWEEN $1 AND $2 ORDER BY c.clock_in DESC LIMIT 2000`,
+  );
+  const merged = [
+    ...auditRows,
+    ...entries.map((c) => ({
+      id: c.id,
+      action: 'clock.in',
+      received_at: c.received_at,
+      payload: {},
+      actor_user_id: c.actor_user_id,
+      employee: c.employee,
+      clock: { role: c.role, business_date: c.business_date, clock_out: c.clock_out },
+    })),
+  ]
+    .sort((a, b) => +new Date(b.received_at) - +new Date(a.received_at))
+    .slice(0, 2000);
+  const audit = await auditDetails(db, merged, zone);
 
   const live = tickets.filter((t) => !t.voided);
   const sum = (list: any[], key: string) => list.reduce((s, r) => s + BigInt(r[key] ?? 0), 0n);
