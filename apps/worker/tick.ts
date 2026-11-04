@@ -1,7 +1,7 @@
 import { pool, transaction, verifyRuntimeRole } from '../api/src/db.js';
 import { generateTasks } from '../api/src/modules.js';
 import { evaluateAlerts } from '../api/src/alerts.js';
-import { localTime } from '../../packages/domain/index.js';
+import { shiftBusinessDate } from '../../packages/domain/index.js';
 
 // Trabajo programado: genera tareas recurrentes y revisa las alertas de la tienda.
 export async function tick() {
@@ -10,7 +10,8 @@ export async function tick() {
   let generated = 0,
     alerts = 0;
   for (const branch of branches) {
-    const date = localTime(new Date(), branch.timezone).date;
+    // Tasks belong to the work day, which runs from 05:00 to 05:00.
+    const date = shiftBusinessDate(new Date(), branch.timezone);
     await transaction(branch.id, async (db) => {
       const current = (
         await db.query('SELECT active FROM branches WHERE id=$1 FOR SHARE', [branch.id])
