@@ -82,7 +82,7 @@ export async function evaluateAlerts(
   const today = localTime(now, zone).date;
   const records = (
     await db.query(
-      `SELECT c.*,u.name FROM clock_records c JOIN users u ON u.id=c.user_id
+      `SELECT c.*,u.name,u.role FROM clock_records c JOIN users u ON u.id=c.user_id
        WHERE c.clock_in>$1::timestamptz-make_interval(days=>$2) ORDER BY c.clock_in`,
       [now, LOOKBACK_DAYS],
     )
@@ -132,7 +132,8 @@ export async function evaluateAlerts(
         at: rec.clock_out,
         message: `${rec.name} salió antes de tiempo: ${end - leaving.minutes} min antes (salida ${hhmm(leaving.minutes)}, horario hasta ${hhmm(end)}).`,
       });
-    if (worked >= MIN_SHIFT_MINUTES_CUT) {
+    // Only employees make cuts; administrators may work without a register.
+    if (rec.role === 'employee' && worked >= MIN_SHIFT_MINUTES_CUT) {
       const shiftDate = shiftBusinessDate(rec.clock_in, zone),
         label = shiftLabel(rec.clock_in, zone);
       const hasCut = (
@@ -157,6 +158,8 @@ export async function evaluateAlerts(
       `SELECT s.*,u.name,((s.business_date+s.end_time) AT TIME ZONE $2) AS ended_at
        FROM schedules s JOIN users u ON u.id=s.user_id
        WHERE u.active AND u.deleted_at IS NULL
+         -- The owner has no branch at sign-in, so no attendance is recorded for them.
+         AND u.role<>'superadmin'
          AND s.business_date BETWEEN $1::date-$3::integer AND $1::date
          AND ((s.business_date+s.end_time) AT TIME ZONE $2)<$4::timestamptz
          AND NOT EXISTS(SELECT 1 FROM clock_records c WHERE c.user_id=s.user_id

@@ -1233,6 +1233,41 @@ test('alertas de la tienda: tarde, falta, salida anticipada, sin corte, tarea, c
   a.equal(all.filter((r) => r.kind === 'supplier_difference').length, 2);
   a.ok(all.find((r) => r.kind === 'cut_difference' && r.message.includes('faltante de $25.01')));
 });
+test('alertas: el dueño no genera falta y los administradores no generan "sin corte"', async () => {
+  const { evaluateAlerts } = await import('../apps/api/src/alerts.js');
+  const zone = 'America/Mazatlan';
+  const now = new Date('2026-09-09T23:00:00Z');
+  const day = '2026-09-09';
+  const insertUser = async (role: string, branchId: string | null) =>
+    (
+      await sql.query(
+        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [randomUUID(), `alerta-${randomUUID()}`, `Persona ${role}`, role, branchId],
+      )
+    ).rows[0];
+  const owner = await insertUser('superadmin', null),
+    manager = await insertUser('admin', branch),
+    worker = await insertUser('employee', branch);
+  for (const person of [owner, manager, worker])
+    await sql.query(
+      'INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,$5,$6)',
+      [branch, randomUUID(), person.id, day, '07:30', '15:00'],
+    );
+  // Both work a full morning on time and make no cut; only the employee is expected to.
+  for (const person of [manager, worker])
+    await sql.query(
+      'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in,clock_out) VALUES($1,$2,$3,$4,$5,$6)',
+      [branch, randomUUID(), person.id, day, '2026-09-09T14:30:00Z', '2026-09-09T22:00:00Z'],
+    );
+  await transaction(branch, (db) => evaluateAlerts(db, { id: branch, timezone: zone }, now));
+  const rows = (
+    await sql.query(
+      'SELECT kind,user_id FROM alert_log WHERE branch_id=$1 AND user_id=ANY($2::uuid[])',
+      [branch, [owner.id, manager.id, worker.id]],
+    )
+  ).rows;
+  a.deepEqual(rows, [{ kind: 'missing_cut', user_id: worker.id }]);
+});
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });
   await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [
