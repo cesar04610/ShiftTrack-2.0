@@ -741,6 +741,18 @@ app.post('/api/v1/users/:id/deactivate', async (req, res) => {
         'LAST_OWNER',
         'Debe quedar un dueño activo.',
       );
+    // Same rule as deleting: a deactivated person could never close their open supplier shift.
+    assert(
+      !(
+        await db.query(
+          'SELECT id FROM supplier_shifts WHERE actor_user_id=$1 AND closed_at IS NULL',
+          [id],
+        )
+      ).rowCount,
+      'OPEN_SHIFT',
+      'Cierra el turno de proveedores de esta persona antes de desactivarla.',
+      409,
+    );
     await db.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [id]);
     await db.query('DELETE FROM auth_sessions WHERE user_id=$1', [id]);
     await audit(db, branch.id, u, 'user.deactivate', { id });

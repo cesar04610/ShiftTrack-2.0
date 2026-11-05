@@ -1081,6 +1081,36 @@ test('administrador no crea otro administrador y último dueño queda protegido'
   const owner = (await call('/auth/me')).body;
   a.equal((await call(`/users/${owner.id}/deactivate`, { branch_id: branch })).status, 409);
 });
+test('desactivar a quien tiene el turno de proveedores abierto se rechaza hasta cerrarlo', async () => {
+  const own = randomUUID();
+  await sql.query('INSERT INTO branches(id,name) VALUES($1,$2)', [own, `Desactivar ${own}`]);
+  for (const role of ['employee', 'admin']) {
+    const person = (
+      await sql.query(
+        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [randomUUID(), `baja-${randomUUID()}`, `Baja ${role}`, role, own],
+      )
+    ).rows[0];
+    const shift = randomUUID();
+    await sql.query(
+      'INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,opening_cents) VALUES($1,$2,$3,current_date,now(),1000)',
+      [own, shift, person.id],
+    );
+    const refused = await call(`/users/${person.id}/deactivate`, { branch_id: own });
+    a.equal(refused.status, 409);
+    a.equal(refused.body.code, 'OPEN_SHIFT');
+    a.equal(
+      (await sql.query('SELECT active FROM users WHERE id=$1', [person.id])).rows[0].active,
+      true,
+    );
+    await sql.query('UPDATE supplier_shifts SET closed_at=now() WHERE id=$1', [shift]);
+    a.equal((await call(`/users/${person.id}/deactivate`, { branch_id: own })).status, 200);
+    a.equal(
+      (await sql.query('SELECT active FROM users WHERE id=$1', [person.id])).rows[0].active,
+      false,
+    );
+  }
+});
 test('otro equipo permite tareas y cortes, pero nunca proveedores en paralelo', async () => {
   const support = randomUUID();
   const body = {
