@@ -41,7 +41,7 @@ Exclusivamente con la base local de desarrollo: `cesar` (dueño), `admin` (admin
 2. En Caja general registra efectivo total, la parte incluida en proveedores y saldo bancario. La parte de proveedores no se suma otra vez al total.
 3. Cada empleado inicia sesión con conexión y selecciona su caja. El equipo y su acceso offline se preparan automáticamente, sin vencimiento por horas.
 4. El empleado abre su turno de proveedores. Registra pagos/adiciones, cuenta y cierra. Sale de su sesión; el entrante ingresa con sus credenciales y abre un turno vinculado al último cierre.
-5. Sin Internet se muestra guardado local pendiente. Al reconectar se envían comandos firmados con identificadores estables, incluyendo los de empleados anteriores. No hace falta renovar su concesión para enviar capturas válidas anteriores.
+5. Sin Internet las capturas quedan guardadas en el equipo. Al reconectar se envían comandos firmados con identificadores estables, incluyendo los de empleados anteriores. No hace falta renovar su concesión para enviar capturas válidas anteriores.
 
 Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el turno explícitamente antes del relevo. Si quedó un turno de otro día, se exige conteo de reconciliación antes de nuevos movimientos.
 
@@ -53,13 +53,13 @@ En **Caja proveedores**, los administradores y el dueño pueden usar **Importar 
 
 El acceso offline se prepara automáticamente para la caja seleccionada y no vence por tiempo. Sin conexión se permite la última caja preparada y se advierte que su ocupación no puede comprobarse. Tras un login offline, al reconectar se pueden enviar los pendientes; antes de nuevas capturas online se requiere volver a iniciar sesión para reservar la caja. Los cortes quedan vinculados a la caja firmada en la concesión.
 
-Eliminar una sucursal exige superadministrador y su contraseña actual. Se desactiva, revoca sesiones y equipos, detiene sus procesos y conserva usuarios, movimientos y fotografías. Un turno de proveedores abierto debe cerrarse primero. El dueño puede consultar el historial desde Configuración. Las capturas previas que lleguen después quedan para revisión.
+Eliminar una sucursal exige superadministrador y su contraseña actual. Se desactiva, revoca sesiones y equipos, detiene sus procesos y conserva usuarios y movimientos. Las fotografías están sujetas a la retención de 30 días. Un turno de proveedores abierto debe cerrarse primero. El dueño puede consultar el historial desde Configuración. Las capturas previas que lleguen después quedan para revisión.
 
 ## Empleados por sucursal
 
 El nombre de usuario es único dentro de cada sucursal. El mismo empleado puede tener una cuenta en Quates y otra en Madeira, con registros y permisos separados. Si sus credenciales coinciden en varias tiendas, el inicio de sesión pide elegir la sucursal. El acceso offline preparado se conserva por usuario y tienda.
 
-En Usuarios, **Eliminar empleado** pide confirmación, retira la cuenta de la lista, revoca sus sesiones y permite reutilizar su nombre en esa sucursal. Se conserva la fila original con `deleted_at` para mantener sus registros, fotografías y autoría en informes. Su cuenta en otras sucursales no cambia. **Desactivar** conserva la cuenta en la lista como inactiva. Un turno de proveedores abierto debe cerrarse antes de eliminar a su responsable.
+En Usuarios, **Eliminar empleado** pide confirmación, retira la cuenta de la lista, revoca sus sesiones y permite reutilizar su nombre en esa sucursal. Se conserva la fila original con `deleted_at` para mantener sus registros y autoría en informes; las fotografías están sujetas a la retención de 30 días. Su cuenta en otras sucursales no cambia. **Desactivar** conserva la cuenta en la lista como inactiva. Un turno de proveedores abierto debe cerrarse antes de eliminar a su responsable.
 
 ## Pruebas
 
@@ -90,15 +90,17 @@ Un conflicto conserva el comando y bloquea la continuación dependiente; nunca s
 
 ## Railway
 
-Despliegue y límites en [docs/railway.md](docs/railway.md). La imagen sirve la interfaz y la API juntas; usa PostgreSQL para identidad y datos, y un volumen privado para fotografías. No requiere Firebase ni claves de Google. Los documentos originales 02 y 03 conservan el diseño inicial como referencia; la elección posterior del propietario de usar Railway sin Firebase lo sustituye.
+Despliegue y límites en [docs/railway.md](docs/railway.md). La imagen sirve la interfaz y la API juntas; usa PostgreSQL para identidad y datos, y un volumen privado para fotografías. No requiere Firebase ni claves de Google. Consulta las reglas y la arquitectura en los documentos de `docs/`.
 
 El login emite un token aleatorio de 256 bits, con vencimiento fijo de 9 horas (la API lo aplica y la pantalla cierra la sesión al cumplirse), guardado por pestaña en `sessionStorage`; SQL solo conserva su hash. Cada petición revisa vencimiento, versión de credenciales y estado de la cuenta. El cierre online revoca esa sesión; cambiar contraseña revoca todas. El cierre sin Internet borra el acceso local, pero no puede contactar al servidor para revocar: el administrador puede liberar la caja pendiente desde Configuración. Las contraseñas usan Argon2. Solo servir la aplicación publicada con HTTPS.
 
 La migración 005 agrega sesiones sin cambiar usuarios ni datos financieros. No se borran IndexedDB, concesiones ni pendientes. Después de cambiar contraseña o desactivar cuenta, las capturas antiguas permanecen para revisión y no se aceptan automáticamente. Las rutas de fotos siempre comprueban usuario, tarea y sucursal.
 
+Las fotografías de evidencia se eliminan automáticamente después de 30 días desde su creación; sus registros se marcan como eliminados. Las fotografías pendientes en el dispositivo no forman parte de la descarga de pendientes.
+
 En producción se exige un volumen montado real; no se admiten fotografías en el disco efímero del contenedor. La imagen prepara la carpeta del volumen y luego ejecuta la API como usuario `node`. Configurar una sola réplica para ese volumen. Los respaldos del volumen y de SQL deben verificarse antes de operar dinero real.
 
-El correo requiere SMTP configurado en el servidor y habilitación por sucursal. Por defecto hay un intento automático; las entregas inciertas quedan para revisión. Los reintentos adicionales son configurables, sin promesa de entrega exactamente una vez. El inventario de API y el contrato de comandos están en `docs/openapi.json`; se regeneran con `npm run contracts`.
+Las alertas de la tienda se consultan en la aplicación; el worker actual no envía correos. El inventario de API y el contrato de comandos están en `docs/openapi.json`; se regeneran con `npm run contracts`.
 
 Mostrador 2.0 ofrece la operación diaria a empleados, administradores y súper administradores. Las cuentas administrativas pueden continuar sin caja o seleccionar una para registrar cortes; los pagos requieren la caja de proveedores. El menú de gestión conserva Usuarios, Horarios, Gestionar tareas, Reportes, Cortes, Caja general y Configuración; Alertas está reservado al súper administrador.
 

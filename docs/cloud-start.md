@@ -1,8 +1,6 @@
 # Inicio de este entorno de desarrollo
 
-> Actualización del 4 de octubre de 2026: las reglas actuales sustituyen las referencias históricas a ocho horas, reservas de dos minutos y equipo designado. Las sesiones, cajas y concesiones nuevas no vencen por tiempo. Al seleccionar caja online se prepara automáticamente un equipo de esa sucursal; proveedores depende de la caja configurada. La salida libera la caja y un administrador puede liberar una sesión abandonada con contraseña. El corte nuevo queda vinculado a la entrada real (05:00–antes de 15:00 mañana; 15:00–antes de 05:00 tarde), con fecha anterior para entradas antes de 05:00. No se solicita horario opcional. La migración 007 conserva el historial.
 
-> Actualización de noviembre de 2026: las sesiones en línea vencen a las 9 horas de iniciar sesión (constante `SESSION_HOURS`, aplicada por la API y por la pantalla, que cierra la sesión al cumplirse). Esto sustituye cualquier referencia anterior a sesiones sin vencimiento o de ocho horas. La reserva de caja y el acceso offline no vencen por tiempo.
 
 Usa `/workspace/ShiftTrack-2.0`; esta tarea cloud ya está aislada. No crear worktrees adicionales. Lee `README.md` y `docs/estado.md`. El entorno local validado no equivale a un despliegue Railway operativo ni a un piloto aceptado.
 
@@ -14,7 +12,7 @@ Dependencias y archivos permanecen en el sistema de archivos; PostgreSQL y servi
 4. Para la PWA, ejecuta `npm run build`, luego `npx vite preview --config apps/web/vite.config.ts --port 5174` en otro proceso. `build:local` mantiene compatibilidad con los helpers locales y ya no cambia la identidad. No enviar enlaces localhost al usuario.
 5. Verifica `npm test` (sesiones propias y PostgreSQL real), `bash scripts/ci-e2e.sh` (inicia API/preview solo durante la prueba), `npm run worker:tick` y `npm audit --omit=dev`. No iniciar el helper E2E si ya usas esos mismos puertos. Chromium del sistema o `CHROMIUM_PATH`; no se requiere Auth Emulator.
 
-Las cuentas públicas de ejemplo están en README y son solo locales. Las concesiones offline siguen durando ocho horas desde la preparación individual. No borrar pendientes ni restaurar saldos arbitrarios al ver un conflicto. No regenerar datos de ejemplo como sustituto de un respaldo.
+Las cuentas públicas de ejemplo están en README y son solo locales. Las concesiones offline nuevas no vencen por tiempo; las sesiones online vencen a las nueve horas. No borrar pendientes ni restaurar saldos arbitrarios al ver un conflicto. No regenerar datos de ejemplo como sustituto de un respaldo.
 
 Para Railway, la credencial `RAILWAY_PROJECT_TOKEN` se utiliza únicamente en HTTPS a `https://backboard.railway.com/graphql/v2`, cabecera `Project-Access-Token`, User-Agent `ShiftTrack-Codex/0.1`. Nunca imprimir su valor ni volcar variables/logs sensibles. El token de proyecto no concede permisos de facturación de la cuenta. Consultar primero el estado remoto y conservar el presupuesto del usuario. No confundir el commit en GitHub, una compilación y un despliegue saludable.
 

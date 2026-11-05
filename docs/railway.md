@@ -1,10 +1,8 @@
 # Railway sin Firebase
 
-> Actualización del 4 de octubre de 2026: las reglas actuales sustituyen las referencias históricas a ocho horas, reservas de dos minutos y equipo designado. Las sesiones, cajas y concesiones nuevas no vencen por tiempo. Al seleccionar caja online se prepara automáticamente un equipo de esa sucursal; proveedores depende de la caja configurada. La salida libera la caja y un administrador puede liberar una sesión abandonada con contraseña. El corte nuevo queda vinculado a la entrada real (05:00–antes de 15:00 mañana; 15:00–antes de 05:00 tarde), con fecha anterior para entradas antes de 05:00. No se solicita horario opcional. La migración 007 conserva el historial.
 
-> Actualización de noviembre de 2026: las sesiones en línea vencen a las 9 horas de iniciar sesión (constante `SESSION_HOURS`, aplicada por la API y por la pantalla, que cierra la sesión al cumplirse). Esto sustituye cualquier referencia anterior a sesiones sin vencimiento o de ocho horas. La reserva de caja y el acceso offline no vencen por tiempo.
 
-El usuario pidió alojar la aplicación en Railway y retirar Firebase. Los documentos originales 02/03 describen la arquitectura anterior y permanecen como referencia. No se requieren cuentas de servicio, claves de Google, Auth Emulator ni bucket GCS.
+La aplicación utiliza Railway y PostgreSQL.
 
 ## Proyecto y estado remoto verificado
 
@@ -50,7 +48,7 @@ El usuario indicó hasta 10 USD/mes para pruebas. Hobby tiene un mínimo de 5 US
 
 El propietario revisó y estableció el límite antes de crear recursos. Un hard limit detiene servicios al alcanzarlo y se aplica al workspace; confirmar qué otros proyectos afecta y cómo contempla los créditos incluidos y la cuota de Hobby. No prometer un total mensual exacto, ni confundir una alerta con un límite efectivo.
 
-Objetivo inicial: una réplica API, PostgreSQL pequeño y dos volúmenes, sin importar datos antiguos. Configurar límites de memoria/CPU y monitorear consumo. El correo permanece deshabilitado hasta tener SMTP y aprobación operativa; programar el worker por separado antes de aceptar el piloto completo.
+Objetivo inicial: una réplica API, PostgreSQL pequeño y dos volúmenes, sin importar datos antiguos. Configurar límites de memoria/CPU y monitorear consumo. El worker genera tareas y evalúa alertas; no envía correo.
 
 El servicio `ShiftTrack-Worker` usa la misma imagen con `node dist/apps/api/src/entrypoint.js dist/apps/worker/run.js`, cron `*/5 * * * *` y política de reinicio `NEVER`. Finaliza después de cada ejecución, usa el rol SQL restringido y no tiene dominio público, puerto HTTP ni SMTP. No crear un cron en cada réplica API.
 
@@ -73,3 +71,11 @@ La migración `008-users-per-branch.sql` agrega `users.deleted_at` y sustituye l
 La imagen incluye `dist/scripts/migrate.js`, que aplica solo las migraciones pendientes (idempotente, con bloqueo para evitar ejecuciones simultáneas). En Railway, servicio `ShiftTrack-2.0` → Settings → Deploy → **Pre-deploy Command**: `node dist/scripts/migrate.js`. Si una migración falla, el despliegue se detiene y la versión anterior sigue activa.
 
 Requiere en ese servicio la variable `MIGRATION_DATABASE_URL`, creada como **referencia** a la del PostgreSQL (`${{Postgres.DATABASE_URL}}`), nunca copiando el valor. Compromiso de seguridad: el servicio API recibe así una credencial con propiedad de tablas además de `DATABASE_URL` (rol restringido). Quitar la variable y el comando restablece la separación anterior. `scripts/provision.ts` sigue siendo el proceso para la primera preparación y el rol restringido.
+
+## Migraciones mediante provisión temporal
+
+Ejecutar la versión compilada `node dist/scripts/provision.js` desde un proceso administrativo temporal dentro de la red privada de Railway, con `NODE_ENV=production`, `MIGRATION_DATABASE_URL` del propietario de la base y `RUNTIME_DATABASE_URL` del rol `shifttrack_app` apuntando a la misma base. La contraseña del rol debe ser la existente en la URL de la aplicación. Si aún no existe un superadministrador, configurar `BOOTSTRAP_OWNER_PASSWORD` (12 a 256 caracteres) y, opcionalmente, `BOOTSTRAP_OWNER_USERNAME` y `BOOTSTRAP_OWNER_NAME`. No imprimir credenciales.
+
+El script verifica y aplica las migraciones pendientes en orden, configura el rol restringido y crea el dueño solo si no existe. Cada migración se confirma por separado: si una posterior falla, las anteriores ya confirmadas no se revierten automáticamente. No modificar migraciones ya aplicadas; el script verifica su huella. Comprobar el resultado y las columnas o permisos relevantes en producción y retirar después el proceso temporal y sus variables. No usar el seed local en producción.
+
+El pre-deploy opcional descrito arriba entrega una credencial propietaria al servicio de API; mantener esa exposición en cuenta al decidir si usarlo. Consultar el estado efectivo de Railway antes de afirmar que está configurado.
