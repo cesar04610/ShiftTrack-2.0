@@ -550,6 +550,7 @@ export default function App() {
     [deviceId, setDeviceId] = useState(''),
     [loginNotice, setLoginNotice] = useState(''),
     [sessionEnd, setSessionEnd] = useState<number | null>(null),
+    [openStaff, setOpenStaff] = useState<string | null>(null),
     [now, setNow] = useState(Date.now());
   const currentScope = useRef({ user: user?.id, branch: branchId }),
     refreshGeneration = useRef(0);
@@ -1255,17 +1256,59 @@ export default function App() {
                             const lease = (data.occupied_registers || []).find(
                               (x: any) => x.user_id === r.user_id,
                             );
+                            const staffTasks = data.tasks.filter(
+                              (t: any) =>
+                                t.user_id === r.user_id && t.due_date.slice(0, 10) === workDay,
+                            );
+                            const done = staffTasks.filter((t: any) => t.completed_at).length;
+                            const expanded = openStaff === r.id;
                             return (
-                              <li key={r.id}>
-                                <span className="live-dot" aria-hidden="true" />
-                                <strong>
-                                  {data.users.find((u: any) => u.id === r.user_id)?.name ||
-                                    r.user_id}
-                                </strong>
-                                <span className="badge">
-                                  {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
-                                </span>
-                                <small>activo desde las {clockHour(r.clock_in, b.timezone)}</small>
+                              <li key={r.id} className={expanded ? 'open' : ''}>
+                                <button
+                                  type="button"
+                                  className="staff-toggle"
+                                  aria-expanded={expanded}
+                                  onClick={() => setOpenStaff(expanded ? null : r.id)}
+                                >
+                                  <span className="live-dot" aria-hidden="true" />
+                                  <strong>
+                                    {data.users.find((u: any) => u.id === r.user_id)?.name ||
+                                      r.user_id}
+                                  </strong>
+                                  <span className="badge">
+                                    {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
+                                  </span>
+                                  <small>
+                                    activo desde las {clockHour(r.clock_in, b.timezone)}
+                                  </small>
+                                  <span className="staff-progress">
+                                    {staffTasks.length
+                                      ? `${done}/${staffTasks.length} tareas`
+                                      : 'Sin tareas'}
+                                  </span>
+                                </button>
+                                {expanded && (
+                                  <ul className="staff-tasks">
+                                    {staffTasks.length ? (
+                                      staffTasks.map((t: any) => (
+                                        <li key={t.id}>
+                                          <span>{t.title}</span>
+                                          {t.completed_at ? (
+                                            <span className="badge">
+                                              <Check size={14} />
+                                              Realizada · {clockHour(t.completed_at, b.timezone)}
+                                            </span>
+                                          ) : (
+                                            <span className="badge amber-badge">Pendiente</span>
+                                          )}
+                                          {t.note && <small>{t.note}</small>}
+                                        </li>
+                                      ))
+                                    ) : (
+                                      <li className="muted">No tiene tareas asignadas hoy.</li>
+                                    )}
+                                  </ul>
+                                )}
                               </li>
                             );
                           })}
