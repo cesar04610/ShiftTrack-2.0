@@ -45,6 +45,10 @@ Exclusivamente con la base local de desarrollo: `cesar` (dueño), `admin` (admin
 
 Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el turno explícitamente antes del relevo. Si quedó un turno de otro día, se exige conteo de reconciliación antes de nuevos movimientos.
 
+## Inicio de administración
+
+En **Inicio**, al tocar un empleado activo se ven sus tareas del día y cuáles realizó. El recuadro **Tareas pendientes** despliega todas las tareas del día con la persona asignada y su estado. El recuadro **Caja proveedores** abre **Actividad caja proveedores**: saldo inicial del día, cada turno con sus gastos, efectivo agregado y correcciones, y en cada cierre lo esperado, lo contado, la diferencia y con cuánto terminó. El snapshot de administradores incluye las adiciones de efectivo de los últimos 3 días para este detalle.
+
 ## Sucursales y cajas
 
 El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se comprueba cada 30 segundos, sin vencimiento automático. Cerrar sesión o cerrar la ventana la libera cuando el aviso llega al servidor. Si el navegador se cierra sin red o de forma abrupta, el mismo usuario puede recuperar su caja al volver a entrar desde ese equipo. Otra pestaña abierta no puede apropiarse de la caja. Si alguien dejó una sesión abierta, el administrador puede liberar la caja desde Configuración confirmando su contraseña. El menú de proveedores depende de seleccionar la caja de proveedores configurada.

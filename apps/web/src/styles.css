@@ -1515,6 +1515,49 @@ button.danger-outline:not(:disabled):hover {
   border: 1px solid var(--accent-line);
   border-radius: 10px;
 }
+.active-staff > li {
+  display: block;
+  padding: 0;
+}
+.staff-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.staff-progress {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.staff-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.active-staff .staff-tasks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+}
 .active-staff small {
   color: #475569;
 }
@@ -2046,4 +2089,12 @@ main > * {
     padding: 6px 8px;
     font-size: 13px;
   }
+}
+
+.stat.clickable {
+  cursor: pointer;
+}
+.stat.clickable:hover,
+.stat.clickable:focus-visible {
+  border-color: var(--accent-line);
 }

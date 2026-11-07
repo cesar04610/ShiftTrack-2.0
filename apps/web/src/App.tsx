@@ -550,6 +550,8 @@ export default function App() {
     [deviceId, setDeviceId] = useState(''),
     [loginNotice, setLoginNotice] = useState(''),
     [sessionEnd, setSessionEnd] = useState<number | null>(null),
+    [openStaff, setOpenStaff] = useState<string | null>(null),
+    [showTasks, setShowTasks] = useState(false),
     [now, setNow] = useState(Date.now());
   const currentScope = useRef({ user: user?.id, branch: branchId }),
     refreshGeneration = useRef(0);
@@ -837,6 +839,7 @@ export default function App() {
     'Gestionar tareas': 'Asigna tareas y revisa el trabajo del equipo.',
     Proveedores: 'Directorio y pagos de proveedores.',
     'Caja proveedores': 'Registra pagos y consulta los tickets de proveedores.',
+    'Actividad caja proveedores': 'Todos los movimientos de la caja de proveedores del día.',
     Cortes: 'Ventas, efectivo contado y diferencias.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
@@ -1229,6 +1232,7 @@ export default function App() {
                       value={money(b.balance_cents)}
                       foot={`Caja ${b.supplier_register} · ${b.active_shift ? 'Turno abierto' : 'Sin turno abierto'}`}
                       icon={<ShoppingBag />}
+                      onClick={() => setPage('Actividad caja proveedores')}
                     />
                     <Stat
                       title="Tareas pendientes"
@@ -1239,8 +1243,40 @@ export default function App() {
                       )}
                       foot="Del día de hoy, asignadas al equipo"
                       icon={<ClipboardCheck />}
+                      expanded={showTasks}
+                      onClick={() => setShowTasks((v) => !v)}
                     />
                   </div>
+                  {showTasks && (
+                    <Card
+                      title="Tareas del día"
+                      subtitle="Todas las tareas asignadas hoy, quién las tiene y su estado"
+                    >
+                      <Table
+                        headers={['Tarea', 'Asignada a', 'Estado']}
+                        empty="No hay tareas asignadas para hoy."
+                        rows={data.tasks
+                          .filter((t: any) => t.due_date.slice(0, 10) === workDay)
+                          .sort(
+                            (x: any, y: any) =>
+                              Number(!!x.completed_at) - Number(!!y.completed_at) ||
+                              x.title.localeCompare(y.title),
+                          )
+                          .map((t: any) => [
+                            t.title,
+                            data.users.find((u: any) => u.id === t.user_id)?.name || t.user_id,
+                            t.completed_at ? (
+                              <span className="badge">
+                                <Check size={14} />
+                                Completada · {clockHour(t.completed_at, b.timezone)}
+                              </span>
+                            ) : (
+                              <span className="badge amber-badge">Pendiente</span>
+                            ),
+                          ])}
+                      />
+                    </Card>
+                  )}
                   <Card
                     title="Turnos del día"
                     subtitle="Quién está activo ahora y el historial de entradas y salidas"
@@ -1255,17 +1291,59 @@ export default function App() {
                             const lease = (data.occupied_registers || []).find(
                               (x: any) => x.user_id === r.user_id,
                             );
+                            const staffTasks = data.tasks.filter(
+                              (t: any) =>
+                                t.user_id === r.user_id && t.due_date.slice(0, 10) === workDay,
+                            );
+                            const done = staffTasks.filter((t: any) => t.completed_at).length;
+                            const expanded = openStaff === r.id;
                             return (
-                              <li key={r.id}>
-                                <span className="live-dot" aria-hidden="true" />
-                                <strong>
-                                  {data.users.find((u: any) => u.id === r.user_id)?.name ||
-                                    r.user_id}
-                                </strong>
-                                <span className="badge">
-                                  {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
-                                </span>
-                                <small>activo desde las {clockHour(r.clock_in, b.timezone)}</small>
+                              <li key={r.id} className={expanded ? 'open' : ''}>
+                                <button
+                                  type="button"
+                                  className="staff-toggle"
+                                  aria-expanded={expanded}
+                                  onClick={() => setOpenStaff(expanded ? null : r.id)}
+                                >
+                                  <span className="live-dot" aria-hidden="true" />
+                                  <strong>
+                                    {data.users.find((u: any) => u.id === r.user_id)?.name ||
+                                      r.user_id}
+                                  </strong>
+                                  <span className="badge">
+                                    {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
+                                  </span>
+                                  <small>
+                                    activo desde las {clockHour(r.clock_in, b.timezone)}
+                                  </small>
+                                  <span className="staff-progress">
+                                    {staffTasks.length
+                                      ? `${done}/${staffTasks.length} tareas`
+                                      : 'Sin tareas'}
+                                  </span>
+                                </button>
+                                {expanded && (
+                                  <ul className="staff-tasks">
+                                    {staffTasks.length ? (
+                                      staffTasks.map((t: any) => (
+                                        <li key={t.id}>
+                                          <span>{t.title}</span>
+                                          {t.completed_at ? (
+                                            <span className="badge">
+                                              <Check size={14} />
+                                              Realizada · {clockHour(t.completed_at, b.timezone)}
+                                            </span>
+                                          ) : (
+                                            <span className="badge amber-badge">Pendiente</span>
+                                          )}
+                                          {t.note && <small>{t.note}</small>}
+                                        </li>
+                                      ))
+                                    ) : (
+                                      <li className="muted">No tiene tareas asignadas hoy.</li>
+                                    )}
+                                  </ul>
+                                )}
                               </li>
                             );
                           })}
@@ -1287,6 +1365,14 @@ export default function App() {
                     />
                   </Card>
                 </>
+              )}
+              {page === 'Actividad caja proveedores' && isAdmin && (
+                <SupplierDayActivity
+                  data={data}
+                  date={date}
+                  money={money}
+                  onBack={() => setPage('Inicio')}
+                />
               )}
               {page === 'Usuarios' && (
                 <>
@@ -2372,19 +2458,185 @@ export default function App() {
     </div>
   );
 }
+function SupplierDayActivity({
+  data,
+  date,
+  money,
+  onBack,
+}: {
+  data: any;
+  date: string;
+  money: (v: any) => string;
+  onBack: () => void;
+}) {
+  const zone = data.branch.timezone,
+    name = (id: string) => data.users.find((u: any) => u.id === id)?.name || id,
+    shifts = (data.shifts || [])
+      .filter((s: any) => s.business_date.slice(0, 10) === date)
+      .sort((x: any, y: any) => Date.parse(x.opened_at) - Date.parse(y.opened_at));
+  const tickets = data.tickets || [],
+    corrections = data.corrections || [],
+    adds = data.supplier_events || [];
+  const blocks = shifts.map((s: any) => {
+    const end = s.closed_at ? Date.parse(s.closed_at) : Infinity;
+    const rows: { at: number; label: string; note: string; delta: bigint; voided?: boolean }[] = [];
+    for (const t of tickets.filter((t: any) => t.shift_id === s.id)) {
+      const supplier =
+        data.suppliers.find((x: any) => x.id === t.supplier_id)?.company || 'Proveedor';
+      rows.push({
+        at: Date.parse(t.occurred_at),
+        label: `Gasto · ${supplier}`,
+        note: t.voided ? `Anulado: ${t.void_reason || ''}` : t.note,
+        delta: t.voided ? 0n : -BigInt(t.amount_cents),
+        voided: t.voided,
+      });
+      for (const c of corrections.filter((c: any) => c.ticket_id === t.id))
+        rows.push({
+          at: Date.parse(c.occurred_at),
+          label: `Corrección · ${supplier}`,
+          note: c.reason,
+          delta: BigInt(c.supplier_cash_effect_cents),
+        });
+    }
+    for (const e of adds.filter(
+      (e: any) =>
+        e.actor_user_id === s.actor_user_id &&
+        Date.parse(e.occurred_at) >= Date.parse(s.opened_at) &&
+        Date.parse(e.occurred_at) <= end,
+    ))
+      rows.push({
+        at: Date.parse(e.occurred_at),
+        label: 'Efectivo agregado a la caja',
+        note: e.payload?.note || '',
+        delta: BigInt(e.amount_cents || 0),
+      });
+    rows.sort((a, b) => a.at - b.at);
+    let running = BigInt(s.opening_cents);
+    return {
+      s,
+      rows: rows.map((r) => ({ ...r, balance: (running += r.delta) })),
+      spent: rows.reduce((t, r) => (r.delta < 0n ? t - r.delta : t), 0n),
+    };
+  });
+  const totalSpent = blocks.reduce((t: bigint, x: any) => t + x.spent, 0n),
+    last = shifts[shifts.length - 1];
+  return (
+    <>
+      <button className="text-button" onClick={onBack}>
+        ← Volver a Inicio
+      </button>
+      {shifts.length ? (
+        <>
+          <div className="stats">
+            <Stat
+              title="Saldo inicial del día"
+              value={money(shifts[0].opening_cents)}
+              foot={`Recibido por ${name(shifts[0].actor_user_id)}`}
+              icon={<Wallet />}
+            />
+            <Stat
+              title="Gastos del día"
+              value={money(totalSpent)}
+              foot="Pagos a proveedores sin anular"
+              icon={<Receipt />}
+            />
+            <Stat
+              title={last.closed_at ? 'Terminó con' : 'Saldo actual'}
+              value={money(last.closed_at ? last.counted_cents : data.branch.balance_cents)}
+              foot={last.closed_at ? 'Último conteo del día' : 'Turno abierto'}
+              icon={<ShoppingBag />}
+            />
+          </div>
+          {blocks.map(({ s, rows }: any, i: number) => (
+            <Card
+              key={s.id}
+              title={`Turno ${i + 1} · ${name(s.actor_user_id)}`}
+              subtitle={`${clockHour(s.opened_at, zone)} – ${s.closed_at ? clockHour(s.closed_at, zone) : 'en curso'}`}
+            >
+              <Table
+                headers={['Hora', 'Movimiento', 'Monto', 'Saldo']}
+                rows={[
+                  [
+                    clockHour(s.opened_at, zone),
+                    i === 0
+                      ? 'Saldo inicial del día'
+                      : `Recibió la caja (conteo de ${name(blocks[i - 1].s.actor_user_id)})`,
+                    '',
+                    money(s.opening_cents),
+                  ],
+                  ...rows.map((r: any) => [
+                    clockHour(new Date(r.at).toISOString(), zone),
+                    <span key={r.at}>
+                      {r.label}
+                      {r.note && <small className="muted"> · {r.note}</small>}
+                    </span>,
+                    r.voided
+                      ? 'Anulado'
+                      : `${r.delta < 0n ? '−' : '+'}${money(r.delta < 0n ? -r.delta : r.delta)}`,
+                    money(r.balance),
+                  ]),
+                  ...(s.closed_at
+                    ? [
+                        [
+                          clockHour(s.closed_at, zone),
+                          <strong key="c">Cierre de caja</strong>,
+                          '',
+                          <span key="b">Esperado {money(s.expected_cents)}</span>,
+                        ],
+                        [
+                          '',
+                          `Contó ${name(s.actor_user_id)}`,
+                          `Diferencia ${BigInt(s.difference_cents) > 0n ? '+' : ''}${money(s.difference_cents)}`,
+                          <strong key="t">Terminó con {money(s.counted_cents)}</strong>,
+                        ],
+                      ]
+                    : []),
+                ]}
+              />
+            </Card>
+          ))}
+        </>
+      ) : (
+        <Card title="Sin actividad">
+          <p>La caja de proveedores no ha tenido turnos hoy.</p>
+        </Card>
+      )}
+    </>
+  );
+}
 function Stat({
   title,
   value,
   foot,
   icon,
+  onClick,
+  expanded,
 }: {
   title: string;
   value: string;
   foot: string;
   icon: ReactNode;
+  onClick?: () => void;
+  expanded?: boolean;
 }) {
   return (
-    <div className="stat">
+    <div
+      className={onClick ? 'stat clickable' : 'stat'}
+      {...(onClick
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            'aria-expanded': expanded,
+            onClick,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            },
+          }
+        : {})}
+    >
       <div className="stat-top">
         <span>{title}</span>
         <i>{icon}</i>
