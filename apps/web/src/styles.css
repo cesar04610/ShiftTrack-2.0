@@ -2090,3 +2090,11 @@ main > * {
     font-size: 13px;
   }
 }
+
+.stat.clickable {
+  cursor: pointer;
+}
+.stat.clickable:hover,
+.stat.clickable:focus-visible {
+  border-color: var(--accent-line);
+}

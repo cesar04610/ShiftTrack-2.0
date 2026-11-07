@@ -657,6 +657,12 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.catalog = await select('task_catalog');
         result.assignments = await select('task_assignments');
         result.corrections = await select('supplier_corrections');
+        // Recent register movements (balance additions) for the supplier-register day detail.
+        result.supplier_events = (
+          await db.query(
+            "SELECT * FROM supplier_events WHERE type='supplier.balance.add' AND occurred_at > now() - interval '3 days' ORDER BY occurred_at",
+          )
+        ).rows;
         result.categories = await select('expense_categories');
         // Who is working right now and at which register, for the dashboard.
         result.occupied_registers = (
