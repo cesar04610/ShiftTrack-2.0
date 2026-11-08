@@ -35,7 +35,7 @@ try {
     await db.query('GRANT USAGE ON SCHEMA public TO shifttrack_app');
     await db.query('GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO shifttrack_app');
     await db.query(
-      'GRANT DELETE ON device_challenges,device_sessions,auth_sessions,schedules TO shifttrack_app',
+      'GRANT DELETE ON device_challenges,device_sessions,auth_sessions,register_leases,schedules TO shifttrack_app',
     );
   }
   const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
