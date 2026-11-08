@@ -6,7 +6,8 @@ export const mediaDir = resolve(
   process.env.MEDIA_LOCAL_DIR ||
     (process.env.NODE_ENV === 'production'
       ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.MEDIA_VOLUME_ROOT || '/data'}/media`
-      : '/workspace/.shifttrack-media'),
+      : // Development and tests: a folder inside the repository, ignored by git.
+        '.shifttrack-media'),
 );
 
 // Rechazar el disco efímero del contenedor en producción, incluso si hay una ruta configurada.
