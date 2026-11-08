@@ -18,6 +18,8 @@ RUN npx tsc -p apps/api/tsconfig.json
 RUN npm prune --omit=dev
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production
+# Las fechas sin hora de PostgreSQL se leen a medianoche local y se pasan a texto en UTC.
+ENV TZ=UTC
 WORKDIR /app
 COPY --chown=node:node --from=build /app/node_modules node_modules
 COPY --chown=node:node --from=build /app/dist dist

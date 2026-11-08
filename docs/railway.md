@@ -1,7 +1,5 @@
 # Railway sin Firebase
 
-
-
 La aplicación utiliza Railway y PostgreSQL.
 
 ## Proyecto y estado remoto verificado
@@ -19,14 +17,15 @@ Railway tiene configurado `dockerfilePath=infra/Dockerfile` mediante su API. Los
 
 Variables runtime:
 
-| Variable                    | Configuración                                                       |
-| --------------------------- | ------------------------------------------------------------------- |
-| `NODE_ENV`                  | `production` (ya en la imagen)                                      |
-| `DATABASE_URL`              | Secreto con el rol `shifttrack_app`, nunca el propietario de tablas |
-| `RAILWAY_VOLUME_MOUNT_PATH` | `/data`, proporcionado por Railway al adjuntar el volumen           |
-| `MEDIA_VOLUME_ROOT`         | `/data` si se usa un proveedor que no inyecta la variable anterior  |
-| `MEDIA_LOCAL_DIR`           | Opcional; por defecto `<volumen>/media`                             |
-| `WEB_DIST_DIR`              | `/app/apps/web/dist` (ya en la imagen)                              |
+| Variable                    | Configuración                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                  | `production` (ya en la imagen)                                                                                         |
+| `DATABASE_URL`              | Secreto con el rol `shifttrack_app`, nunca el propietario de tablas                                                    |
+| `RAILWAY_VOLUME_MOUNT_PATH` | `/data`, proporcionado por Railway al adjuntar el volumen                                                              |
+| `MEDIA_VOLUME_ROOT`         | `/data` si se usa un proveedor que no inyecta la variable anterior                                                     |
+| `MEDIA_LOCAL_DIR`           | Opcional; por defecto `<volumen>/media`                                                                                |
+| `WEB_DIST_DIR`              | `/app/apps/web/dist` (ya en la imagen)                                                                                 |
+| `TZ`                        | `UTC` (ya en la imagen). No cambiarla: con una zona adelantada a UTC las fechas de turnos y alertas se recorren un día |
 
 Crear un volumen para PostgreSQL y otro para fotografías, ambos en la misma región que el servicio. Mantener una sola réplica API. La API comprueba un montaje real en Linux antes de aceptar escritura en producción. El entrypoint prepara su carpeta y cambia a UID/GID 1000; la API no ejecuta como root. Los archivos usan permisos privados y la lectura comprueba tarea, empleado y sucursal.
 

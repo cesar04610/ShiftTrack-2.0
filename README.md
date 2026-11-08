@@ -31,6 +31,8 @@ npx vite preview --config apps/web/vite.config.ts --port 5174
 
 Vite en desarrollo no comprueba la apertura offline; las pruebas de navegador usan la compilación con service worker. Los procesos deben volver a iniciarse después de restaurar el entorno. La base local de Docker se conserva mientras exista su volumen; no es un respaldo de producción.
 
+La API y las pruebas suponen un reloj del sistema en UTC o al oeste de UTC (como México); en una computadora con zona adelantada (Europa, Asia) ejecútalas con `TZ=UTC`, o las fechas de turnos y alertas se recorren un día. La imagen de producción ya fija `TZ=UTC`.
+
 `.npmrc` coloca la caché de npm en `/tmp`. No se necesita Firebase, Java ni un emulador de autenticación.
 
 ## Cuentas de ejemplo
