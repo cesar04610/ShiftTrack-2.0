@@ -839,6 +839,7 @@ export default function App() {
     'Gestionar tareas': 'Asigna tareas y revisa el trabajo del equipo.',
     Proveedores: 'Directorio y pagos de proveedores.',
     'Caja proveedores': 'Registra pagos y consulta los tickets de proveedores.',
+    'Movimientos bancarios': 'Entradas y salidas del saldo bancario por periodo.',
     'Actividad caja proveedores': 'Todos los movimientos de la caja de proveedores del día.',
     Cortes: 'Ventas, efectivo contado y diferencias.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
@@ -1226,6 +1227,7 @@ export default function App() {
                       value={money(bank)}
                       foot="Tarjeta y movimientos de banco"
                       icon={<Receipt />}
+                      onClick={() => setPage('Movimientos bancarios')}
                     />
                     <Stat
                       title="Caja proveedores"
@@ -1365,6 +1367,14 @@ export default function App() {
                     />
                   </Card>
                 </>
+              )}
+              {page === 'Movimientos bancarios' && isAdmin && (
+                <BankActivity
+                  data={data}
+                  today={date}
+                  money={money}
+                  onBack={() => setPage('Inicio')}
+                />
               )}
               {page === 'Actividad caja proveedores' && isAdmin && (
                 <SupplierDayActivity
@@ -2456,6 +2466,148 @@ export default function App() {
         </main>
       </div>
     </div>
+  );
+}
+const bankKinds: Record<string, string> = {
+  opening: 'Apertura',
+  cut: 'Corte de ventas (tarjeta)',
+  expense: 'Gasto extraordinario',
+  bank_withdrawal: 'Retiro de banco a efectivo',
+  bank_adjustment: 'Ajuste de banco',
+  cash_adjustment: 'Ajuste de efectivo',
+};
+function shiftDate(day: string, delta: number) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+function BankActivity({
+  data,
+  today,
+  money,
+  onBack,
+}: {
+  data: any;
+  today: string;
+  money: (v: any) => string;
+  onBack: () => void;
+}) {
+  const [from, setFrom] = useState(''),
+    [to, setTo] = useState('');
+  const zone = data.branch.timezone,
+    start = from || shiftDate(to && to < today ? to : today, -29),
+    end = to || today,
+    invalid = start > end;
+  // Running bank balance after each entry, over the full history.
+  let running = 0n;
+  const all = (data.treasury || [])
+    .filter((t: any) => BigInt(t.bank_cents) !== 0n)
+    .sort((x: any, y: any) => Date.parse(x.occurred_at) - Date.parse(y.occurred_at))
+    .map((t: any) => ({
+      ...t,
+      day: localTime(t.occurred_at, zone).date,
+      balance: (running += BigInt(t.bank_cents)),
+    }));
+  const shown = invalid ? [] : all.filter((t: any) => t.day >= start && t.day <= end).reverse();
+  const incoming = shown.reduce(
+      (n: bigint, t: any) => (BigInt(t.bank_cents) > 0n ? n + BigInt(t.bank_cents) : n),
+      0n,
+    ),
+    outgoing = shown.reduce(
+      (n: bigint, t: any) => (BigInt(t.bank_cents) < 0n ? n - BigInt(t.bank_cents) : n),
+      0n,
+    );
+  return (
+    <>
+      <button className="text-button" onClick={onBack}>
+        ← Volver a Inicio
+      </button>
+      <Card
+        title="Periodo"
+        subtitle={
+          from || to
+            ? 'Rango seleccionado'
+            : 'Sin rango seleccionado: se muestran los últimos 30 días'
+        }
+      >
+        <div className="cuts-range">
+          <label>
+            Desde
+            <input
+              type="date"
+              value={from}
+              max={to || today}
+              onChange={(e) => setFrom(e.target.value)}
+            />
+          </label>
+          <label>
+            Hasta
+            <input
+              type="date"
+              value={to}
+              max={today}
+              min={from || undefined}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </label>
+          <button
+            className="secondary"
+            disabled={!from && !to}
+            onClick={() => {
+              setFrom('');
+              setTo('');
+            }}
+          >
+            Últimos 30 días
+          </button>
+        </div>
+        <p className="muted">
+          Mostrando del {start} al {end}.
+        </p>
+        {invalid && <p className="error">La fecha inicial no puede ser posterior a la final.</p>}
+      </Card>
+      <div className="stats">
+        <Stat
+          title="Saldo bancario actual"
+          value={money(running)}
+          foot="Al día de hoy"
+          icon={<Receipt />}
+        />
+        <Stat
+          title="Entradas del periodo"
+          value={money(incoming)}
+          foot="Dinero que entró al banco"
+          icon={<Wallet />}
+        />
+        <Stat
+          title="Salidas del periodo"
+          value={money(outgoing)}
+          foot="Dinero que salió del banco"
+          icon={<ShoppingBag />}
+        />
+      </div>
+      <Card title="Movimientos de saldo bancario">
+        <Table
+          headers={['Fecha', 'Movimiento', 'Monto / saldo']}
+          empty="No hay movimientos bancarios en este periodo."
+          rows={shown.map((t: any) => [
+            time(t.occurred_at, zone),
+            <span key={t.id}>
+              <strong>{bankKinds[t.kind] || t.kind}</strong>
+              {t.note && <small className="muted"> · {t.note}</small>}
+            </span>,
+            <span key={`${t.id}-m`}>
+              <strong>
+                {BigInt(t.bank_cents) > 0n ? '+' : '−'}
+                {money(BigInt(t.bank_cents) > 0n ? t.bank_cents : -BigInt(t.bank_cents))}
+              </strong>
+              <br />
+              <small className="muted">Saldo {money(t.balance)}</small>
+            </span>,
+          ])}
+        />
+      </Card>
+    </>
   );
 }
 function SupplierDayActivity({

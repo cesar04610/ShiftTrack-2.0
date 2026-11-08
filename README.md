@@ -47,7 +47,7 @@ Cerrar sesión no cierra automáticamente la caja ni borra pendientes. Cierra el
 
 ## Inicio de administración
 
-En **Inicio**, al tocar un empleado activo se ven sus tareas del día y cuáles realizó. El recuadro **Tareas pendientes** despliega todas las tareas del día con la persona asignada y su estado. El recuadro **Caja proveedores** abre **Actividad caja proveedores**: saldo inicial del día, cada turno con sus gastos, efectivo agregado y correcciones, y en cada cierre lo esperado, lo contado, la diferencia y con cuánto terminó. El snapshot de administradores incluye las adiciones de efectivo de los últimos 3 días para este detalle.
+En **Inicio**, al tocar un empleado activo se ven sus tareas del día y cuáles realizó. El recuadro **Tareas pendientes** despliega todas las tareas del día con la persona asignada y su estado. El recuadro **Caja proveedores** abre **Actividad caja proveedores**: saldo inicial del día, cada turno con sus gastos, efectivo agregado y correcciones, y en cada cierre lo esperado, lo contado, la diferencia y con cuánto terminó. El recuadro **Saldo bancario** abre **Movimientos bancarios**: entradas y salidas del banco con su saldo corrido. Sin rango seleccionado muestra los últimos 30 días; arriba se puede elegir Desde y Hasta, y el botón "Últimos 30 días" restablece la vista. Los días se cuentan en la zona horaria de la sucursal. El snapshot de administradores incluye las adiciones de efectivo de los últimos 3 días para este detalle.
 
 ## Sucursales y cajas
 
