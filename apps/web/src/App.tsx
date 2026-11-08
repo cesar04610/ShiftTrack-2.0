@@ -1221,6 +1221,7 @@ export default function App() {
                       value={money(cash)}
                       foot="Contado de ventas y movimientos"
                       icon={<Wallet />}
+                      onClick={() => setPage('Caja general')}
                     />
                     <Stat
                       title="Saldo bancario"
