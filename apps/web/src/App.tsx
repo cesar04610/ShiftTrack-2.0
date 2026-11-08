@@ -315,6 +315,7 @@ function AlertsPanel({ alerts, zone }: { alerts: any[]; zone: string }) {
 }
 function CutsPanel({
   cuts,
+  since,
   users,
   today,
   zone,
@@ -322,6 +323,7 @@ function CutsPanel({
   onManual,
 }: {
   cuts: any[];
+  since?: string;
   users: any[];
   today: string;
   zone: string;
@@ -411,11 +413,23 @@ function CutsPanel({
       <div className="cuts-range">
         <label>
           Desde
-          <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            type="date"
+            value={from}
+            min={since}
+            max={today}
+            onChange={(e) => setFrom(e.target.value)}
+          />
         </label>
         <label>
           Hasta
-          <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} />
+          <input
+            type="date"
+            value={to}
+            min={since}
+            max={today}
+            onChange={(e) => setTo(e.target.value)}
+          />
         </label>
         <button
           className="secondary"
@@ -428,6 +442,9 @@ function CutsPanel({
           Ver solo ayer
         </button>
       </div>
+      <p className="muted">
+        Aquí se ven los cortes de los últimos 15 días. Los anteriores están en Reportes › Auditoría.
+      </p>
       {(from || to) && !ranged && (
         <p className="muted">
           Elige las dos fechas para ver el rango. Mientras tanto se muestra ayer.
@@ -817,9 +834,15 @@ export default function App() {
   const b = data?.branch,
     deviceReady = prepared && registerNumber === b?.supplier_register,
     canCapture = prepared && registerNumber != null;
+  // The balance comes from the server's totals: the list below only carries recent movements.
   const treasury = data?.treasury || [],
-    cash = treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
-    bank = treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
+    cash = data?.treasury_totals
+      ? BigInt(data.treasury_totals.cash_cents)
+      : treasury.reduce((s: bigint, t: any) => s + BigInt(t.cash_cents), 0n),
+    bank = data?.treasury_totals
+      ? BigInt(data.treasury_totals.bank_cents)
+      : treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
+  const recentHint = 'Últimos 15 días. Lo anterior está en Reportes › Auditoría.';
   const date = b ? localTime(new Date(), b.timezone).date : new Date().toISOString().slice(0, 10);
   // Tasks follow the work day (05:00 to 05:00): an afternoon shift past midnight still sees its own.
   const workDay = b ? shiftBusinessDate(new Date(now), b.timezone) : date;
@@ -1414,6 +1437,7 @@ export default function App() {
                       key={branchId}
                       users={data.users}
                       schedules={data.schedules}
+                      since={data.history_since}
                       date={date}
                       online={online}
                       onSave={(v) => mutate('/schedules/board', v)}
@@ -1934,7 +1958,10 @@ export default function App() {
                       />
                     </Card>
                   </div>
-                  <Card title="Cierres y diferencias">
+                  <Card
+                    title="Cierres y diferencias"
+                    subtitle="Últimos 15 días. Lo anterior está en Reportes › Gastos y proveedores."
+                  >
                     <Table
                       headers={['Fecha', 'Esperado', 'Contado', 'Diferencia']}
                       rows={(data.shifts || [])
@@ -1988,6 +2015,7 @@ export default function App() {
               {page === 'Cortes' && (
                 <CutsPanel
                   cuts={data.cuts}
+                  since={data.history_since}
                   users={data.users}
                   today={date}
                   zone={b.timezone}
@@ -2046,7 +2074,7 @@ export default function App() {
                       />
                     </Card>
                   )}
-                  <Card title="Cortes registrados">
+                  <Card title="Cortes registrados" subtitle={recentHint}>
                     <Table
                       headers={[
                         'Fecha',
@@ -2151,7 +2179,7 @@ export default function App() {
                       </Card>
                     </>
                   )}
-                  <Card title="Historial de caja general">
+                  <Card title="Historial de caja general" subtitle={recentHint}>
                     <Table
                       headers={['Fecha', 'Concepto', 'Efectivo', 'Banco']}
                       rows={[...treasury]

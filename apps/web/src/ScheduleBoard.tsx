@@ -49,6 +49,7 @@ const halfOf = (s: Schedule) =>
 export default function ScheduleBoard({
   users,
   schedules,
+  since,
   date,
   online,
   onSave,
@@ -56,6 +57,8 @@ export default function ScheduleBoard({
 }: {
   users: Person[];
   schedules: Schedule[];
+  // First business date the screen has schedules for; earlier weeks are only in Reportes.
+  since?: string;
   date: string;
   online: boolean;
   onSave: (values: {
@@ -292,6 +295,12 @@ export default function ScheduleBoard({
       </p>
       {!online && (
         <div className="notice">Conecta a Internet para guardar cambios en los horarios.</div>
+      )}
+      {since && week < since && (
+        <div className="notice">
+          La pizarra solo muestra horarios desde hace 15 días: esta semana puede verse incompleta.
+          La asistencia de semanas anteriores está en Reportes › Personal.
+        </div>
       )}
       {error && !editing && (
         <div className="error" role="alert">

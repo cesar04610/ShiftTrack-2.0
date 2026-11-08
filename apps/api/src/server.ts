@@ -605,29 +605,47 @@ app.post('/api/v1/sync/push', async (req, res) => {
   }
   res.json({ results });
 });
+// Days of history sent with each refresh of the screen and kept on the device for offline work.
+export const SNAPSHOT_DAYS = 15;
 app.get('/api/v1/snapshot', async (req, res) => {
   const user = await identity(req.headers.authorization),
     b = await context(user, req.query.branch_id as string, true);
   res.json(
     await transaction(b.id, async (db) => {
-      const select = async (table: string, own = false) =>
-        (
+      // Only recent history travels with every refresh; older records stay in Reportes.
+      const sinceAt = new Date(Date.now() - SNAPSHOT_DAYS * 86_400_000).toISOString();
+      const sinceDate = new Date(
+        Date.parse(`${shiftBusinessDate(new Date(), b.timezone)}T00:00:00Z`) -
+          SNAPSHOT_DAYS * 86_400_000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      const select = async (table: string, own = false, where = '', values: unknown[] = []) => {
+        const conditions = where ? [`(${where})`] : [];
+        const params = [...values];
+        if (own && user.role === 'employee') {
+          params.push(user.id);
+          conditions.push(`user_id=$${params.length}`);
+        }
+        return (
           await db.query(
-            `SELECT * FROM ${table} ${own && user.role === 'employee' ? 'WHERE user_id=$1' : ''} ORDER BY id`,
-            own && user.role === 'employee' ? [user.id] : [],
+            `SELECT * FROM ${table}${conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''} ORDER BY id`,
+            params,
           )
         ).rows;
+      };
       const active = b.active_shift
         ? (await db.query('SELECT * FROM supplier_shifts WHERE id=$1', [b.active_shift])).rows[0]
         : null;
       const result: any = {
+        history_since: sinceDate,
         branch: { ...b, active_shift: active },
         suppliers: await select('suppliers'),
-        tasks: await select('tasks', true),
-        schedules: await select('schedules', true),
-        clock: await select('clock_records', true),
-        cuts: await select('cuts', true),
-        shortages: await select('shortages'),
+        tasks: await select('tasks', true, 'due_date>=$1::date', [sinceDate]),
+        schedules: await select('schedules', true, 'business_date>=$1::date', [sinceDate]),
+        clock: await select('clock_records', true, 'clock_out IS NULL OR clock_in>=$1', [sinceAt]),
+        cuts: await select('cuts', true, 'business_date>=$1::date', [sinceDate]),
+        shortages: await select('shortages', false, 'NOT resolved OR occurred_at>=$1', [sinceAt]),
       };
       const selected =
         user.role === 'employee'
@@ -642,8 +660,20 @@ app.get('/api/v1/snapshot', async (req, res) => {
         selected === b.supplier_register ||
         (selected == null && b.device_id === req.query.device_id)
       ) {
-        result.tickets = await select('tickets');
-        result.shifts = await select('supplier_shifts');
+        // The open shift and the last close always travel, whatever their age, for the relay.
+        const current = [b.active_shift, b.last_closed_shift].filter(Boolean);
+        result.tickets = await select(
+          'tickets',
+          false,
+          'occurred_at>=$1 OR shift_id=ANY($2::uuid[])',
+          [sinceAt, current],
+        );
+        result.shifts = await select(
+          'supplier_shifts',
+          false,
+          'opened_at>=$1 OR closed_at IS NULL OR id=ANY($2::uuid[])',
+          [sinceAt, current],
+        );
       }
       if (user.role !== 'employee') {
         result.users = (
@@ -652,11 +682,19 @@ app.get('/api/v1/snapshot', async (req, res) => {
             [b.id, 'superadmin'],
           )
         ).rows;
-        result.treasury = await select('treasury_entries');
-        result.audit = await select('audit_events');
+        result.treasury = await select('treasury_entries', false, 'occurred_at>=$1', [sinceAt]);
+        // The general cash balance covers every movement, not only the recent ones sent above.
+        result.treasury_totals = (
+          await db.query(
+            'SELECT coalesce(sum(cash_cents),0)::text AS cash_cents,coalesce(sum(bank_cents),0)::text AS bank_cents FROM treasury_entries',
+          )
+        ).rows[0];
+        result.audit = await select('audit_events', false, 'received_at>=$1', [sinceAt]);
         result.catalog = await select('task_catalog');
         result.assignments = await select('task_assignments');
-        result.corrections = await select('supplier_corrections');
+        result.corrections = await select('supplier_corrections', false, 'occurred_at>=$1', [
+          sinceAt,
+        ]);
         result.categories = await select('expense_categories');
         // Who is working right now and at which register, for the dashboard.
         result.occupied_registers = (

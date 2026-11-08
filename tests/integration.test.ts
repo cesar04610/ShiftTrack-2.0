@@ -1430,6 +1430,137 @@ test('alertas: en doble turno, quien ya estaba trabajando no llega tarde al segu
   ).rows;
   a.deepEqual(rows, [{ kind: 'late', user_id: late.id }]);
 });
+test('el snapshot solo envía 15 días de historia y el saldo de caja general incluye todo', async () => {
+  const own = randomUUID();
+  await sql.query('INSERT INTO branches(id,name) VALUES($1,$2)', [own, `Historia ${own}`]);
+  const owner = (await call('/auth/me')).body;
+  const worker = (
+    await sql.query(
+      "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Historia','employee',$3) RETURNING *",
+      [randomUUID(), `historia-${randomUUID()}`, own],
+    )
+  ).rows[0];
+  const ids = () => ({ old: randomUUID(), recent: randomUUID() });
+  const treasury = ids(),
+    audit = ids(),
+    cut = ids(),
+    schedule = ids(),
+    task = ids(),
+    ticket = ids(),
+    shift = ids();
+  const supplier = randomUUID(),
+    openOldShift = randomUUID(),
+    openOldTicket = randomUUID(),
+    oldOpenShortage = randomUUID(),
+    oldResolvedShortage = randomUUID();
+  const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+  const dayAgo = (days: number) => ago(days).slice(0, 10);
+  for (const [id, at, cash, bank] of [
+    [treasury.old, ago(30), '100000', '5000'],
+    [treasury.recent, ago(2), '2500', '700'],
+  ])
+    await sql.query(
+      "INSERT INTO treasury_entries(branch_id,id,source_id,kind,cash_cents,bank_cents,note,actor_user_id,occurred_at) VALUES($1,$2,$2,'cash_adjustment',$3,$4,'Prueba',$5,$6)",
+      [own, id, cash, bank, owner.id, at],
+    );
+  for (const [id, at] of [
+    [audit.old, ago(30)],
+    [audit.recent, ago(2)],
+  ])
+    await sql.query(
+      "INSERT INTO audit_events(branch_id,id,actor_user_id,action,payload,received_at) VALUES($1,$2,$3,'user.update','{}',$4)",
+      [own, id, owner.id, at],
+    );
+  for (const [id, days] of [
+    [cut.old, 30],
+    [cut.recent, 2],
+  ] as const)
+    await sql.query(
+      "INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at) VALUES($1,$2,$3,1,$4,'Mañana',0,0,0,0,0,$5)",
+      [own, id, worker.id, dayAgo(days), ago(days)],
+    );
+  // A schedule planned for next week is history-to-come and always travels.
+  for (const [id, date] of [
+    [schedule.old, dayAgo(30)],
+    [schedule.recent, dayAgo(-7)],
+  ])
+    await sql.query(
+      "INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,'07:30','15:00')",
+      [own, id, worker.id, date],
+    );
+  for (const [id, date] of [
+    [task.old, dayAgo(30)],
+    [task.recent, dayAgo(1)],
+  ])
+    await sql.query(
+      "INSERT INTO tasks(branch_id,id,user_id,title,due_date) VALUES($1,$2,$3,'Prueba',$4)",
+      [own, id, worker.id, date],
+    );
+  await sql.query("INSERT INTO suppliers(branch_id,id,company) VALUES($1,$2,'Proveedor')", [
+    own,
+    supplier,
+  ]);
+  for (const [id, opened, closed] of [
+    [shift.old, ago(30), ago(30)],
+    [shift.recent, ago(2), ago(2)],
+    [openOldShift, ago(20), null],
+  ])
+    await sql.query(
+      'INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,closed_at,opening_cents) VALUES($1,$2,$3,$4,$5,$6,0)',
+      [own, id, worker.id, opened!.slice(0, 10), opened, closed],
+    );
+  await sql.query('UPDATE branches SET active_shift=$2,last_closed_shift=$3 WHERE id=$1', [
+    own,
+    openOldShift,
+    shift.recent,
+  ]);
+  for (const [id, shiftId, at] of [
+    [ticket.old, shift.old, ago(30)],
+    [ticket.recent, shift.recent, ago(2)],
+    [openOldTicket, openOldShift, ago(20)],
+  ])
+    await sql.query(
+      'INSERT INTO tickets(branch_id,id,supplier_id,shift_id,actor_user_id,amount_cents,occurred_at) VALUES($1,$2,$3,$4,$5,100,$6)',
+      [own, id, supplier, shiftId, worker.id, at],
+    );
+  for (const [id, resolved] of [
+    [oldOpenShortage, false],
+    [oldResolvedShortage, true],
+  ])
+    await sql.query(
+      "INSERT INTO shortages(branch_id,id,actor_user_id,product,occurred_at,resolved) VALUES($1,$2,$3,'Agua',$4,$5)",
+      [own, id, worker.id, ago(30), resolved],
+    );
+  const snapshot = await call(`/snapshot?branch_id=${own}`);
+  a.equal(snapshot.status, 200);
+  const has = (list: any[], id: string) => list.some((row) => row.id === id);
+  const data = snapshot.body;
+  const workDay = shiftBusinessDate(new Date(), 'America/Chihuahua');
+  a.equal(
+    data.history_since,
+    new Date(Date.parse(`${workDay}T00:00:00Z`) - 15 * 86_400_000).toISOString().slice(0, 10),
+  );
+  for (const [list, pair] of [
+    [data.treasury, treasury],
+    [data.audit, audit],
+    [data.cuts, cut],
+    [data.schedules, schedule],
+    [data.tasks, task],
+    [data.tickets, ticket],
+    [data.shifts, shift],
+  ] as const) {
+    a.ok(has(list, pair.recent));
+    a.ok(!has(list, pair.old));
+  }
+  // The open supplier shift and its tickets travel whatever their age, for the relay.
+  a.ok(has(data.shifts, openOldShift));
+  a.ok(has(data.tickets, openOldTicket));
+  // A shortage still open is pending work; a resolved old one is history.
+  a.ok(has(data.shortages, oldOpenShortage));
+  a.ok(!has(data.shortages, oldResolvedShortage));
+  // The general cash balance still counts the old movement.
+  a.deepEqual(data.treasury_totals, { cash_cents: '102500', bank_cents: '5700' });
+});
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });
   await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [
