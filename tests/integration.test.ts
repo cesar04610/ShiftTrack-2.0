@@ -1574,6 +1574,40 @@ test('el snapshot solo envía 15 días de historia y el saldo de caja general in
   // The general cash balance still counts the old movement.
   a.deepEqual(data.treasury_totals, { cash_cents: '102500', bank_cents: '5700' });
 });
+test('movimientos bancarios de cualquier rango con saldo corrido sobre toda la historia', async () => {
+  const own = randomUUID();
+  // America/Chihuahua is UTC-6 all year.
+  await sql.query("INSERT INTO branches(id,name,timezone) VALUES($1,$2,'America/Chihuahua')", [
+    own,
+    `Banco ${own}`,
+  ]);
+  const owner = (await call('/auth/me')).body;
+  const entry = (at: string, bank: string, cash = '0') =>
+    sql.query(
+      "INSERT INTO treasury_entries(branch_id,id,source_id,kind,cash_cents,bank_cents,note,actor_user_id,occurred_at) VALUES($1,$2,$2,'bank_adjustment',$3,$4,'Prueba',$5,$6)",
+      [own, randomUUID(), cash, bank, owner.id, at],
+    );
+  await entry('2026-03-01T18:00:00Z', '100000'); // 1 de marzo, antes del rango
+  await entry('2026-03-10T18:00:00Z', '-20000'); // 10 de marzo
+  await entry('2026-03-10T19:00:00Z', '0', '5000'); // solo efectivo: no es movimiento bancario
+  await entry('2026-03-21T03:00:00Z', '7000'); // 20 de marzo a las 21:00 en Chihuahua
+  await entry('2026-04-02T18:00:00Z', '1000'); // después del rango
+  const bank = (query: string, token = ownerToken) =>
+    call(`/treasury/bank?branch_id=${own}&${query}`, undefined, token);
+  const range = await bank('from=2026-03-05&to=2026-03-20');
+  a.equal(range.status, 200);
+  a.equal(range.body.opening_cents, '100000');
+  a.equal(range.body.current_cents, '88000');
+  a.deepEqual(
+    range.body.entries.map((e: any) => [e.bank_cents, e.balance_cents]),
+    [
+      ['-20000', '80000'],
+      ['7000', '87000'],
+    ],
+  );
+  a.equal((await bank('from=2026-03-21&to=2026-03-05')).status, 400);
+  a.equal((await bank('from=2026-03-05&to=2026-03-20', employeeToken)).status, 403);
+});
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });
   await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [

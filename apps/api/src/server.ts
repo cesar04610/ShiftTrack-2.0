@@ -695,6 +695,12 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.corrections = await select('supplier_corrections', false, 'occurred_at>=$1', [
           sinceAt,
         ]);
+        // Recent register movements (balance additions) for the supplier-register day detail.
+        result.supplier_events = (
+          await db.query(
+            "SELECT * FROM supplier_events WHERE type='supplier.balance.add' AND occurred_at > now() - interval '3 days' ORDER BY occurred_at",
+          )
+        ).rows;
         result.categories = await select('expense_categories');
         // Who is working right now and at which register, for the dashboard.
         result.occupied_registers = (
@@ -979,6 +985,57 @@ app.post('/api/v1/treasury/opening', async (req, res) => {
     await audit(db, b.id, u, 'treasury.opening', p);
   });
   res.json({ ok: true });
+});
+// Bank movements of any date range, with the running balance over the whole history. The screen
+// only keeps recent history, so the "Movimientos bancarios" page asks for its range here.
+app.get('/api/v1/treasury/bank', async (req, res) => {
+  const u = await identity(req.headers.authorization);
+  admin(u);
+  const q = z
+    .object({ branch_id: z.string().optional(), from: z.iso.date(), to: z.iso.date() })
+    .parse(req.query);
+  assert(
+    q.from <= q.to,
+    'INVALID_RANGE',
+    'La fecha inicial no puede ser posterior a la final.',
+    400,
+  );
+  assert(
+    (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 <= 400,
+    'INVALID_RANGE',
+    'El rango máximo es de 400 días.',
+    400,
+  );
+  const b = await context(u, q.branch_id, true);
+  res.json(
+    await transaction(b.id, async (db) => {
+      // Days are counted in the branch's time zone, as on the screen.
+      const day = '(occurred_at AT TIME ZONE $1)::date';
+      const totals = (
+        await db.query(
+          `SELECT coalesce(sum(bank_cents) FILTER (WHERE ${day}<$2::date),0)::text AS opening_cents,
+                  coalesce(sum(bank_cents),0)::text AS current_cents
+           FROM treasury_entries`,
+          [b.timezone, q.from],
+        )
+      ).rows[0];
+      const rows = (
+        await db.query(
+          `SELECT id,kind,note,occurred_at,bank_cents::text AS bank_cents FROM treasury_entries
+           WHERE bank_cents<>0 AND ${day} BETWEEN $2::date AND $3::date ORDER BY occurred_at,id`,
+          [b.timezone, q.from, q.to],
+        )
+      ).rows;
+      let running = BigInt(totals.opening_cents);
+      return {
+        ...totals,
+        entries: rows.map((r) => ({
+          ...r,
+          balance_cents: (running += BigInt(r.bank_cents)).toString(),
+        })),
+      };
+    }),
+  );
 });
 app.post('/api/v1/treasury/movements', async (req, res) => {
   const u = await identity(req.headers.authorization);
