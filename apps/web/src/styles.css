@@ -2098,3 +2098,6 @@ main > * {
 .stat.clickable:focus-visible {
   border-color: var(--accent-line);
 }
+.negative-amount {
+  color: #b91c1c;
+}
