@@ -20,7 +20,7 @@
     "start": "node dist/apps/api/src/server.js",
     "worker:tick": "tsx --env-file=.env apps/worker/tick.ts",
     "bootstrap": "tsx --env-file=.env scripts/bootstrap.ts",
-    "contracts": "tsx --env-file=.env scripts/openapi.ts",
+    "contracts": "tsx --env-file=.env scripts/openapi.ts && prettier --write docs/openapi.json",
     "format": "prettier --write apps packages scripts tests docs README.md *.json playwright.config.ts"
   },
   "dependencies": {

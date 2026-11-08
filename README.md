@@ -6,7 +6,7 @@ Esta versión permite desarrollar y probar los módulos principales y el flujo d
 
 ## Desarrollo
 
-Requiere Node 24, npm y Docker. Usa el checkout existente: cada tarea cloud ya tiene aislamiento; no hace falta otro worktree.
+Requiere Node 24 (`package.json` admite de la 22 a la 24), npm y Docker. Usa el checkout existente: cada tarea cloud ya tiene aislamiento; no hace falta otro worktree.
 
 ```bash
 npm ci
@@ -22,7 +22,7 @@ En terminales separadas:
 npm run dev
 ```
 
-La API usa el puerto 8080 y Vite el 5173. Si ya existe el contenedor `shifttrack-postgres` creado durante onboarding, usa `docker start shifttrack-postgres` en lugar de iniciar otro PostgreSQL en ese puerto. Para comprobar la PWA offline, usa la compilación real:
+La API usa el puerto 8080 y Vite el 5173. Hay dos formas de levantar PostgreSQL local, cada una con su propio volumen de datos: `docker compose up -d` (volumen `shifttrack-db`) o `bash scripts/cloud-install.sh` (contenedor `shifttrack-postgres`, volumen `shifttrack-dev-db`). Usa siempre la misma; si el contenedor `shifttrack-postgres` ya existe, inícialo con `docker start shifttrack-postgres` en lugar de levantar otro PostgreSQL en ese puerto. Para comprobar la PWA offline, usa la compilación real:
 
 ```bash
 npm run build:local
@@ -116,4 +116,4 @@ La pizarra se adapta al tamaño de la pantalla con fichas compactas, nombres cor
 
 ## Alertas de la tienda (octubre 2026)
 
-La pantalla Alertas del superadministrador reemplaza la configuración de avisos y el correo. El worker (cada 5 minutos) y los cierres de corte y de caja de proveedores guardan en `alert_log`: llegada tarde (más de 20 minutos; no cuenta si la persona ya estaba trabajando desde un registro anterior de ese día, como en un doble turno), falta (sin entrada en el horario), salida anticipada (más de 10 minutos antes y con al menos 30 de trabajo), corte con diferencia mayor a $25, turno trabajado sin corte, tarea sin terminar al pasar su fecha y cierre de proveedores con diferencia mayor a $100. Solo se evalúan personas con horario ese día y los últimos 3 días (7 para tareas). Los umbrales están en `apps/api/src/alerts.ts`. Las tablas `alerts`, `alert_settings` y `notification_outbox` quedan sin uso.
+La pantalla Alertas del superadministrador reemplaza la configuración de avisos y el correo. El worker (cada 5 minutos) y los cierres de corte y de caja de proveedores guardan en `alert_log`: llegada tarde (más de 20 minutos; no cuenta si la persona ya estaba trabajando desde un registro anterior de ese día, como en un doble turno), falta (sin entrada en el horario), salida anticipada (más de 10 minutos antes y con al menos 30 de trabajo), corte con diferencia mayor a $25, turno trabajado sin corte, tarea sin terminar al pasar su fecha y cierre de proveedores con diferencia mayor a $100. Retardos, faltas, salidas anticipadas y turnos sin corte solo se evalúan para personas con horario ese día; las tareas, para quien las tenga asignadas. Se revisan los últimos 3 días (7 para tareas). Los umbrales están en `apps/api/src/alerts.ts`. Las tablas `alerts`, `alert_settings` y `notification_outbox` quedan sin uso.

@@ -9,7 +9,7 @@ La aplicación utiliza Railway y PostgreSQL.
 - Servicio: `a4b30cc3-4631-460b-b4cf-983cd536fd9c` (`ShiftTrack-2.0`).
 - Acceso mediante token de proyecto verificado: lectura de servicios, despliegues, nombres de variables y registros.
 - PostgreSQL 17 privado y dos volúmenes persistentes creados; API saludable en `https://shifttrack-20-production.up.railway.app`. Ambos volúmenes están en región `sfo`. La rama `main` de GitHub dispara el despliegue automáticamente.
-- El workspace está en Hobby. El propietario guardó un hard limit de Compute de 10 USD y una alerta de 8 USD; ambos se verificaron mediante API. No cambiar esos límites globales desde Codex.
+- El workspace está en Hobby. El propietario guardó un hard limit de Compute de 10 USD y una alerta de 8 USD; ambos se verificaron mediante API. No cambiar esos límites globales sin autorización del propietario.
 
 ## Imagen y variables
 
@@ -53,15 +53,35 @@ El servicio `ShiftTrack-Worker` usa la misma imagen con `node dist/apps/api/src/
 
 Después del despliegue: comprobar HTTPS, salud SQL, login/logout, roles, evidencia privada y recarga/relevo offline. Configurar respaldos de SQL y del volumen, verificar restauración y completar aceptación operativa antes de usar dinero real. Un volumen persistente no sustituye un respaldo.
 
-## Acceso desde Codex
+## Acceso a la API de Railway
 
-`RAILWAY_PROJECT_TOKEN` se guarda en los ajustes seguros de Codex. Usarlo solo contra `https://backboard.railway.com/graphql/v2`, cabecera `Project-Access-Token`, User-Agent `ShiftTrack-Codex/0.1`. Nunca imprimir tokens, valores de variables ni registros sensibles. GitHub conectado permite desplegar; el token API permite consultar/configurar este proyecto. Las operaciones de facturación pueden necesitar permisos diferentes.
+Se usa un token de proyecto solo contra `https://backboard.railway.com/graphql/v2`, cabecera `Project-Access-Token`. Puede guardarse en los ajustes seguros del entorno de desarrollo (por ejemplo, como `RAILWAY_PROJECT_TOKEN`) o inyectarlo automáticamente el proxy del entorno; en ese caso no se necesita la variable. Nunca imprimir tokens, valores de variables ni registros sensibles. GitHub conectado permite desplegar; el token API permite consultar/configurar este proyecto. Las operaciones de facturación pueden necesitar permisos diferentes.
 
 ## Respaldos
 
 La API de Railway rechazó `volumeInstanceBackupScheduleUpdate` con «Not Authorized». El propietario debe activar los respaldos diarios de SQL y fotografías desde Railway si están disponibles en el plan. No presentar el volumen persistente como respaldo ni afirmar una restauración verificada. Antes de uso real, ejecutar y validar una restauración en un entorno aislado.
 
-## Migración 008: empleados por sucursal
+## Migraciones
+
+| Migración | Cambio                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 001       | Tablas base y aislamiento por sucursal (RLS).                                                                                  |
+| 002       | Tareas recurrentes, fotografías, correcciones de proveedores y categorías de gasto; `alerts` y `alert_settings` (hoy sin uso). |
+| 003       | Representante, teléfono y tipo de producto del proveedor; horario vinculado al corte.                                          |
+| 004       | `notification_outbox` (sin uso desde que se retiró el correo).                                                                 |
+| 005       | Sesiones propias (`auth_sessions`).                                                                                            |
+| 006       | Sucursales activas, cantidad de cajas y reservas online (`register_leases`).                                                   |
+| 007       | Sesiones, concesiones y reservas sin vencimiento obligatorio; un corte por registro de entrada.                                |
+| 008       | Empleados por sucursal: `users.deleted_at` y nombre único por sucursal.                                                        |
+| 009       | Orden de las fichas en la pizarra (`schedules.position`).                                                                      |
+| 010       | Permiso para quitar horarios.                                                                                                  |
+| 011       | Nota del corte y vencimiento de fotografías a los 30 días.                                                                     |
+| 012       | Comentario descriptivo de `schedules`, sin cambios de datos.                                                                   |
+| 013       | Las sesiones abiertas antes de esa versión vencen a las 9 horas.                                                               |
+| 014       | Bitácora de alertas (`alert_log`).                                                                                             |
+| 015       | Zona `America/Chihuahua` (UTC-6) para las sucursales que tenían `America/Mazatlan`.                                            |
+
+**Permisos de tablas nuevas:** `provision.js` aplica `infra/runtime-role.sql` después de migrar, pero el pre-deploy automático (`migrate.js`) no lo hace. Una migración que cree tablas debe otorgar sus permisos a `shifttrack_app` con el bloque condicional de las migraciones 006, 010 y 014 (`IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='shifttrack_app')`). Si la tabla necesita `DELETE`, agrégala también a `infra/runtime-role.sql` y a la lista local de `scripts/migrate.ts`.
 
 La migración `008-users-per-branch.sql` agrega `users.deleted_at` y sustituye la unicidad global del nombre por un índice único de cuentas no eliminadas por sucursal. Conserva usuarios, contraseñas e historial existentes. El runtime comprueba la nueva columna antes de servir solicitudes. El login valida contraseña antes de ofrecer sucursales; confirmaciones internas validan el ID de cuenta, evitando ambigüedad cuando dos cuentas comparten nombre.
 

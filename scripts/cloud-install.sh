@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /workspace/ShiftTrack-2.0
+# Funciona desde cualquier carpeta: se ubica en la raíz del repositorio.
+cd "$(dirname "$0")/.."
 node --version
 npm ci
 if [ ! -e .env ]; then cp .env.example .env; fi

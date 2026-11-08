@@ -21,6 +21,8 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: cp .env.example .env
+      # docs/openapi.json se genera de las rutas; falla si alguien cambió rutas sin regenerarlo.
+      - run: npm run contracts && git diff --exit-code docs/openapi.json
       - run: npm run db:migrate && npm run db:seed && npm run build:local
       - run: npx playwright install --with-deps chromium
       - run: npm test && bash scripts/ci-e2e.sh

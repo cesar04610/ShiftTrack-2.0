@@ -15,11 +15,7 @@
       "get": {
         "operationId": "get__api_v1_health",
         "summary": "GET /api/v1/health",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
+        "security": [],
         "parameters": [],
         "responses": {
           "200": {
@@ -47,11 +43,7 @@
       "post": {
         "operationId": "post__api_v1_auth_login",
         "summary": "POST /api/v1/auth/login",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
+        "security": [],
         "parameters": [],
         "responses": {
           "200": {
@@ -165,11 +157,7 @@
       "post": {
         "operationId": "post__api_v1_auth_logout_on_close",
         "summary": "POST /api/v1/auth/logout-on-close",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
+        "security": [],
         "parameters": [],
         "responses": {
           "200": {
@@ -533,11 +521,7 @@
       "post": {
         "operationId": "post__api_v1_devices_challenge",
         "summary": "POST /api/v1/devices/challenge",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
+        "security": [],
         "parameters": [],
         "responses": {
           "200": {
@@ -565,11 +549,7 @@
       "post": {
         "operationId": "post__api_v1_devices_session",
         "summary": "POST /api/v1/devices/session",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
+        "security": [],
         "parameters": [],
         "responses": {
           "200": {
@@ -599,7 +579,7 @@
         "summary": "POST /api/v1/sync/push",
         "security": [
           {
-            "sessionToken": []
+            "deviceTransport": []
           }
         ],
         "parameters": [],
@@ -810,38 +790,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Operación confirmada o datos autorizados"
-          },
-          "400": {
-            "description": "Validación"
-          },
-          "401": {
-            "description": "Identidad requerida"
-          },
-          "403": {
-            "description": "Permiso denegado"
-          },
-          "409": {
-            "description": "Conflicto: conservar captura local"
-          },
-          "500": {
-            "description": "Error del servicio"
-          }
-        }
-      }
-    },
-    "/schedules": {
-      "post": {
-        "operationId": "post__api_v1_schedules",
-        "summary": "POST /api/v1/schedules",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
-        "parameters": [],
         "responses": {
           "200": {
             "description": "Operación confirmada o datos autorizados"
@@ -1453,124 +1401,10 @@
         }
       }
     },
-    "/alerts/settings": {
+    "/cuts/manual": {
       "post": {
-        "operationId": "post__alerts_settings",
-        "summary": "POST /alerts/settings",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Operación confirmada o datos autorizados"
-          },
-          "400": {
-            "description": "Validación"
-          },
-          "401": {
-            "description": "Identidad requerida"
-          },
-          "403": {
-            "description": "Permiso denegado"
-          },
-          "409": {
-            "description": "Conflicto: conservar captura local"
-          },
-          "500": {
-            "description": "Error del servicio"
-          }
-        }
-      }
-    },
-    "/notifications/{id}/retry": {
-      "post": {
-        "operationId": "post__notifications__id__retry",
-        "summary": "POST /notifications/{id}/retry",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operación confirmada o datos autorizados"
-          },
-          "400": {
-            "description": "Validación"
-          },
-          "401": {
-            "description": "Identidad requerida"
-          },
-          "403": {
-            "description": "Permiso denegado"
-          },
-          "409": {
-            "description": "Conflicto: conservar captura local"
-          },
-          "500": {
-            "description": "Error del servicio"
-          }
-        }
-      }
-    },
-    "/alerts/{id}/seen": {
-      "post": {
-        "operationId": "post__alerts__id__seen",
-        "summary": "POST /alerts/{id}/seen",
-        "security": [
-          {
-            "sessionToken": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operación confirmada o datos autorizados"
-          },
-          "400": {
-            "description": "Validación"
-          },
-          "401": {
-            "description": "Identidad requerida"
-          },
-          "403": {
-            "description": "Permiso denegado"
-          },
-          "409": {
-            "description": "Conflicto: conservar captura local"
-          },
-          "500": {
-            "description": "Error del servicio"
-          }
-        }
-      }
-    },
-    "/reports/export": {
-      "get": {
-        "operationId": "get__reports_export",
-        "summary": "GET /reports/export",
+        "operationId": "post__cuts_manual",
+        "summary": "POST /cuts/manual",
         "security": [
           {
             "sessionToken": []
@@ -1703,6 +1537,262 @@
           }
         }
       }
+    },
+    "/schedules": {
+      "post": {
+        "operationId": "post__schedules",
+        "summary": "POST /schedules",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/schedules/board": {
+      "post": {
+        "operationId": "post__schedules_board",
+        "summary": "POST /schedules/board",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/schedules/board/delete": {
+      "post": {
+        "operationId": "post__schedules_board_delete",
+        "summary": "POST /schedules/board/delete",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/reports/audit": {
+      "get": {
+        "operationId": "get__reports_audit",
+        "summary": "GET /reports/audit",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/reports": {
+      "get": {
+        "operationId": "get__reports",
+        "summary": "GET /reports",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/reports/export": {
+      "get": {
+        "operationId": "get__reports_export",
+        "summary": "GET /reports/export",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/suppliers/import/template": {
+      "get": {
+        "operationId": "get__suppliers_import_template",
+        "summary": "GET /suppliers/import/template",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/suppliers/import": {
+      "post": {
+        "operationId": "post__suppliers_import",
+        "summary": "POST /suppliers/import",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1710,7 +1800,7 @@
       "sessionToken": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "Token opaco de sesión (sin vencimiento automático; revocable)"
+        "bearerFormat": "Token opaco de sesión (vence a las 9 horas; revocable)"
       },
       "deviceTransport": {
         "type": "apiKey",
