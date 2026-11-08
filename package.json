@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && NODE_ENV=production vite build --config apps/web/vite.config.ts && tsc -p apps/api/tsconfig.json",
     "build:local": "npm run typecheck && NODE_ENV=production vite build --mode development --config apps/web/vite.config.ts && tsc -p apps/api/tsconfig.json",
-    "test": "tsx --env-file=.env --test tests/*.test.ts",
+    "test": "tsx --env-file=.env --test --test-concurrency=1 tests/*.test.ts",
     "test:e2e": "playwright test",
     "start": "node dist/apps/api/src/server.js",
     "worker:tick": "tsx --env-file=.env apps/worker/tick.ts",

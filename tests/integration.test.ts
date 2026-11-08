@@ -661,6 +661,11 @@ test('cierre contado y relevo conservan dinero y autoría', async () => {
 });
 test('ficha previa, corte único y contado de ventas alimentan general', async () => {
   const date = localTimeForTest();
+  // Signing in during earlier tests may have left an automatic entry open; close it first.
+  await sql.query(
+    'UPDATE clock_records SET clock_out=now() WHERE user_id=$1 AND clock_out IS NULL',
+    [employee.id],
+  );
   await sql.query(
     'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,$4,now())',
     [branch, randomUUID(), employee.id, date],
@@ -980,7 +985,15 @@ test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel 
   a.equal(book.getWorksheet('Tareas')!.rowCount, 4);
   const analytics = (await call(`/analytics?branch_id=${branch}`)).body;
   a.equal(analytics.spending.find((s: any) => s.id === supplier).net_cents, '27000');
-  a.equal(analytics.baselines[0].average_cents, '100000');
+  // The baseline of this cut: employee, register 1, weekday of today's work day. Other tests add
+  // cuts on other weekdays, so the first row depends on which day the suite runs.
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  a.equal(
+    analytics.baselines.find(
+      (r: any) => r.user_id === employee.id && r.register_number === 1 && r.weekday === weekday,
+    )?.average_cents,
+    '100000',
+  );
   a.equal((await call(`/analytics?branch_id=${branch}`, undefined, employeeToken)).status, 403);
 });
 test('una tarea solo se completa en su día de trabajo; después queda como no realizada', async () => {
