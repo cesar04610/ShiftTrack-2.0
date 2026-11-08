@@ -1298,6 +1298,42 @@ test('alertas: el dueño no genera falta y los administradores no generan "sin c
   ).rows;
   a.deepEqual(rows, [{ kind: 'missing_cut', user_id: worker.id }]);
 });
+test('reenviar una captura ya confirmada devuelve su resultado aunque la cuenta haya cambiado', async () => {
+  const person = (
+    await sql.query(
+      "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Reenvío','employee',$3) RETURNING *",
+      [randomUUID(), `reenvio-${randomUUID()}`, branch],
+    )
+  ).rows[0];
+  const issued = await issueGrant(person, device, pair.publicKey.export({ format: 'jwk' }));
+  const first = command(
+    'shortage.create',
+    { id: randomUUID(), product: 'Reenvío' },
+    person,
+    issued,
+  );
+  const confirmed = await processCommand(first, device);
+  a.equal(confirmed.status, 'confirmed');
+  // The account changes (for example a new password) before the lost reply is retried.
+  await sql.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1', [person.id]);
+  a.deepEqual(await processCommand(first, device), confirmed);
+  // The stored result is only handed back to the device that sent the capture.
+  await a.rejects(() => processCommand(first, randomUUID()), { code: 'FORBIDDEN' });
+  // A new capture from the changed account still goes to review.
+  await a.rejects(
+    () =>
+      processCommand(
+        command('shortage.create', { id: randomUUID(), product: 'Nueva' }, person, issued),
+        device,
+      ),
+    { code: 'REQUIRES_ADMIN_REVIEW' },
+  );
+  a.equal(
+    (await sql.query('SELECT count(*) FROM shortages WHERE actor_user_id=$1', [person.id])).rows[0]
+      .count,
+    '1',
+  );
+});
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });
   await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [

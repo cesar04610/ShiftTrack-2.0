@@ -69,7 +69,23 @@ async function entry(
     ],
   );
 }
+// A retry of a capture that was already confirmed gets its stored result, even if the account
+// or branch changed since: the effect happened once and must not be sent to review afterwards.
+// Only the exact same signed command, sent from its own device, matches.
+async function confirmedResult(c: Command, deviceId: string, hash: string) {
+  if (c.device_id !== deviceId) return null;
+  return transaction(c.branch_id, async (db) => {
+    const row = (
+      await db.query('SELECT request_hash,result FROM processed_operations WHERE id=$1', [
+        c.operation_id,
+      ])
+    ).rows[0];
+    return row?.request_hash === hash ? row.result : null;
+  });
+}
 export async function processCommand(c: Command, deviceId: string) {
+  const prior = await confirmedResult(c, deviceId, digest(canonical(c)));
+  if (prior) return prior;
   const granted = await validateCommand(c, deviceId);
   return transaction(c.branch_id, async (db) => {
     // Every command locks its branch: deduplication, stream and financial effects commit together.
