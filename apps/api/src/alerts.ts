@@ -99,13 +99,24 @@ export async function evaluateAlerts(
     if (!schedule) continue;
     const start = minutes(schedule.start_time),
       end = minutes(schedule.end_time);
+    // Not late when an earlier entry that day arrived for this schedule, or was still open when it
+    // started (a double shift whose session expired and was resumed later).
+    const startsAt = +(
+      await db.query(`SELECT (($1::date+$2::time) AT TIME ZONE $3) AS at`, [
+        arrival.date,
+        schedule.start_time,
+        zone,
+      ])
+    ).rows[0].at;
     const earlier = records.some(
       (o) =>
         o.user_id === rec.user_id &&
         o.id !== rec.id &&
         +o.clock_in < +rec.clock_in &&
         localTime(o.clock_in, zone).date === arrival.date &&
-        localTime(o.clock_in, zone).minutes >= start - 120,
+        (localTime(o.clock_in, zone).minutes >= start - 120 ||
+          !o.clock_out ||
+          +o.clock_out >= startsAt),
     );
     if (!earlier && arrival.minutes > start + LATE_MINUTES && arrival.minutes < end)
       raised += await raise(db, branch.id, {

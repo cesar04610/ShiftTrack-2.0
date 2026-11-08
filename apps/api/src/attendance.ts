@@ -31,11 +31,14 @@ export async function clockInAtLogin(user: Person) {
       ).rowCount
     )
       return;
+    // An entry that already has its cut is finished (for example the morning of a double shift):
+    // the next sign-in starts a new entry, so the next shift can have its own cut.
     const recent = (
       await db.query(
-        `SELECT id FROM clock_records WHERE user_id=$1
-         AND clock_out>=now()-make_interval(mins=>$2) AND clock_in>now()-make_interval(hours=>$3)
-         ORDER BY clock_out DESC LIMIT 1 FOR UPDATE`,
+        `SELECT c.id FROM clock_records c WHERE c.user_id=$1
+         AND c.clock_out>=now()-make_interval(mins=>$2) AND c.clock_in>now()-make_interval(hours=>$3)
+         AND NOT EXISTS(SELECT 1 FROM cuts x WHERE x.clock_record_id=c.id)
+         ORDER BY c.clock_out DESC LIMIT 1 FOR UPDATE OF c`,
         [user.id, REOPEN_MINUTES, SESSION_HOURS],
       )
     ).rows[0];

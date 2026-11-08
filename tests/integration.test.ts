@@ -1334,6 +1334,102 @@ test('reenviar una captura ya confirmada devuelve su resultado aunque la cuenta 
     '1',
   );
 });
+test('doble turno: después del corte, volver a entrar abre un registro nuevo', async () => {
+  const { clockInAtLogin } = await import('../apps/api/src/attendance.js');
+  const person = async () =>
+    (
+      await sql.query(
+        "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Doble turno','employee',$3) RETURNING *",
+        [randomUUID(), `doble-${randomUUID()}`, branch],
+      )
+    ).rows[0];
+  // Morning entry 8 hours ago, signed out 5 minutes ago; one of them made the morning cut.
+  const morning = async (user: any, withCut: boolean) => {
+    const id = randomUUID();
+    await sql.query(
+      "INSERT INTO clock_records VALUES($1,$2,$3,current_date,now()-interval '8 hours',now()-interval '5 minutes')",
+      [branch, id, user.id],
+    );
+    if (withCut)
+      await sql.query(
+        "INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,clock_record_id) VALUES($1,$2,$3,1,current_date,'Mañana',0,0,0,0,0,now()-interval '6 minutes',$4)",
+        [branch, randomUUID(), user.id, id],
+      );
+    return id;
+  };
+  const records = async (user: any) =>
+    (
+      await sql.query('SELECT id,clock_out FROM clock_records WHERE user_id=$1 ORDER BY clock_in', [
+        user.id,
+      ])
+    ).rows;
+  const done = await person(),
+    reload = await person();
+  const doneMorning = await morning(done, true),
+    reloadMorning = await morning(reload, false);
+  await clockInAtLogin(done);
+  await clockInAtLogin(reload);
+  // After the cut, the afternoon gets its own entry; the morning entry stays closed.
+  const afterCut = await records(done);
+  a.equal(afterCut.length, 2);
+  a.equal(afterCut[0].id, doneMorning);
+  a.ok(afterCut[0].clock_out);
+  a.equal(afterCut[1].clock_out, null);
+  // Without a cut, a quick return (for example a reload) still continues the same entry.
+  a.deepEqual(await records(reload), [{ id: reloadMorning, clock_out: null }]);
+});
+test('alertas: en doble turno, quien ya estaba trabajando no llega tarde al segundo turno', async () => {
+  const { evaluateAlerts } = await import('../apps/api/src/alerts.js');
+  const zone = 'America/Mazatlan';
+  const day = '2026-09-16';
+  // 23:00 local (UTC-7): both shifts of the day are over.
+  const now = new Date('2026-09-17T06:00:00Z');
+  const person = async (name: string) =>
+    (
+      await sql.query(
+        'INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [randomUUID(), `turno-${randomUUID()}`, name, 'employee', branch],
+      )
+    ).rows[0];
+  const double = await person('Doble'),
+    late = await person('Tarde de verdad');
+  const schedule = (user: any, start: string, end: string) =>
+    sql.query(
+      'INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,$5,$6)',
+      [branch, randomUUID(), user.id, day, start, end],
+    );
+  const worked = async (user: any, entry: string, exit: string, label: string) => {
+    const id = randomUUID();
+    await sql.query('INSERT INTO clock_records VALUES($1,$2,$3,$4,$5,$6)', [
+      branch,
+      id,
+      user.id,
+      day,
+      entry,
+      exit,
+    ]);
+    await sql.query(
+      'INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,declared_cents,expected_cents,difference_cents,occurred_at,clock_record_id) VALUES($1,$2,$3,1,$4,$5,0,0,0,0,0,$6,$7)',
+      [branch, randomUUID(), user.id, day, label, exit, id],
+    );
+  };
+  await schedule(double, '07:30', '15:00');
+  await schedule(double, '15:00', '21:30');
+  await schedule(late, '15:00', '21:30');
+  // 07:25–16:25: the session expired after 9 hours; back at 16:26 until 21:35.
+  await worked(double, '2026-09-16T14:25:00Z', '2026-09-16T23:25:00Z', 'Mañana');
+  await worked(double, '2026-09-16T23:26:00Z', '2026-09-17T04:35:00Z', 'Tarde');
+  // Arrives at 16:26 without having worked before: really late.
+  await worked(late, '2026-09-16T23:26:00Z', '2026-09-17T04:35:00Z', 'Tarde');
+  await transaction(branch, (db) => evaluateAlerts(db, { id: branch, timezone: zone }, now));
+  const rows = (
+    await sql.query(
+      'SELECT kind,user_id FROM alert_log WHERE branch_id=$1 AND user_id=ANY($2::uuid[])',
+      [branch, [double.id, late.id]],
+    )
+  ).rows;
+  a.deepEqual(rows, [{ kind: 'late', user_id: late.id }]);
+});
 test('empleado desactivado conserva registros y sus comandos van a revisión', async () => {
   const c = command('shortage.create', { id: randomUUID(), product: 'Cuenta desactivada' });
   await sql.query('UPDATE users SET active=false,auth_version=auth_version+1 WHERE id=$1', [
