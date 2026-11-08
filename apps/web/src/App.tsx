@@ -2494,7 +2494,8 @@ function BankActivity({
   onBack: () => void;
 }) {
   const [from, setFrom] = useState(''),
-    [to, setTo] = useState('');
+    [to, setTo] = useState(''),
+    [direction, setDirection] = useState<'all' | 'in' | 'out'>('all');
   const zone = data.branch.timezone,
     start = from || shiftDate(to && to < today ? to : today, -29),
     end = to || today,
@@ -2509,12 +2510,15 @@ function BankActivity({
       day: localTime(t.occurred_at, zone).date,
       balance: (running += BigInt(t.bank_cents)),
     }));
-  const shown = invalid ? [] : all.filter((t: any) => t.day >= start && t.day <= end).reverse();
-  const incoming = shown.reduce(
+  const inPeriod = invalid ? [] : all.filter((t: any) => t.day >= start && t.day <= end).reverse();
+  const matches = (t: any, d: string) =>
+    d === 'all' || (d === 'in' ? BigInt(t.bank_cents) > 0n : BigInt(t.bank_cents) < 0n);
+  const shown = inPeriod.filter((t: any) => matches(t, direction));
+  const incoming = inPeriod.reduce(
       (n: bigint, t: any) => (BigInt(t.bank_cents) > 0n ? n + BigInt(t.bank_cents) : n),
       0n,
     ),
-    outgoing = shown.reduce(
+    outgoing = inPeriod.reduce(
       (n: bigint, t: any) => (BigInt(t.bank_cents) < 0n ? n - BigInt(t.bank_cents) : n),
       0n,
     );
@@ -2562,6 +2566,25 @@ function BankActivity({
             Últimos 30 días
           </button>
         </div>
+        <div className="alert-filters" role="group" aria-label="Filtrar movimientos">
+          {(
+            [
+              ['all', 'Todos'],
+              ['in', 'Depósitos'],
+              ['out', 'Retiros'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              className={direction === key ? 'primary' : 'secondary'}
+              aria-pressed={direction === key}
+              onClick={() => setDirection(key)}
+            >
+              {label}
+              <span className="count">{inPeriod.filter((t: any) => matches(t, key)).length}</span>
+            </button>
+          ))}
+        </div>
         <p className="muted">
           Mostrando del {start} al {end}.
         </p>
@@ -2590,7 +2613,13 @@ function BankActivity({
       <Card title="Movimientos de saldo bancario">
         <Table
           headers={['Fecha', 'Movimiento', 'Monto / saldo']}
-          empty="No hay movimientos bancarios en este periodo."
+          empty={
+            direction === 'in'
+              ? 'No hay depósitos en este periodo.'
+              : direction === 'out'
+                ? 'No hay retiros en este periodo.'
+                : 'No hay movimientos bancarios en este periodo.'
+          }
           rows={shown.map((t: any) => [
             time(t.occurred_at, zone),
             <span key={t.id}>
@@ -2598,7 +2627,7 @@ function BankActivity({
               {t.note && <small className="muted"> · {t.note}</small>}
             </span>,
             <span key={`${t.id}-m`}>
-              <strong>
+              <strong className={BigInt(t.bank_cents) < 0n ? 'negative-amount' : undefined}>
                 {BigInt(t.bank_cents) > 0n ? '+' : '−'}
                 {money(BigInt(t.bank_cents) > 0n ? t.bank_cents : -BigInt(t.bank_cents))}
               </strong>
