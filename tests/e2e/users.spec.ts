@@ -76,9 +76,10 @@ test('Jenny trabaja en dos sucursales online y offline; eliminarla conserva hist
   await page.getByLabel('Sucursal', { exact: true }).selectOption(accounts[0].branch);
   await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await page.getByRole('button', { name: 'Usuarios', exact: true }).click();
-  const row = page.getByRole('row').filter({ hasText: username });
+  const row = page.getByRole('button', { name: new RegExp(username) });
   await expect(row).toContainText('Inactivo');
-  await row.getByRole('button', { name: 'Eliminar empleado', exact: true }).click();
+  await row.click();
+  await page.getByRole('button', { name: 'Eliminar empleado', exact: true }).click();
   await page.getByRole('button', { name: 'Confirmar eliminación', exact: true }).click();
   await expect(row).toHaveCount(0);
   const history = await page.request.get(
@@ -88,12 +89,11 @@ test('Jenny trabaja en dos sucursales online y offline; eliminarla conserva hist
   const data = await history.json();
   expect(data.clock).toHaveLength(1);
   expect(data.users.find((u: any) => u.id === accounts[0].id).name).toBe('Jenny');
+  await page.getByRole('button', { name: 'Nuevo usuario', exact: true }).click();
   await page.getByLabel('Nombre', { exact: true }).fill('Jenny nueva');
   await page.getByLabel('Usuario', { exact: true }).fill(username);
   await page.getByLabel('Rol', { exact: true }).selectOption('employee');
-  await page
-    .getByLabel('Contraseña inicial · mínimo 12 caracteres', { exact: true })
-    .fill(password);
+  await page.getByLabel('Contraseña inicial · mínimo 4 caracteres', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Crear usuario', exact: true }).click();
   await expect(row).toContainText('Jenny nueva');
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
