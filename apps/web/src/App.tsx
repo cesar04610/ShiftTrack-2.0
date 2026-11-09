@@ -598,11 +598,18 @@ export default function App() {
     setPending(loadedPending);
   }
   async function synchronize() {
+    // Offline, syncing falls back to the saved copy without an error; that must not mark the app
+    // as connected, or an employee who signed in offline would be asked to sign in again.
+    if (!navigator.onLine) {
+      setOnline(false);
+      return;
+    }
     setBusy(true);
     try {
       await sync();
       await refresh();
-      setOnline(true);
+      // The connection may have dropped while syncing: report the state it ends in.
+      setOnline(navigator.onLine);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'NETWORK') setOnline(false);
       else notify(e);

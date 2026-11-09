@@ -68,8 +68,8 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   ).toBeTruthy();
   await page.goto('/');
   await signIn(page, 'cesar');
+  // The owner goes straight to the panel; no register is needed to manage the branch.
   await page.getByLabel('Sucursal').selectOption(branch.id);
-  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await nav(page, 'Configuración');
   await nav(page, 'Caja general');
   await page.getByLabel('Efectivo total · MXN').fill('10000');
@@ -92,9 +92,10 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await dialog.getByLabel('Tipo de producto', { exact: true }).fill('Bebidas');
   await dialog.getByRole('button', { name: 'Agregar proveedor', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(
-    page.getByLabel('Proveedor', { exact: true }).getByRole('option', { name: 'Proveedor piloto' }),
-  ).toHaveCount(1);
+  // The supplier field is a search box: the new supplier appears among the results.
+  await page.getByLabel('Proveedor', { exact: true }).fill('piloto');
+  await expect(page.getByRole('option', { name: /^Proveedor piloto/ })).toHaveCount(1);
+  await page.getByLabel('Proveedor', { exact: true }).fill('');
   await page.getByRole('button', { name: 'Sincronizar y actualizar' }).click();
   await expect(page.locator('.pending-panel')).toHaveCount(0);
   // Wait until the production PWA controls the page before cutting the network.
@@ -108,6 +109,8 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
       );
   });
   await context.setOffline(true);
+  // Wait until the app noticed the lost connection before capturing.
+  await expect(page.getByText('Sin conexión', { exact: true })).toBeVisible();
   await nav(page, 'Caja proveedores');
   await page.getByRole('button', { name: 'Abrir mi turno' }).click();
   await expect(page.getByRole('heading', { name: 'Cerrar y entregar turno' })).toBeVisible();
@@ -120,7 +123,8 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     .fill('500');
   await page.getByRole('button', { name: 'Guardar', exact: true }).click();
   await nav(page, 'Caja proveedores');
-  await page.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Proveedor piloto' });
+  await page.getByLabel('Proveedor', { exact: true }).fill('piloto');
+  await page.getByRole('option', { name: /^Proveedor piloto/ }).click();
   await page
     .locator('.card')
     .filter({ has: page.getByRole('heading', { name: 'Registrar pago', exact: true }) })
@@ -172,11 +176,14 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     product_type: 'Bebidas',
   });
   expect(data.branch.balance_cents).toBe('219000');
-  expect(data.treasury.reduce((n: number, t: any) => n + Number(t.cash_cents), 0)).toBe(970000);
+  // The general cash balance comes from the server's totals over every movement.
+  expect(data.treasury_totals.cash_cents).toBe('970000');
   expect(data.tasks[0].completed_at).toBeTruthy();
   expect(data.tasks[0].media_id).toBeTruthy();
   // Clock rollback still blocks capture, but nine hours do not expire the prepared access.
   await context.setOffline(true);
+  // Wait until the app noticed the lost connection before capturing.
+  await expect(page.getByText('Sin conexión', { exact: true })).toBeVisible();
   const real = Date.now();
   await page.clock.install({ time: new Date(real - 3600_000) });
   await page
@@ -193,16 +200,11 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   await page.getByLabel('Producto', { exact: true }).fill('Agua pendiente');
   await page.getByRole('button', { name: 'Registrar faltante' }).click();
   await expect(page.locator('.pending-panel')).toBeVisible();
-  await nav(page, 'Caja proveedores');
+  // Nine hours later the prepared access still signs captures. A shortage is used because the
+  // supplier box would ask to reconcile once the calendar day changes, depending on the hour.
   await page.clock.setSystemTime(new Date(real + 9 * 3600_000));
-  await page
-    .locator('.card')
-    .filter({
-      has: page.getByRole('heading', { name: 'Agregar efectivo a proveedores', exact: true }),
-    })
-    .getByLabel('Importe · MXN', { exact: true })
-    .fill('1');
-  await page.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await page.getByLabel('Producto', { exact: true }).fill('Agua nueve horas después');
+  await page.getByRole('button', { name: 'Registrar faltante' }).click();
   await expect(page.getByRole('status')).toContainText('Registro guardado correctamente');
   await expect(page.locator('.pending-panel')).toContainText('2 registro(s)');
   await page.screenshot({ path: 'test-results/caja-proveedores.png', fullPage: true });
