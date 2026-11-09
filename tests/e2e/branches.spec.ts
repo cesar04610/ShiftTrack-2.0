@@ -6,9 +6,8 @@ async function signIn(page: Page, username: string) {
   await page.getByLabel('Usuario', { exact: true }).fill(username);
   await page.getByLabel('Contraseña', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  // Administrators go straight to their panel; employees then choose their register.
   await expect(page.getByRole('button', { name: 'Cerrar sesión', exact: true })).toBeVisible();
-  if (username === 'cesar')
-    await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
 }
 async function selectBox(page: Page, number: number) {
   await page.getByLabel('Selecciona tu caja', { exact: true }).selectOption(String(number));
@@ -39,7 +38,6 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   expect(created.status()).toBe(201);
   const branch = await created.json();
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
-  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   const first = `lupe-${suffix}`,
     second = `jenny-${suffix}`;
   for (const username of [first, second]) {
@@ -58,14 +56,9 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await expect(page.getByRole('heading', { name: 'Horario', exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Caja proveedores', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Proveedores', exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'Registro de entradas', exact: true }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
-  await page.getByRole('button', { name: 'Registrar entrada', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText(/Registro guardado correctamente/);
+  // Signing in already recorded the entry: there is no manual clock-in anymore.
   await page.getByRole('button', { name: 'Sincronizar y actualizar' }).click();
-  await expect(page.getByRole('status')).not.toContainText('before initialization');
+  await expect(page.getByText('before initialization', { exact: false })).toHaveCount(0);
   await page.getByRole('button', { name: 'Faltantes', exact: true }).click();
   await page.getByLabel('Producto', { exact: true }).fill('Faltante de prueba');
   await page.getByRole('button', { name: 'Registrar faltante', exact: true }).click();
@@ -87,8 +80,6 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await signIn(page, first);
   await selectBox(page, 3);
   await expect(page.getByRole('button', { name: 'Caja proveedores', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Registrar salida', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Mi corte', exact: true }).click();
   await expect(page.getByLabel('Horario vinculado · opcional')).toHaveCount(0);
   await page.getByLabel('Ventas totales · MXN').fill('100');
@@ -100,7 +91,6 @@ test('configurar tres cajas, impedir ocupación duplicada y eliminar con contras
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await signIn(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
-  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await page.getByRole('button', { name: 'Configuración', exact: true }).click();
   await page
     .getByRole('row')
