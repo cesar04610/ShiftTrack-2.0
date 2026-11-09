@@ -48,9 +48,7 @@ test('Jenny trabaja en dos sucursales online y offline; eliminarla conserva hist
     await login(page, username, a.branch);
     await box(page);
     await expect(page.locator('.topbar')).toContainText(a.name);
-    await page.getByRole('button', { name: 'Registro de entradas', exact: true }).click();
-    await page.getByRole('button', { name: 'Registrar entrada', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Registrar salida', exact: true })).toBeVisible();
+    // Signing in online recorded her entry in this branch; signing out records the exit.
     await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   }
   await page.evaluate(async () => {
@@ -74,7 +72,6 @@ test('Jenny trabaja en dos sucursales online y offline; eliminarla conserva hist
   ).toBeTruthy();
   await login(page, 'cesar');
   await page.getByLabel('Sucursal', { exact: true }).selectOption(accounts[0].branch);
-  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
   await page.getByRole('button', { name: 'Usuarios', exact: true }).click();
   const row = page.getByRole('button', { name: new RegExp(username) });
   await expect(row).toContainText('Inactivo');
