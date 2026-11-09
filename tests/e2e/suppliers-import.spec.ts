@@ -21,7 +21,11 @@ test('importar proveedores desde Excel: vista previa, errores, duplicados y dire
   await page.getByLabel('Contraseña', { exact: true }).fill('ShiftTrack-demo-2026!');
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.getByLabel('Sucursal', { exact: true }).selectOption(branch.id);
-  await page.getByRole('button', { name: 'Continuar sin caja', exact: true }).click();
+  // Administrators reach "Caja proveedores" after choosing a register in the top bar.
+  const register = page.getByLabel('Caja de trabajo', { exact: true });
+  await register.selectOption('3');
+  await expect(register).toHaveValue('3');
+  await expect(register).toBeEnabled();
   await page.getByRole('button', { name: 'Caja proveedores', exact: true }).click();
   await page.getByRole('button', { name: 'Importar proveedores desde Excel', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Importar proveedores desde Excel' });
