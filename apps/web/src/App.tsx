@@ -32,6 +32,7 @@ import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
 import SearchSelect from './SearchSelect';
 import Reports from './Reports';
+import UserBoard from './UserBoard';
 import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
 import {
   login,
@@ -832,7 +833,8 @@ export default function App() {
   const managementNav = adminNav.filter(
     ([label]) => label !== 'Alertas' || user.role === 'superadmin',
   );
-  const isManagementPage = managementNav.some(([label]) => label === page);
+  const isManagementPage =
+    page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
   const b = data?.branch,
     deviceReady = prepared && registerNumber === b?.supplier_register,
     canCapture = prepared && registerNumber != null;
@@ -855,7 +857,8 @@ export default function App() {
   );
   const meta: Record<string, string> = {
     Inicio: 'Un vistazo a la operación de tu sucursal.',
-    Usuarios: 'Cuentas, permisos y conservación del historial.',
+    Usuarios: 'Toca a una persona para ver su actividad más reciente.',
+    'Nuevo usuario': 'Cuentas, permisos y conservación del historial.',
     Horarios: 'Organiza los turnos de tu equipo.',
     Horario: 'Consulta tus próximos turnos.',
     Tareas: 'Lo que hay que hacer, en un solo lugar.',
@@ -938,7 +941,11 @@ export default function App() {
                   {managementNav.map(([label, Icon]) => (
                     <button
                       key={label}
-                      className={page === label ? 'selected' : ''}
+                      className={
+                        page === label || (label === 'Usuarios' && page === 'Nuevo usuario')
+                          ? 'selected'
+                          : ''
+                      }
                       onClick={() => {
                         setPage(label);
                         setMobile(false);
@@ -1410,33 +1417,6 @@ export default function App() {
               )}
               {page === 'Usuarios' && (
                 <>
-                  <Card title="Crear cuenta">
-                    <Form
-                      fields={[
-                        { name: 'name', label: 'Nombre' },
-                        {
-                          name: 'username',
-                          label: 'Usuario',
-                          placeholder: 'Único en esta sucursal, sin espacios',
-                        },
-                        {
-                          name: 'role',
-                          label: 'Rol',
-                          options: (user.role === 'superadmin'
-                            ? ['employee', 'admin', 'superadmin']
-                            : ['employee']
-                          ).map((v) => ({ value: v, label: labels[v] })),
-                        },
-                        {
-                          name: 'password',
-                          label: 'Contraseña inicial · mínimo 4 caracteres',
-                          type: 'password',
-                        },
-                      ]}
-                      label="Crear usuario"
-                      onSubmit={(v) => mutate('/users', v)}
-                    />
-                  </Card>
                   {deletingUser && deletingUser.role === 'employee' && (
                     <Card title="Eliminar empleado">
                       <p>
@@ -1494,35 +1474,55 @@ export default function App() {
                       </button>
                     </Card>
                   )}
-                  <Card title="Equipo de la sucursal">
-                    <Table
-                      headers={['Nombre', 'Usuario', 'Rol', 'Estado', '']}
-                      rows={data.users
-                        .filter((u: any) => !u.deleted_at)
-                        .map((u: any) => [
-                          u.name,
-                          u.username,
-                          labels[u.role],
-                          u.active ? 'Activo' : 'Inactivo',
-                          u.id !== user.id &&
-                          (user.role === 'superadmin' || u.role === 'employee') ? (
-                            <>
-                              {u.active && (
-                                <button
-                                  className="danger-link"
-                                  onClick={() =>
-                                    mutate(`/users/${u.id}/deactivate`, {}).catch(notify)
-                                  }
-                                >
-                                  Desactivar
-                                </button>
-                              )}
-                              <button className="danger-link" onClick={() => setDeletingUser(u)}>
-                                Eliminar {labels[u.role].toLowerCase()}
-                              </button>
-                            </>
-                          ) : null,
-                        ])}
+                  <UserBoard
+                    data={data}
+                    now={now}
+                    roleLabels={labels}
+                    currentUserId={user.id}
+                    canManage={(u) => user.role === 'superadmin' || u.role === 'employee'}
+                    onCreate={() => {
+                      setMessage('');
+                      setPage('Nuevo usuario');
+                    }}
+                    onDeactivate={(u) => mutate(`/users/${u.id}/deactivate`, {}).catch(notify)}
+                    onDelete={(u) => setDeletingUser(u)}
+                  />
+                </>
+              )}
+              {page === 'Nuevo usuario' && (
+                <>
+                  <button className="text-button" onClick={() => setPage('Usuarios')}>
+                    ← Volver a Usuarios
+                  </button>
+                  <Card title="Crear cuenta">
+                    <Form
+                      fields={[
+                        { name: 'name', label: 'Nombre' },
+                        {
+                          name: 'username',
+                          label: 'Usuario',
+                          placeholder: 'Único en esta sucursal, sin espacios',
+                        },
+                        {
+                          name: 'role',
+                          label: 'Rol',
+                          options: (user.role === 'superadmin'
+                            ? ['employee', 'admin', 'superadmin']
+                            : ['employee']
+                          ).map((v) => ({ value: v, label: labels[v] })),
+                        },
+                        {
+                          name: 'password',
+                          label: 'Contraseña inicial · mínimo 4 caracteres',
+                          type: 'password',
+                        },
+                      ]}
+                      label="Crear usuario"
+                      onSubmit={async (v) => {
+                        await mutate('/users', v);
+                        setPage('Usuarios');
+                        setMessage('Usuario creado.');
+                      }}
                     />
                   </Card>
                 </>

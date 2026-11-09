@@ -65,6 +65,8 @@ Eliminar una sucursal exige superadministrador y su contraseña actual. Se desac
 
 El nombre de usuario es único dentro de cada sucursal. El mismo empleado puede tener una cuenta en Quates y otra en Madeira, con registros y permisos separados. Si sus credenciales coinciden en varias tiendas, el inicio de sesión pide elegir la sucursal. El acceso offline preparado se conserva por usuario y tienda.
 
+La pantalla **Usuarios** muestra una ficha por persona, ordenadas por actividad: primero quienes están en turno y después quienes trabajaron más recientemente; quienes no tienen sesiones van al final. El botón **+** abre la pantalla **Nuevo usuario**. Al tocar una ficha se ve su sesión más actual (o la última que tuvo): entrada, salida, duración, caja, horario, tareas del día y la actividad cronológica (tareas realizadas, pagos, cortes, faltantes, turno de proveedores y cambios de caja). Las flechas recorren sus sesiones anteriores. La información sale del historial de los últimos 15 días que ya está en el equipo, por lo que también funciona sin conexión; lo anterior está en Reportes › Auditoría.
+
 En Usuarios, **Eliminar empleado** pide confirmación, retira la cuenta de la lista, revoca sus sesiones y permite reutilizar su nombre en esa sucursal. Se conserva la fila original con `deleted_at` para mantener sus registros y autoría en informes; las fotografías están sujetas a la retención de 30 días. Su cuenta en otras sucursales no cambia. **Desactivar** conserva la cuenta en la lista como inactiva. Un turno de proveedores abierto debe cerrarse antes de eliminar a su responsable.
 
 ## Pruebas
