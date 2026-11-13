@@ -4,6 +4,6 @@ Mostrador 2.0 es una PWA React/TypeScript con API Node.js/Express y PostgreSQL e
 
 La API autentica con sesiones propias y contraseñas Argon2. PostgreSQL aplica aislamiento por sucursal y el rol `shifttrack_app` opera sin propiedad de tablas ni bypass de RLS. Las sesiones online vencen a las nueve horas.
 
-IndexedDB conserva datos y operaciones offline, incluidas fotografías pendientes. Las operaciones se firman por usuario y equipo y se sincronizan al recuperar conexión. Los conflictos y pendientes se conservan para revisión. La descarga de pendientes no incluye fotografías ni claves privadas.
+IndexedDB conserva datos y operaciones offline, incluidas fotografías pendientes. Las operaciones se firman por usuario y equipo y se sincronizan al recuperar conexión. Los conflictos y pendientes se conservan para revisión. El catálogo de productos se guarda completo en IndexedDB por sucursal y se vuelve a descargar solo cuando cambia su versión; cada venta es un comando `sale.create` que lleva sus renglones (producto, cantidad en milésimas y precio cobrado) y, una vez confirmada, se quita de la cola local. El archivo `.xls` de SICAR se lee en el servidor con un lector propio y acotado (`apps/api/src/xls.ts`), sin dependencias nuevas. La descarga de pendientes no incluye fotografías ni claves privadas.
 
 Las fotografías confirmadas se eliminan automáticamente después de 30 días. El volumen persistente no sustituye un respaldo. Consultar [Railway](railway.md) para configuración y migraciones y [estado](estado.md) para limitaciones.

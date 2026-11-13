@@ -7,6 +7,7 @@ const { media } = await import('../apps/api/src/media.js');
 const { schedules } = await import('../apps/api/src/schedules.js');
 const { reports } = await import('../apps/api/src/reports.js');
 const { supplierImport } = await import('../apps/api/src/supplier-import.js');
+const { sales } = await import('../apps/api/src/sales.js');
 const { commandSchema } = await import('../apps/api/src/commands.js');
 const paths: Record<string, any> = {};
 function inspect(stack: any[], prefix: string) {
@@ -63,6 +64,7 @@ inspect((media as any).stack, '/media');
 inspect((schedules as any).stack, '/schedules');
 inspect((reports as any).stack, '');
 inspect((supplierImport as any).stack, '/suppliers/import');
+inspect((sales as any).stack, '');
 paths['/sync/push'].post.requestBody = {
   required: true,
   content: {

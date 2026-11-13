@@ -257,11 +257,14 @@ export async function validateCommand(command: Command, deviceId: string) {
     'Operación no autorizada.',
     403,
   );
-  if (grant.body.register_number != null && command.type === 'cut.create')
+  if (
+    grant.body.register_number != null &&
+    (command.type === 'cut.create' || command.type === 'sale.create')
+  )
     assert(
       Number(command.payload.register_number) === grant.body.register_number,
       'FORBIDDEN',
-      'El corte debe corresponder a tu caja seleccionada.',
+      'La captura debe corresponder a tu caja seleccionada.',
       403,
     );
   const branch = (await pool.query('SELECT active FROM branches WHERE id=$1', [command.branch_id]))

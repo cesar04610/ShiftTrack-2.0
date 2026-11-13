@@ -1647,6 +1647,102 @@
           }
         }
       }
+    },
+    "/products/import": {
+      "post": {
+        "operationId": "post__products_import",
+        "summary": "POST /products/import",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/products": {
+      "get": {
+        "operationId": "get__products",
+        "summary": "GET /products",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
+    },
+    "/sales": {
+      "get": {
+        "operationId": "get__sales",
+        "summary": "GET /sales",
+        "security": [
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Operación confirmada o datos autorizados"
+          },
+          "400": {
+            "description": "Validación"
+          },
+          "401": {
+            "description": "Identidad requerida"
+          },
+          "403": {
+            "description": "Permiso denegado"
+          },
+          "409": {
+            "description": "Conflicto: conservar captura local"
+          },
+          "500": {
+            "description": "Error del servicio"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1688,7 +1784,8 @@
               "supplier.shift.reconcile",
               "cut.create",
               "task.complete",
-              "shortage.create"
+              "shortage.create",
+              "sale.create"
             ]
           },
           "branch_id": {
@@ -1746,7 +1843,7 @@
             },
             "additionalProperties": {
               "type": "string",
-              "maxLength": 4000
+              "maxLength": 12000
             }
           },
           "signature": {

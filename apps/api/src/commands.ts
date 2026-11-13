@@ -15,6 +15,7 @@ import {
 import { z } from 'zod';
 import { writeAudit } from './audit-detail.js';
 import { cutDifferenceAlert, supplierDifferenceAlert } from './alerts.js';
+import { recordSale } from './sales.js';
 export const commandSchema = z
   .object({
     operation_id: z.uuid(),
@@ -30,6 +31,7 @@ export const commandSchema = z
       'cut.create',
       'task.complete',
       'shortage.create',
+      'sale.create',
     ]),
     branch_id: z.uuid(),
     device_id: z.uuid(),
@@ -40,7 +42,8 @@ export const commandSchema = z
     expected_version: z.string().regex(/^\d+$/),
     occurred_at: z.iso.datetime(),
     depends_on: z.array(z.uuid()).max(20),
-    payload: z.record(z.string(), z.string().max(4000)),
+    // A sale carries its lines as one JSON text: up to 150 products.
+    payload: z.record(z.string(), z.string().max(12000)),
     signature: z.string().max(1024),
   })
   .strict();
@@ -413,7 +416,7 @@ export async function processCommand(c: Command, deviceId: string) {
         'INSERT INTO shortages(branch_id,id,actor_user_id,product,note,occurred_at) VALUES($1,$2,$3,$4,$5,$6)',
         [b.id, uuid(p.id), c.actor_user_id, required(p.product), p.note || '', c.occurred_at],
       );
-    }
+    } else if (c.type === 'sale.create') await recordSale(db, b, c);
     if (supplier) {
       await db.query(
         'UPDATE branches SET balance_cents=$2,version=version+1,device_seq=$3 WHERE id=$1',
@@ -441,12 +444,14 @@ export async function processCommand(c: Command, deviceId: string) {
       hash,
       result,
     ]);
-    await writeAudit(db, b.id, c.actor_user_id, c.type, {
-      operation_id: c.operation_id,
-      device_id: deviceId,
-      occurred_at: c.occurred_at,
-      data: p,
-    });
+    // Sales are their own insert-only record; an audit row per ticket would bury the audit log.
+    if (c.type !== 'sale.create')
+      await writeAudit(db, b.id, c.actor_user_id, c.type, {
+        operation_id: c.operation_id,
+        device_id: deviceId,
+        occurred_at: c.occurred_at,
+        data: p,
+      });
     return result;
   });
 }

@@ -19,6 +19,8 @@ import {
   WifiOff,
   Check,
   Menu,
+  ShoppingCart,
+  Package,
 } from 'lucide-react';
 import {
   money,
@@ -32,6 +34,7 @@ import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
 import SearchSelect from './SearchSelect';
 import Reports from './Reports';
+import SalesScreen, { ProductsAdmin, TurnSales, turnSales } from './Sales';
 import UserBoard from './UserBoard';
 import TaskBoard, { setupLabel } from './TaskBoard';
 import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
@@ -528,12 +531,14 @@ const adminNav = [
   ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
   ['Alertas', BarChart3],
+  ['Productos', Package],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
   ['Configuración', Settings],
 ] as const;
 const employeeNav = [
   ['Horario', CalendarDays],
+  ['Ventas', ShoppingCart],
   ['Tareas', ClipboardCheck],
   ['Caja proveedores', Wallet],
   ['Faltantes', PackageX],
@@ -778,6 +783,18 @@ export default function App() {
     setMessage('Registro guardado correctamente.');
     synchronize();
   }
+  // A sale is saved on this device first, like every capture, and sent when there is connection.
+  async function sell(values: Record<string, string>) {
+    if (online && !hasOnlineSession())
+      throw new Error(
+        'Inicia sesión nuevamente con conexión para validar tu caja antes de registrar ventas. Tus pendientes se conservan.',
+      );
+    if (!registerNumber || !prepared)
+      throw new Error('Selecciona una caja con conexión para registrar ventas.');
+    await enqueue('sale.create', values, user!, branchId);
+    await refresh(false);
+    void synchronize();
+  }
   const expired = !!expiresAt() && Date.parse(expiresAt()!) <= now;
   // Sessions close by themselves after 9 hours, in case someone forgets to sign out.
   useEffect(() => {
@@ -885,6 +902,8 @@ export default function App() {
     'Movimientos bancarios': 'Entradas y salidas del saldo bancario por periodo.',
     'Actividad caja proveedores': 'Todos los movimientos de la caja de proveedores del día.',
     Cortes: 'Ventas, efectivo contado y diferencias.',
+    Ventas: 'Venta de respaldo para cuando SICAR no está disponible.',
+    Productos: 'Catálogo importado de SICAR y ventas registradas en Mostrador.',
     'Mi corte': 'Registra el efectivo de ventas de este turno.',
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
@@ -2028,6 +2047,31 @@ export default function App() {
                   </Card>
                 </>
               )}
+              {page === 'Ventas' && (
+                <SalesScreen
+                  key={`${branchId}:${user.id}`}
+                  branchId={branchId}
+                  userId={user.id}
+                  catalogVersion={data.catalog?.version}
+                  registerNumber={registerNumber}
+                  canSell={canCapture}
+                  summary={turnSales(data, user.id)}
+                  onSell={sell}
+                  onOpenCut={() => setPage('Mi corte')}
+                />
+              )}
+              {page === 'Productos' && isAdmin && (
+                <ProductsAdmin
+                  key={branchId}
+                  branchId={branchId}
+                  branchName={b.name}
+                  online={online}
+                  catalog={data.catalog}
+                  timezone={b.timezone}
+                  today={workDay}
+                  onImported={() => refresh()}
+                />
+              )}
               {page === 'Cortes' && (
                 <CutsPanel
                   cuts={data.cuts}
@@ -2055,6 +2099,14 @@ export default function App() {
                 <>
                   {!canCapture && (
                     <div className="notice">Selecciona una caja para registrar tu corte.</div>
+                  )}
+                  {turnSales(data, user.id).count > 0 && (
+                    <Card
+                      title="Ventas registradas en Mostrador"
+                      subtitle="Desde tu último corte. Es solo informativo: captura abajo lo que realmente contaste."
+                    >
+                      <TurnSales summary={turnSales(data, user.id)} />
+                    </Card>
                   )}
                   {canCapture && (
                     <Card title="Capturar mi corte">

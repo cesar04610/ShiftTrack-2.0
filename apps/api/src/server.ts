@@ -31,6 +31,7 @@ import {
 import { reports } from './reports.js';
 import { modules } from './modules.js';
 import { supplierImport } from './supplier-import.js';
+import { sales, salesSnapshot } from './sales.js';
 import { media, purgeExpiredMedia } from './media.js';
 import { closeAbandonedClocks } from './attendance.js';
 import { alertsReady } from './alerts.js';
@@ -60,9 +61,17 @@ app.get('/api/v1/health', async (_req, res) => {
   await pool.query('SELECT 1');
   res.json({ status: 'ok' });
 });
+// The browser test suite signs in more than 30 times per run against one local API; only an
+// explicit development or test environment gets the wider limit, production keeps the strict one.
+const loginLimit = ['development', 'test'].includes(process.env.NODE_ENV || '') ? 300 : 30;
 app.post(
   '/api/v1/auth/login',
-  rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }),
+  rateLimit({
+    windowMs: 15 * 60_000,
+    limit: loginLimit,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
   async (req, res) => {
     const body = z
       .object({
@@ -649,6 +658,7 @@ app.get('/api/v1/snapshot', async (req, res) => {
         clock: await select('clock_records', true, 'clock_out IS NULL OR clock_in>=$1', [sinceAt]),
         cuts: await select('cuts', true, 'business_date>=$1::date', [sinceDate]),
         shortages: await select('shortages', false, 'NOT resolved OR occurred_at>=$1', [sinceAt]),
+        ...(await salesSnapshot(db, user.id)),
       };
       const selected =
         user.role === 'employee'
@@ -1090,6 +1100,7 @@ async function employee(db: any, branch: string, id: string) {
   );
 }
 app.use('/api/v1/suppliers/import', supplierImport);
+app.use('/api/v1', sales);
 app.use('/api/v1', reports);
 app.use('/api/v1', modules);
 if (process.env.WEB_DIST_DIR) {

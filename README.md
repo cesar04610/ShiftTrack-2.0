@@ -66,6 +66,30 @@ Quien entra a una caja recibe en ese momento las tareas de ese día de la semana
 
 El catálogo de plantillas y las asignaciones recurrentes por persona se retiraron: sus tablas (`task_catalog`, `task_assignments`) se conservan con su historial, pero ya no generan tareas.
 
+## Ventas de respaldo (cuando SICAR falla)
+
+**Ventas** permite cobrar productos desde Mostrador cuando SICAR no está disponible. Aparece en el menú de operación de quien tiene una caja seleccionada y se maneja con las mismas teclas que SICAR:
+
+| Tecla                                | Acción                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Escanear o escribir la clave + Enter | Agrega el producto. Si ya estaba en la venta, suma una pieza; un producto a granel entra con 1 (un kilo). El total se acumula abajo a la derecha.                                    |
+| F2                                   | Busca en el catálogo por descripción o clave. Flechas para elegir, Enter para agregar.                                                                                               |
+| F5                                   | Cambia la cantidad del producto seleccionado o, si no hay ninguno, del último: gramos si es a granel, piezas si no. También se abre tocando la cantidad, a la izquierda del renglón. |
+| F6                                   | Elimina el producto seleccionado (se selecciona con un clic o con las flechas). Sin producto seleccionado, pregunta si se borran todos.                                              |
+| Esc                                  | Abre el cobro: efectivo por defecto (F8) o tarjeta (F9), cantidad con la que paga el cliente y cambio. Enter termina la venta; dejar la cantidad vacía es pago exacto.               |
+| Esc (después de cobrar)              | Cierra la pantalla informativa con el cambio entregado. Solo se cierra con Esc, para que un escaneo accidental no la quite.                                                          |
+| F10                                  | Ventas del turno: ventas totales, efectivo que debe haber y pagos con tarjeta.                                                                                                       |
+
+Un código que no está en el catálogo, o un producto sin precio, no se puede vender: la pantalla lo avisa y la venta sigue. Dentro de Ventas, F5 no recarga la página (en el resto de la aplicación recargar cierra la sesión). Una venta admite hasta 150 renglones.
+
+**Catálogo.** En **Productos** (menú de administración) el administrador usa **Importar catálogo de SICAR** con el archivo `.xls` que SICAR exporta de sus artículos, sin modificarlo (hasta 8 MB y 20,000 productos). Solo se guardan clave, clave alterna, descripción, precio 1 y si se vende a granel; costos, existencias y demás columnas se descartan. El precio 1 de SICAR viene sin impuestos: se le suma IEPS (8%) cuando «IMP IEPS» dice S e IVA (16%) cuando «IMPUESTO» dice S, y se redondea a centavos. La vista previa muestra, antes de guardar, cuántos productos son nuevos, cambian o dejan de venderse, cuáles no tienen precio, las filas con error (se omiten) y los precios con centavos poco comunes, que suelen indicar un impuesto sin marcar en SICAR. Cada archivo reemplaza al catálogo de esa sucursal: lo que ya no viene deja de venderse, pero se conserva para las ventas que lo citan. Cada sucursal tiene su propio catálogo. Importar requiere conexión.
+
+**Sin Internet.** Cada equipo descarga el catálogo completo al actualizar su pantalla con conexión y lo vuelve a descargar solo cuando una importación lo cambia. Las ventas se guardan primero en el equipo, firmadas como las demás capturas, y se envían al reconectar; el servidor conserva el precio con el que se cobró, aunque el catálogo haya cambiado después. Para vender sin conexión, el cajero debe haber iniciado sesión y elegido su caja con conexión al menos una vez en ese equipo.
+
+**Corte.** Las ventas de Mostrador son informativas: no mueven Caja general ni generan el corte. **Ventas del turno** (F10) y la ficha «Ventas registradas en Mostrador» de **Mi corte** suman lo vendido por esa persona desde su último corte (máximo 24 horas): ventas totales, efectivo y tarjeta. El cajero cuenta su dinero y captura las cantidades reales en **Mi corte**, como siempre. En **Productos**, el administrador consulta las ventas de cada día de trabajo por cajero, con el detalle de cada ticket.
+
+No incluye inventario, tickets impresos, precios de mayoreo, pagos mixtos ni cancelación de ventas ya cobradas; una venta cobrada por error se aclara en la nota del corte.
+
 ## Reportes
 
 **Reportes** abre con una portada breve de la sucursal y el periodo elegidos (Hoy, Ayer, 7 días, Este mes, Mes pasado u otro rango de hasta 400 días). Arriba, **Requiere tu atención** lista solo lo que no cuadró o quedó pendiente: cortes y turnos de caja de proveedores con diferencia, turnos sin corte, faltas, retardos y salidas anticipadas, tareas no realizadas, faltantes sin resolver y tickets anulados; cada renglón lleva directo a esos registros. Si no hay nada, lo dice en una línea. Debajo hay una ficha por tema con su cifra principal; el detalle se ve al entrar:
@@ -143,7 +167,7 @@ En producción se exige un volumen montado real; no se admiten fotografías en e
 
 Las alertas de la tienda se consultan en la aplicación; el worker actual no envía correos. El inventario de API y el contrato de comandos están en `docs/openapi.json`; se regeneran con `npm run contracts`.
 
-Mostrador 2.0 ofrece la operación diaria a empleados, administradores y súper administradores. Las cuentas administrativas pueden continuar sin caja o seleccionar una para registrar cortes; los pagos requieren la caja de proveedores. El menú de gestión conserva Usuarios, Horarios, Gestionar tareas, Reportes, Cortes, Caja general y Configuración; Alertas está reservado al súper administrador.
+Mostrador 2.0 ofrece la operación diaria a empleados, administradores y súper administradores. Las cuentas administrativas pueden continuar sin caja o seleccionar una para registrar cortes y ventas; los pagos requieren la caja de proveedores. El menú de gestión conserva Usuarios, Horarios, Gestionar tareas, Reportes, Productos, Cortes, Caja general y Configuración; Alertas está reservado al súper administrador.
 
 En Horarios, la pizarra semanal permite arrastrar fichas del personal activo, incluidos administradores y súper administradores, o seleccionar una persona y pulsar + en el turno. Mañana: 07:30–15:00 (medio turno 12:00–15:00). Tarde: 15:00–21:30 (medio turno 18:30–21:30). Seleccionar una ficha asignada permite cambiar entre turno completo y medio turno; arrastrarla a otra casilla mueve el horario. Requiere conexión y rechaza horarios superpuestos sin duplicar fichas. **Copiar horarios** de una semana a otra no aplica esa regla: solo omite el turno idéntico (misma persona, día y hora de entrada). Si la semana destino ya tiene turnos, revisa la pizarra después de copiar y quita las fichas que se crucen. Los horarios anteriores y la captura manual se conservan.
 

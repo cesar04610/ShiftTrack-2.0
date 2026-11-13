@@ -95,6 +95,7 @@ export const offlineTypes = [
   'cut.create',
   'task.complete',
   'shortage.create',
+  'sale.create',
 ] as const;
 export type Command = {
   operation_id: string;
@@ -144,6 +145,7 @@ export const auditActions: Record<string, string> = {
   'supplier.create': 'Alta de proveedor',
   'supplier.update': 'Edición de proveedor',
   'suppliers.import': 'Importación de proveedores',
+  'products.import': 'Importación de catálogo de productos',
   'supplier.ticket.create': 'Ticket de compra',
   'supplier.ticket.void': 'Ticket anulado',
   'supplier.balance.add': 'Fondo a caja proveedores',

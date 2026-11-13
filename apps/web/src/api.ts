@@ -141,6 +141,38 @@ export async function uploadSupplierExcel(
     );
   return result;
 }
+export async function uploadCatalog(
+  branchId: string,
+  file: File,
+  mode: 'preview' | 'confirm',
+  operationId?: string,
+  previewHash?: string,
+) {
+  if (!accessToken) throw new Error('Inicia sesión con conexión para importar el catálogo.');
+  const query = new URLSearchParams({ branch_id: branchId, mode });
+  if (operationId) query.set('operation_id', operationId);
+  if (previewHash) query.set('preview_hash', previewHash);
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1/products/import?${query}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/vnd.ms-excel',
+      },
+      body: file,
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    throw new Error('No se pudo conectar. Puedes volver a intentar la misma importación.');
+  }
+  const result = await response.json();
+  if (!response.ok)
+    throw new Error(
+      response.status === 413 ? 'El archivo supera el límite de 8 MB.' : result.message,
+    );
+  return result;
+}
 export async function imageUrl(id: string, branchId: string) {
   if (!accessToken) throw new Error('Conecta para ver la evidencia sincronizada.');
   const r = await fetch(`/api/v1/media/${id}/content?branch_id=${branchId}`, {

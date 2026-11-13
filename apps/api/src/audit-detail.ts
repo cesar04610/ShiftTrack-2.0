@@ -192,6 +192,13 @@ function describe(e: any, k: Lookups, zone: string): DetailLine[] {
       add('Proveedores importados', p.imported);
       add('Omitidos (ya existían)', p.skipped);
       break;
+    case 'products.import':
+      add('Productos en el catálogo', p.total);
+      add('Nuevos', p.new);
+      add('Actualizados', p.changed);
+      add('Dados de baja', p.removed);
+      add('Filas omitidas por error', p.invalid);
+      break;
     case 'supplier.ticket.create':
       add('Proveedor', supplier(p.supplier_id));
       money_('Importe', p.amount_cents);

@@ -9,3 +9,5 @@ El inicio de sesión online registra asistencia para empleados y administradores
 La entrada determina el turno del corte: mañana de 05:00 a antes de 15:00; tarde de 15:00 a antes de 05:00 del día siguiente. Las entradas anteriores a las 05:00 corresponden a la tarde del día anterior.
 
 Las fotografías de evidencia se eliminan automáticamente tras 30 días. La importación de proveedores desde Excel está disponible en Caja proveedores.
+
+Ventas es un punto de venta de respaldo para cuando SICAR falla. El administrador importa en Productos el catálogo que exporta SICAR (`.xls`); de él solo se toman clave, clave alterna, descripción, precio 1 con impuestos y granel. El cajero vende escaneando o buscando, con las teclas de SICAR, y cobra en efectivo o tarjeta. Un producto ausente del catálogo o sin precio no se vende. Las ventas funcionan sin conexión y son informativas: el corte se sigue capturando en Mi corte con las cantidades reales, y solo el corte mueve Caja general.

@@ -388,8 +388,11 @@ export async function snapshot(user: User, branchId: string, refresh = true) {
           const local = previous?.shortages.find((x: any) => x.id === p.id);
           if (local) data.shortages.push(local);
         }
+        if (c.type === 'sale.create' && data.sales && !data.sales.some((x: any) => x.id === p.id))
+          data.sales.push(localSale(c));
       }
       await db.caches.put({ id: key, value: data });
+      if (data.catalog) await refreshCatalog(branchId, data.catalog.version).catch(() => {});
       if (!pending.some((x) => x.command.type.startsWith('supplier.')))
         await db.caches.put({
           id: `box:${branchId}`,
@@ -657,6 +660,7 @@ export async function enqueue(
         }
         if (type === 'shortage.create')
           cached.shortages.push({ ...payload, actor_user_id: user.id, occurred_at });
+        if (type === 'sale.create') (cached.sales ||= []).push(localSale(command));
         if (type === 'cut.create')
           cached.cuts.push({
             ...payload,
@@ -711,8 +715,14 @@ export async function sync() {
           a.command.occurred_at.localeCompare(b.command.occurred_at) ||
           a.command.device_seq - b.command.device_seq,
       );
-      for (let i = 0; i < rows.length; i += 20) {
-        const batch = rows.slice(i, i + 20);
+      // Up to 20 commands per request, and fewer when sales with many lines would exceed its size.
+      for (let i = 0; i < rows.length;) {
+        const batch: Pending[] = [];
+        for (let size = 0; i < rows.length && batch.length < 20; i++) {
+          size += JSON.stringify(rows[i].command).length;
+          if (batch.length && size > 80_000) break;
+          batch.push(rows[i]);
+        }
         await db.outbox.bulkPut(batch.map((x) => ({ ...x, state: 'sending' })));
         for (const row of batch) {
           const id = row.command.payload.media_id;
@@ -746,16 +756,20 @@ export async function sync() {
         for (const ack of response.results) {
           const row = await db.outbox.get(ack.operation_id);
           if (!row) continue;
-          await db.outbox.update(row.id, {
-            state:
-              ack.status === 'confirmed'
-                ? 'confirmed'
-                : ack.code === 'DEPENDENCY_PENDING'
-                  ? 'blocked'
-                  : 'needs_review',
-            message: ack.message,
-            result: ack,
-          });
+          // A confirmed sale now lives on the server; keeping hundreds a day would slow the queue.
+          if (ack.status === 'confirmed' && row.command.type === 'sale.create')
+            await db.outbox.delete(row.id);
+          else
+            await db.outbox.update(row.id, {
+              state:
+                ack.status === 'confirmed'
+                  ? 'confirmed'
+                  : ack.code === 'DEPENDENCY_PENDING'
+                    ? 'blocked'
+                    : 'needs_review',
+              message: ack.message,
+              result: ack,
+            });
         }
       }
       await navigator.locks.request('shifttrack-write', async () => {
@@ -798,6 +812,44 @@ export async function sync() {
   } finally {
     syncing = false;
   }
+}
+// A sale as the turn summary needs it, before the server confirms it.
+function localSale(c: Command) {
+  return {
+    id: c.payload.id,
+    register_number: Number(c.payload.register_number),
+    payment: c.payload.payment,
+    total_cents: c.payload.total_cents,
+    occurred_at: c.occurred_at,
+  };
+}
+export type CatalogProduct = {
+  id: string;
+  clave: string;
+  alt: string;
+  description: string;
+  price: number;
+  bulk: boolean;
+};
+// The product catalog is kept whole on the device so selling works without Internet. It is
+// downloaded again only when an import changed its version.
+async function refreshCatalog(branchId: string, version: number) {
+  const key = `catalog:${branchId}`,
+    saved = (await db.caches.get(key))?.value;
+  if (saved?.version === version) return;
+  const fresh = await request(`/products?branch_id=${branchId}`);
+  if (fresh.products) await db.caches.put({ id: key, value: fresh });
+}
+export async function loadCatalog(branchId: string): Promise<CatalogProduct[]> {
+  const saved = (await db.caches.get(`catalog:${branchId}`))?.value;
+  return (saved?.products || []).map((p: any[]) => ({
+    id: p[0],
+    clave: p[1],
+    alt: p[2],
+    description: p[3],
+    price: p[4],
+    bulk: !!p[5],
+  }));
 }
 export async function listPending() {
   return (await db.outbox.toArray()).filter((x) => x.state !== 'confirmed');
