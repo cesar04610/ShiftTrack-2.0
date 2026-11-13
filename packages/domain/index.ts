@@ -163,3 +163,88 @@ export const auditActions: Record<string, string> = {
   'register.release': 'Caja liberada',
   'branch.deactivate': 'Sucursal eliminada',
 };
+
+// Entries this long before a schedule starts count as arriving for it (same rule as the alerts).
+export const EARLY_ARRIVAL_MINUTES = 120;
+export type ShiftPresence = {
+  user_id: string;
+  // active: scheduled now and clocked in; left: came and already left; upcoming: not in yet, the
+  // schedule has not started; missing: not in yet and the schedule already started;
+  // unscheduled: clocked in without a schedule in the current shift.
+  status: 'active' | 'left' | 'upcoming' | 'missing' | 'unscheduled';
+  schedule?: { start_time: string; end_time: string };
+  record?: { id: string; clock_in: string; clock_out: string | null };
+  // For unscheduled people who do have a schedule in the other shift of the same work day.
+  other_shift?: 'Mañana' | 'Tarde';
+};
+const timeMinutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const scheduleShift = (s: { start_time: string }) =>
+  timeMinutes(s.start_time) >= 300 && timeMinutes(s.start_time) < 900 ? 'Mañana' : 'Tarde';
+// Who should be working in the current shift (morning 05:00–15:00, afternoon 15:00–05:00) and who
+// actually is. Administrators without a schedule are listed as active, never as unscheduled.
+export function shiftPresence(input: {
+  now: string | Date;
+  zone: string;
+  schedules: { user_id: string; business_date: string; start_time: string; end_time: string }[];
+  clock: { id: string; user_id: string; clock_in: string; clock_out: string | null }[];
+  users: { id: string; role: string; active: boolean; deleted_at?: string | null }[];
+}) {
+  const { now, zone } = input,
+    shift = shiftLabel(now, zone),
+    day = shiftBusinessDate(now, zone),
+    current = localTime(now, zone),
+    nowMinutes = current.date === day ? current.minutes : current.minutes + 1440;
+  const user = (id: string) => input.users.find((u) => u.id === id);
+  const today = input.schedules.filter((s) => {
+    const u = user(s.user_id);
+    return (
+      s.business_date.slice(0, 10) === day && u?.active && !u.deleted_at && u.role !== 'superadmin'
+    );
+  });
+  const mine = new Map<string, (typeof today)[number]>();
+  for (const s of today.filter((s) => scheduleShift(s) === shift))
+    if (!mine.has(s.user_id) || s.start_time < mine.get(s.user_id)!.start_time)
+      mine.set(s.user_id, s);
+  const rows: ShiftPresence[] = [];
+  const open = input.clock.filter((r) => !r.clock_out);
+  for (const [userId, s] of mine) {
+    const start = timeMinutes(s.start_time),
+      end = timeMinutes(s.end_time);
+    const records = input.clock
+      .filter((r) => r.user_id === userId)
+      .filter((r) => {
+        const at = localTime(r.clock_in, zone);
+        if (at.date === day && at.minutes >= start - EARLY_ARRIVAL_MINUTES && at.minutes < end)
+          return true;
+        // Still open from earlier the same work day, for example a double shift.
+        return !r.clock_out && shiftBusinessDate(r.clock_in, zone) === day;
+      })
+      .sort((a, b) => Date.parse(b.clock_in) - Date.parse(a.clock_in));
+    const record = records.find((r) => !r.clock_out) || records[0];
+    const schedule = { start_time: s.start_time, end_time: s.end_time };
+    rows.push({
+      user_id: userId,
+      schedule,
+      ...(record ? { record } : {}),
+      status: record
+        ? record.clock_out
+          ? 'left'
+          : 'active'
+        : nowMinutes < start
+          ? 'upcoming'
+          : 'missing',
+    });
+  }
+  for (const r of open) {
+    if (mine.has(r.user_id) || rows.some((x) => x.record?.id === r.id)) continue;
+    const u = user(r.user_id);
+    const other = today.find((s) => s.user_id === r.user_id);
+    rows.push({
+      user_id: r.user_id,
+      record: r,
+      status: u?.role === 'employee' ? 'unscheduled' : 'active',
+      ...(other ? { other_shift: scheduleShift(other) } : {}),
+    });
+  }
+  return { shift, day, rows };
+}

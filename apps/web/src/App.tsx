@@ -25,6 +25,7 @@ import {
   parseMoney,
   localTime,
   shiftBusinessDate,
+  shiftPresence,
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
@@ -1319,78 +1320,151 @@ export default function App() {
                   )}
                   <Card
                     title="Turnos del día"
-                    subtitle="Quién está activo ahora y el historial de entradas y salidas"
+                    subtitle="Quién debe trabajar en este turno, quién ya llegó y el historial de entradas y salidas"
                   >
-                    <h3 className="section-label">Activos ahora</h3>
-                    {data.clock.some((r: any) => !r.clock_out) ? (
-                      <ul className="active-staff">
-                        {data.clock
-                          .filter((r: any) => !r.clock_out)
-                          .sort((x: any, y: any) => Date.parse(x.clock_in) - Date.parse(y.clock_in))
-                          .map((r: any) => {
-                            const lease = (data.occupied_registers || []).find(
-                              (x: any) => x.user_id === r.user_id,
-                            );
-                            const staffTasks = data.tasks.filter(
-                              (t: any) =>
-                                t.user_id === r.user_id && t.due_date.slice(0, 10) === workDay,
-                            );
-                            const done = staffTasks.filter((t: any) => t.completed_at).length;
-                            const expanded = openStaff === r.id;
-                            return (
-                              <li key={r.id} className={expanded ? 'open' : ''}>
-                                <button
-                                  type="button"
-                                  className="staff-toggle"
-                                  aria-expanded={expanded}
-                                  onClick={() => setOpenStaff(expanded ? null : r.id)}
-                                >
-                                  <span className="live-dot" aria-hidden="true" />
-                                  <strong>
-                                    {data.users.find((u: any) => u.id === r.user_id)?.name ||
-                                      r.user_id}
-                                  </strong>
-                                  <span className="badge">
-                                    {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
-                                  </span>
-                                  <small>
-                                    activo desde las {clockHour(r.clock_in, b.timezone)}
-                                  </small>
-                                  <span className="staff-progress">
-                                    {staffTasks.length
-                                      ? `${done}/${staffTasks.length} tareas`
-                                      : 'Sin tareas'}
-                                  </span>
-                                </button>
-                                {expanded && (
-                                  <ul className="staff-tasks">
-                                    {staffTasks.length ? (
-                                      staffTasks.map((t: any) => (
-                                        <li key={t.id}>
-                                          <span>{t.title}</span>
-                                          {t.completed_at ? (
-                                            <span className="badge">
-                                              <Check size={14} />
-                                              Realizada · {clockHour(t.completed_at, b.timezone)}
-                                            </span>
-                                          ) : (
-                                            <span className="badge amber-badge">Pendiente</span>
-                                          )}
-                                          {t.note && <small>{t.note}</small>}
-                                        </li>
-                                      ))
-                                    ) : (
-                                      <li className="muted">No tiene tareas asignadas hoy.</li>
-                                    )}
-                                  </ul>
+                    {(() => {
+                      const presence = shiftPresence({
+                        now: new Date(now),
+                        zone: b.timezone,
+                        schedules: data.schedules || [],
+                        clock: data.clock,
+                        users: data.users,
+                      });
+                      const rows = presence.rows;
+                      const startOf = (x: any) => x.schedule?.start_time || '99';
+                      const groups: [string, any[], string][] = [
+                        [
+                          'Activos ahora',
+                          rows
+                            .filter((x) => x.status === 'active' || x.status === 'unscheduled')
+                            .sort(
+                              (x, y) =>
+                                Date.parse(x.record!.clock_in) - Date.parse(y.record!.clock_in),
+                            ),
+                          'Nadie está activo en este momento.',
+                        ],
+                        [
+                          'Sin entrada registrada',
+                          rows
+                            .filter((x) => x.status === 'missing' || x.status === 'upcoming')
+                            .sort(
+                              (x, y) =>
+                                Number(x.status === 'upcoming') - Number(y.status === 'upcoming') ||
+                                startOf(x).localeCompare(startOf(y)),
+                            ),
+                          '',
+                        ],
+                        ['Ya salieron de este turno', rows.filter((x) => x.status === 'left'), ''],
+                      ];
+                      const renderRow = (x: any) => {
+                        const key = `${x.user_id}:${x.status}`;
+                        const lease = (data.occupied_registers || []).find(
+                          (o: any) => o.user_id === x.user_id,
+                        );
+                        const staffTasks = data.tasks.filter(
+                          (t: any) =>
+                            t.user_id === x.user_id && t.due_date.slice(0, 10) === workDay,
+                        );
+                        const done = staffTasks.filter((t: any) => t.completed_at).length;
+                        const expanded = openStaff === key;
+                        const working = x.status === 'active' || x.status === 'unscheduled';
+                        return (
+                          <li
+                            key={key}
+                            className={`presence-${x.status}${expanded ? ' open' : ''}`}
+                          >
+                            <button
+                              type="button"
+                              className="staff-toggle"
+                              aria-expanded={expanded}
+                              onClick={() => setOpenStaff(expanded ? null : key)}
+                            >
+                              <span className="live-dot" aria-hidden="true" />
+                              <strong>
+                                {data.users.find((u: any) => u.id === x.user_id)?.name || x.user_id}
+                              </strong>
+                              {working && (
+                                <span className="badge">
+                                  {lease ? `Caja ${lease.register_number}` : 'Sin caja'}
+                                </span>
+                              )}
+                              {x.status === 'unscheduled' && (
+                                <span className="badge amber-badge">
+                                  {x.other_shift
+                                    ? `Asignado al turno de la ${x.other_shift.toLowerCase()}`
+                                    : 'No asignado en el horario'}
+                                </span>
+                              )}
+                              {x.status === 'missing' && (
+                                <span className="badge danger-badge">
+                                  No ha registrado su entrada
+                                </span>
+                              )}
+                              {x.status === 'upcoming' && (
+                                <span className="badge muted-badge">
+                                  Aún no registra su entrada
+                                </span>
+                              )}
+                              <small>
+                                {working
+                                  ? `activo desde las ${clockHour(x.record.clock_in, b.timezone)}`
+                                  : x.status === 'left'
+                                    ? `salió a las ${clockHour(x.record.clock_out, b.timezone)}`
+                                    : x.status === 'missing'
+                                      ? `debía entrar a las ${scheduleHour(x.schedule.start_time)}`
+                                      : `entra a las ${scheduleHour(x.schedule.start_time)}`}
+                              </small>
+                              <span className="staff-progress">
+                                {staffTasks.length
+                                  ? `${done}/${staffTasks.length} tareas`
+                                  : 'Sin tareas'}
+                              </span>
+                            </button>
+                            {expanded && (
+                              <ul className="staff-tasks">
+                                {staffTasks.length ? (
+                                  staffTasks.map((t: any) => (
+                                    <li key={t.id}>
+                                      <span>{t.title}</span>
+                                      {t.completed_at ? (
+                                        <span className="badge">
+                                          <Check size={14} />
+                                          Realizada · {clockHour(t.completed_at, b.timezone)}
+                                        </span>
+                                      ) : (
+                                        <span className="badge amber-badge">Pendiente</span>
+                                      )}
+                                      {t.note && <small>{t.note}</small>}
+                                    </li>
+                                  ))
+                                ) : (
+                                  <li className="muted">No tiene tareas asignadas hoy.</li>
                                 )}
-                              </li>
-                            );
-                          })}
-                      </ul>
-                    ) : (
-                      <p className="muted">Nadie está activo en este momento.</p>
-                    )}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      };
+                      return (
+                        <>
+                          <p className="shift-now">
+                            Turno de la {presence.shift.toLowerCase()} · según el horario de hoy
+                          </p>
+                          {groups.map(([title, list, empty]) =>
+                            list.length || empty ? (
+                              <div key={title}>
+                                <h3 className="section-label">{title}</h3>
+                                {list.length ? (
+                                  <ul className="active-staff">{list.map(renderRow)}</ul>
+                                ) : (
+                                  <p className="muted">{empty}</p>
+                                )}
+                              </div>
+                            ) : null,
+                          )}
+                        </>
+                      );
+                    })()}
                     <h3 className="section-label">Historial del día</h3>
                     <Table
                       headers={['Empleado', 'Entrada', 'Salida']}
@@ -2883,6 +2957,14 @@ function Stat({
       <p>{foot}</p>
     </div>
   );
+}
+// A schedule's wall-clock time ("07:00:00") in the same style as clockHour.
+function scheduleHour(value: string) {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'UTC',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(`2000-01-01T${value.slice(0, 5)}:00Z`));
 }
 function clockHour(value: string, zone: string) {
   return new Intl.DateTimeFormat('es-MX', {
