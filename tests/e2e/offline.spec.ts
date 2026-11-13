@@ -52,24 +52,45 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
     expect(r.ok()).toBeTruthy();
     if (username === first) firstId = (await r.json()).id;
   }
-  const due = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Chihuahua',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-  expect(
-    (
-      await page.request.post(`${apiBase}/api/v1/tasks`, {
-        headers,
-        data: { branch_id: branch.id, user_id: firstId, title: 'Limpiar mostrador', due_date: due },
-      })
-    ).ok(),
-  ).toBeTruthy();
   await page.goto('/');
   await signIn(page, 'cesar');
   // The owner goes straight to the panel; no register is needed to manage the branch.
   await page.getByLabel('Sucursal').selectOption(branch.id);
+  // Tasks are written once per register and shift; whoever enters that register receives them.
+  await nav(page, 'Gestionar tareas');
+  await page.getByRole('button', { name: /^Caja 2/ }).click();
+  const taskList = (name: string) =>
+    page.locator('.task-list').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  const morning = taskList('Turno mañana'),
+    afternoon = taskList('Turno tarde');
+  for (const title of ['Limpiar mostrador', 'Acomodar refrescos']) {
+    await morning.getByLabel('Nueva tarea para Turno mañana').fill(title);
+    await morning.getByRole('button', { name: 'Agregar', exact: true }).click();
+    await expect(morning.getByText(title, { exact: true })).toBeVisible();
+  }
+  await morning.getByRole('button', { name: 'Editar Acomodar refrescos' }).click();
+  await morning.getByLabel('Tarea', { exact: true }).fill('Acomodar bebidas');
+  await morning.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await expect(morning.getByText('Acomodar bebidas', { exact: true })).toBeVisible();
+  await morning.getByRole('button', { name: 'Quitar Acomodar bebidas' }).click();
+  await morning.getByRole('button', { name: 'Quitar', exact: true }).click();
+  await expect(morning.getByText('Acomodar bebidas', { exact: true })).toHaveCount(0);
+  // The afternoon copies the morning list, so the employee gets one task at any hour.
+  await afternoon
+    .getByLabel('Copiar tareas a Turno tarde')
+    .selectOption({ label: 'Caja 2 · Turno mañana' });
+  await expect(afternoon.getByText('Limpiar mostrador', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Caja 2/ })).toContainText('2');
+  // An extraordinary task goes to one person and can be removed while pending.
+  await page.getByRole('button', { name: 'Tarea extra', exact: true }).click();
+  await page.getByLabel('Persona', { exact: true }).selectOption({ label: 'Ana prueba' });
+  await page.getByLabel('Tarea', { exact: true }).fill('Recibir pedido especial');
+  await page.getByRole('button', { name: 'Asignar tarea', exact: true }).click();
+  const person = page.locator('.task-person');
+  await expect(person.getByRole('heading', { name: 'Ana prueba' })).toBeVisible();
+  await expect(person.getByText('Tarea extra', { exact: true })).toBeVisible();
+  await person.getByRole('button', { name: 'Quitar Recibir pedido especial' }).click();
+  await expect(person).toHaveCount(0);
   await nav(page, 'Configuración');
   await nav(page, 'Caja general');
   await page.getByLabel('Efectivo total · MXN').fill('10000');
@@ -178,8 +199,12 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   expect(data.branch.balance_cents).toBe('219000');
   // The general cash balance comes from the server's totals over every movement.
   expect(data.treasury_totals.cash_cents).toBe('970000');
-  expect(data.tasks[0].completed_at).toBeTruthy();
-  expect(data.tasks[0].media_id).toBeTruthy();
+  // Both employees entered register 2, so each received the list; only the first one did it.
+  expect(data.tasks.map((t: any) => t.title)).toEqual(['Limpiar mostrador', 'Limpiar mostrador']);
+  const done = data.tasks.find((t: any) => t.user_id === firstId);
+  expect(done).toMatchObject({ register_number: 2, half: false });
+  expect(done.completed_at).toBeTruthy();
+  expect(done.media_id).toBeTruthy();
   // Clock rollback still blocks capture, but nine hours do not expire the prepared access.
   await context.setOffline(true);
   // Wait until the app noticed the lost connection before capturing.

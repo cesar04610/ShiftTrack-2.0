@@ -874,33 +874,122 @@ test('turno del día anterior exige conteo antes de permitir pagos', async () =>
     '-1000',
   );
 });
-test('tareas recurrentes se generan una sola vez, fotografías privadas y Excel real', async () => {
+test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel real', async () => {
   // Tasks belong to the work day, which runs until 05:00 the next morning.
   const date = shiftBusinessDate(new Date(), 'America/Chihuahua');
+  const { assignSetupTasks } = await import('../apps/api/src/task-setup.js');
+  const zone = { id: branch, timezone: 'America/Chihuahua' };
+  // 16:00 in Chihuahua (UTC-6) on the current work day, whenever the suite runs.
+  const afternoon = new Date(`${date}T22:00:00Z`);
+  const today = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const list = { branch_id: branch, shift: 'afternoon', half: false, register_number: 1 };
+  a.equal((await call('/tasks/setup', { ...list, title: 'Aseo diario' })).status, 201);
+  // A task of another weekday, another shift length and another register never reach this person.
   a.equal(
-    (await call('/tasks/catalog', { branch_id: branch, title: 'Aseo diario', priority: 'normal' }))
+    (await call('/tasks/setup', { ...list, title: 'Otro día', weekdays: [(today + 1) % 7] }))
       .status,
     201,
   );
-  const template = (await sql.query('SELECT id FROM task_catalog WHERE branch_id=$1', [branch]))
-    .rows[0].id;
+  a.equal((await call('/tasks/setup', { ...list, half: true, title: 'Medio turno' })).status, 201);
   a.equal(
-    (
-      await call('/tasks/assignments', {
-        branch_id: branch,
-        catalog_id: template,
-        user_id: employee.id,
-        recurrence: 'daily',
-        start_date: date,
-      })
-    ).status,
+    (await call('/tasks/setup', { ...list, register_number: 2, title: 'Caja dos' })).status,
     201,
   );
-  const { generateTasks } = await import('../apps/api/src/modules.js');
+  a.equal(
+    (await call('/tasks/setup', { ...list, title: 'Sin permiso' }, employeeToken)).status,
+    403,
+  );
+  a.equal((await call('/tasks/setup', { ...list, register_number: 99, title: 'X' })).status, 400);
+  const assigned = async () =>
+    (
+      await sql.query(
+        'SELECT title,register_number,half FROM tasks WHERE branch_id=$1 AND user_id=$2 AND setup_item_id IS NOT NULL ORDER BY title',
+        [branch, employee.id],
+      )
+    ).rows;
+  // The schedule decides the shift: full afternoon first, a half shift later.
+  const turn = randomUUID();
+  const schedule = (start: string, end: string) =>
+    sql.query(
+      `INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT(branch_id,id) DO UPDATE SET start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time`,
+      [branch, turn, employee.id, date, start, end],
+    );
+  await schedule('15:00', '21:30');
   await transaction(branch, async (db) => {
-    await generateTasks(db, branch, date);
-    await generateTasks(db, branch, date);
+    await assignSetupTasks(db, zone, employee.id, 1, afternoon);
+    await assignSetupTasks(db, zone, employee.id, 1, afternoon);
   });
+  a.deepEqual(await assigned(), [{ title: 'Aseo diario', register_number: 1, half: false }]);
+  // Picking another register replaces the pending tasks of that shift with the new register's.
+  await transaction(branch, (db) => assignSetupTasks(db, zone, employee.id, 2, afternoon));
+  a.deepEqual(await assigned(), [{ title: 'Caja dos', register_number: 2, half: false }]);
+  // A half-shift schedule decides the list; the copy brings the full list along.
+  await schedule('18:30', '21:30');
+  await transaction(branch, (db) =>
+    assignSetupTasks(db, zone, employee.id, 1, new Date(`${date}T23:00:00Z`)),
+  );
+  a.deepEqual(await assigned(), [{ title: 'Medio turno', register_number: 1, half: true }]);
+  const copied = await call('/tasks/setup/copy', {
+    branch_id: branch,
+    from: { shift: 'afternoon', half: false, register_number: 1 },
+    to: { shift: 'afternoon', half: true, register_number: 1 },
+  });
+  a.equal(copied.body.count, 2);
+  a.equal(
+    (
+      await call('/tasks/setup/copy', {
+        branch_id: branch,
+        from: { shift: 'afternoon', half: false, register_number: 1 },
+        to: { shift: 'afternoon', half: true, register_number: 1 },
+      })
+    ).body.count,
+    0,
+  );
+  await schedule('15:00', '21:30');
+  await transaction(branch, (db) => assignSetupTasks(db, zone, employee.id, 1, afternoon));
+  a.deepEqual(await assigned(), [{ title: 'Aseo diario', register_number: 1, half: false }]);
+  // Renaming follows today's pending task; removing it from the list takes the pending task away.
+  const snapshot = (await call(`/snapshot?branch_id=${branch}`)).body;
+  const item = snapshot.task_setup.find((i: any) => i.title === 'Aseo diario' && !i.half);
+  a.equal(snapshot.task_setup.length, 6);
+  a.equal(
+    (
+      await call(`/tasks/setup/${item.id}`, {
+        branch_id: branch,
+        title: 'Aseo general',
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      })
+    ).status,
+    200,
+  );
+  a.equal((await assigned())[0].title, 'Aseo general');
+  const removable = snapshot.task_setup.find((i: any) => i.title === 'Caja dos');
+  await transaction(branch, (db) => assignSetupTasks(db, zone, employee.id, 2, afternoon));
+  a.equal((await call(`/tasks/setup/${removable.id}/delete`, { branch_id: branch })).status, 200);
+  a.deepEqual(await assigned(), []);
+  await transaction(branch, (db) => assignSetupTasks(db, zone, employee.id, 1, afternoon));
+  // An extraordinary task can be removed while pending; a task of a list cannot.
+  const extra = await call('/tasks', {
+    branch_id: branch,
+    user_id: employee.id,
+    title: 'Extra',
+    due_date: date,
+  });
+  a.equal(extra.status, 201);
+  a.equal(
+    (
+      await call('/tasks', {
+        branch_id: branch,
+        user_id: employee.id,
+        title: 'Ayer',
+        due_date: '2020-01-01',
+      })
+    ).status,
+    400,
+  );
+  a.equal((await call(`/tasks/${extra.body.id}/delete`, { branch_id: branch })).status, 200);
+  await sql.query('DELETE FROM schedules WHERE id=$1', [turn]);
   const tasks = (await sql.query('SELECT * FROM tasks WHERE branch_id=$1', [branch])).rows;
   a.equal(tasks.length, 1);
   const photo = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#059669' } })
