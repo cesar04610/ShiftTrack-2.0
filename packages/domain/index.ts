@@ -123,6 +123,17 @@ export type User = {
 };
 
 // Spanish names for audit_events.action, shared by the report screen and its Excel export.
+export const treasuryKinds: Record<string, string> = {
+  opening: 'Saldo inicial',
+  cut: 'Corte de ventas',
+  expense: 'Gasto extraordinario',
+  bank_withdrawal: 'Retiro de banco a efectivo',
+  bank_adjustment: 'Ajuste de banco',
+  cash_adjustment: 'Ajuste de efectivo',
+  supplier_payment: 'Pago a proveedor',
+  supplier_void: 'Ticket anulado',
+  supplier_correction: 'Corrección de ticket',
+};
 export const auditActions: Record<string, string> = {
   'clock.in': 'Entrada al turno',
   'clock.out': 'Salida del turno',

@@ -1,31 +1,89 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
+  Banknote,
+  CheckCircle2,
+  ChevronRight,
   ClipboardCheck,
-  Clock3,
   Download,
+  Landmark,
   PackageX,
-  Receipt,
+  Search,
   ShieldCheck,
   ShoppingBag,
-  Timer,
   Users,
+  Wallet,
+  type LucideIcon,
 } from 'lucide-react';
-import { money, auditActions as actions } from '../../../packages/domain/index.js';
+import { money, auditActions as actions, treasuryKinds } from '../../../packages/domain/index.js';
 import { request, download, imageUrl } from './api';
 import { addDays } from './ScheduleBoard';
 
 // Reports always cover the branch picked at sign-in; only the period changes here.
-const tabs = ['Gastos y proveedores', 'Personal', 'Operación', 'Auditoría'] as const;
-type Tab = (typeof tabs)[number];
+// The screen opens on a short summary; every topic keeps its detail one tap away.
+type Key =
+  | 'ventas'
+  | 'gastos'
+  | 'proveedores'
+  | 'general'
+  | 'personal'
+  | 'tareas'
+  | 'faltantes'
+  | 'auditoria';
+const sections: Record<Key, { title: string; about: string; icon: LucideIcon }> = {
+  ventas: {
+    title: 'Ventas y cortes',
+    about: 'Lo que se vendió y cómo cerró cada caja.',
+    icon: Banknote,
+  },
+  gastos: {
+    title: 'Gastos a proveedores',
+    about: 'Compras y pagos, por proveedor, día o ticket.',
+    icon: ShoppingBag,
+  },
+  proveedores: {
+    title: 'Caja de proveedores',
+    about: 'Apertura, lo esperado y lo contado en cada turno.',
+    icon: Wallet,
+  },
+  general: {
+    title: 'Caja general',
+    about: 'Entradas y salidas de efectivo y banco.',
+    icon: Landmark,
+  },
+  personal: {
+    title: 'Personal',
+    about: 'Horas, asistencia, faltas e incidencias.',
+    icon: Users,
+  },
+  tareas: {
+    title: 'Tareas',
+    about: 'Lo que se cumplió y lo que quedó sin hacer.',
+    icon: ClipboardCheck,
+  },
+  faltantes: {
+    title: 'Faltantes',
+    about: 'Productos reportados como faltantes.',
+    icon: PackageX,
+  },
+  auditoria: {
+    title: 'Auditoría',
+    about: 'Cada operación: quién la hizo y cuándo.',
+    icon: ShieldCheck,
+  },
+};
+// Where a shortcut lands inside a section: its view and its filter.
+type Target = { view?: string; filter?: string };
+
 type Preset = 'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'custom';
 const presets: [Preset, string][] = [
   ['today', 'Hoy'],
   ['yesterday', 'Ayer'],
-  ['week', 'Últimos 7 días'],
+  ['week', '7 días'],
   ['month', 'Este mes'],
-  ['last-month', 'Mes anterior'],
-  ['custom', 'Personalizado'],
+  ['last-month', 'Mes pasado'],
+  ['custom', 'Otro'],
 ];
 function period(preset: Preset, today: string): [string, string] {
   const monthStart = `${today.slice(0, 8)}01`;
@@ -43,7 +101,6 @@ const incidentNames: Record<string, string> = {
   early_exit: 'Salida anticipada',
   missing_cut: 'Sin corte',
 };
-const priorities: Record<string, string> = { alta: 'Alta', normal: 'Normal' };
 
 function when(value: string | null, zone: string, withDate = true) {
   if (!value) return '—';
@@ -63,76 +120,176 @@ function shortDate(date: string) {
   }).format(new Date(`${date.slice(0, 10)}T12:00:00Z`));
 }
 const hours = (n: number) => `${n.toLocaleString('es-MX', { maximumFractionDigits: 1 })} h`;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const signed = (cents: string | bigint) => (BigInt(cents) > 0n ? `+${money(cents)}` : money(cents));
+const abs = (cents: string | bigint) => money(BigInt(cents) < 0n ? -BigInt(cents) : BigInt(cents));
+// A difference reads as what happened to the cash: «faltan $50», not «-$50.00».
+const gap = (cents: string | bigint) =>
+  BigInt(cents) === 0n
+    ? 'Sin diferencia'
+    : `${BigInt(cents) < 0n ? 'Faltan' : 'Sobran'} ${abs(cents)}`;
 
-function Section({
-  title,
-  subtitle,
-  children,
-  aside,
-}: {
-  title: string;
-  subtitle?: string;
-  children: ReactNode;
-  aside?: ReactNode;
-}) {
-  return (
-    <section className="card">
-      <div className="card-title report-card-title">
-        <div>
-          <h2>{title}</h2>
-          {subtitle && <p>{subtitle}</p>}
-        </div>
-        {aside}
-      </div>
-      {children}
-    </section>
+const tones = { warn: ' amber-badge', muted: ' muted-badge', danger: ' danger-badge' };
+const Pill = ({ children, tone }: { children: ReactNode; tone?: 'warn' | 'muted' | 'danger' }) => (
+  <span className={`badge${tone ? tones[tone] : ''}`}>{children}</span>
+);
+const Difference = ({ cents }: { cents: string | null }) =>
+  cents == null ? (
+    <>—</>
+  ) : BigInt(cents) === 0n ? (
+    <span className="rp-ok">Sin diferencia</span>
+  ) : (
+    <Pill tone={BigInt(cents) < 0n ? 'danger' : 'warn'}>{gap(cents)}</Pill>
   );
-}
-function Tile({
-  title,
-  value,
-  foot,
-  icon,
-  tone,
+
+// The few numbers that summarize a section, in one quiet strip.
+function Facts({
+  items,
 }: {
-  title: string;
-  value: string;
-  foot?: string;
-  icon: ReactNode;
-  tone?: 'warn';
+  items: { label: string; value: string; foot?: string; warn?: boolean }[];
 }) {
   return (
-    <div className={`stat${tone === 'warn' ? ' stat-warn' : ''}`}>
-      <div className="stat-top">
-        <span>{title}</span>
-        <i>{icon}</i>
-      </div>
-      <strong>{value}</strong>
-      {foot && <p>{foot}</p>}
+    <div className="rp-facts">
+      {items.map((f) => (
+        <div key={f.label} className={f.warn ? 'warn' : ''}>
+          <span>{f.label}</span>
+          <strong>{f.value}</strong>
+          {f.foot && <small>{f.foot}</small>}
+        </div>
+      ))}
     </div>
   );
 }
-// A table with a text search over every cell and a footer row for totals.
+// One list at a time: the options double as filters and show how many records each holds.
+function Choice({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: [string, string, number?][];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="rp-choice" role="group" aria-label={label}>
+      {options.map(([key, text, count]) => (
+        <button
+          key={key}
+          className={value === key ? 'selected' : ''}
+          aria-pressed={value === key}
+          onClick={() => onChange(key)}
+        >
+          {text}
+          {count != null && <span>{count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+const STEP = 15;
+type Row = { key: string; cells: ReactNode[]; text: string };
+// A table that shows a first batch, searches every cell and stacks into cards on a phone.
 function Grid({
   headers,
   rows,
   empty,
   footer,
-  search = true,
-  className,
+  tools,
 }: {
   headers: string[];
-  rows: { key: string; cells: ReactNode[]; text: string }[];
+  rows: Row[];
   empty: string;
   footer?: ReactNode[];
-  search?: boolean;
-  className?: string;
+  tools?: ReactNode;
 }) {
-  const [query, setQuery] = useState('');
-  const shown = query
-    ? rows.filter((r) => r.text.toLowerCase().includes(query.trim().toLowerCase()))
-    : rows;
-  if (!rows.length)
+  const [query, setQuery] = useState(''),
+    [limit, setLimit] = useState(STEP);
+  const needle = query.trim().toLowerCase();
+  const found = needle ? rows.filter((r) => r.text.toLowerCase().includes(needle)) : rows;
+  const shown = found.slice(0, limit);
+  const searchable = rows.length > 8;
+  return (
+    <>
+      {(tools || searchable) && (
+        <div className="rp-tools">
+          {tools}
+          {searchable && (
+            <label className="rp-search">
+              <Search size={14} />
+              <input
+                type="search"
+                placeholder="Buscar…"
+                aria-label="Buscar en la lista"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setLimit(STEP);
+                }}
+              />
+            </label>
+          )}
+        </div>
+      )}
+      {!found.length ? (
+        <div className="empty">
+          <ClipboardCheck size={30} />
+          <p>{needle ? `Sin resultados para «${query.trim()}».` : empty}</p>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="rp-table">
+            <thead>
+              <tr>
+                {headers.map((h) => (
+                  <th key={h}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r) => (
+                <tr key={r.key}>
+                  {r.cells.map((c, i) => (
+                    <td key={i} data-label={headers[i]}>
+                      <div>{c}</div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+            {footer && !needle && (
+              <tfoot>
+                <tr>
+                  {footer.map((c, i) => (
+                    <td key={i} data-label={headers[i]}>
+                      {c}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+      {found.length > shown.length && (
+        <button className="secondary rp-more" onClick={() => setLimit(limit + STEP * 2)}>
+          Ver más ({found.length - shown.length} restantes)
+        </button>
+      )}
+    </>
+  );
+}
+// Ranked bars: enough to compare suppliers or days without a chart library.
+function Ranking({
+  items,
+  empty,
+}: {
+  items: { key: string; label: string; sub?: string; value: bigint }[];
+  empty: string;
+}) {
+  const max = items.reduce((m, i) => (i.value > m ? i.value : m), 0n);
+  if (!items.length)
     return (
       <div className="empty">
         <ClipboardCheck size={30} />
@@ -140,73 +297,26 @@ function Grid({
       </div>
     );
   return (
-    <>
-      {search && rows.length > 8 && (
-        <input
-          className="report-search"
-          type="search"
-          placeholder="Buscar…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      )}
-      <div className="table-wrap">
-        <table className={className}>
-          <thead>
-            <tr>
-              {headers.map((h) => (
-                <th key={h}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((r) => (
-              <tr key={r.key}>
-                {r.cells.map((c, i) => (
-                  <td key={i} data-label={headers[i]}>
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-          {footer && (
-            <tfoot>
-              <tr>
-                {footer.map((c, i) => (
-                  <td key={i}>{c}</td>
-                ))}
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-      {query && !shown.length && <p className="report-note">Sin resultados para «{query}».</p>}
-    </>
-  );
-}
-// Horizontal bars: enough to compare suppliers or days without a chart library.
-function Bars({ items }: { items: { label: string; value: bigint; foot: string }[] }) {
-  const max = items.reduce((m, i) => (i.value > m ? i.value : m), 0n);
-  if (!items.length || max === 0n) return null;
-  return (
-    <div className="report-bars">
+    <ul className="rp-ranking">
       {items.map((i) => (
-        <div className="report-bar" key={i.label}>
-          <span>{i.label}</span>
+        <li key={i.key}>
           <div>
-            <i style={{ width: `${Math.max(2, Number((i.value * 1000n) / max) / 10)}%` }} />
+            <strong>{i.label}</strong>
+            {i.sub && <small>{i.sub}</small>}
           </div>
-          <strong>{i.foot}</strong>
-        </div>
+          <span className="rp-track">
+            <i
+              style={{
+                width: `${max > 0n && i.value > 0n ? Math.max(2, Number((i.value * 1000n) / max) / 10) : 0}%`,
+              }}
+            />
+          </span>
+          <b>{money(i.value)}</b>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
-const tones = { warn: ' amber-badge', muted: ' muted-badge', danger: ' danger-badge' };
-const Pill = ({ children, tone }: { children: ReactNode; tone?: 'warn' | 'muted' | 'danger' }) => (
-  <span className={`badge${tone ? tones[tone] : ''}`}>{children}</span>
-);
 
 export default function Reports({
   branchId,
@@ -221,28 +331,14 @@ export default function Reports({
   today: string;
   onError: (e: unknown) => void;
 }) {
-  const [tab, setTab] = useState<Tab>(() => {
-    try {
-      const saved = localStorage.getItem('reports.tab') as Tab;
-      return tabs.includes(saved) ? saved : tabs[0];
-    } catch {
-      return tabs[0];
-    }
-  });
-  const [preset, setPreset] = useState<Preset>('today'),
+  const [open, setOpen] = useState<{ key: Key; target: Target } | null>(null),
+    [preset, setPreset] = useState<Preset>('today'),
     [custom, setCustom] = useState<[string, string]>([today, today]),
     [data, setData] = useState<any>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
     [exporting, setExporting] = useState(false);
   const [from, to] = preset === 'custom' ? custom : period(preset, today);
-  useEffect(() => {
-    try {
-      localStorage.setItem('reports.tab', tab);
-    } catch {
-      /* Solo recuerda la pestaña; sin almacenamiento se abre la primera. */
-    }
-  }, [tab]);
   useEffect(() => {
     if (!from || !to || from > to) return;
     let current = true;
@@ -256,15 +352,21 @@ export default function Reports({
       current = false;
     };
   }, [branchId, from, to]);
+  const go = (key: Key, target: Target = {}) => {
+    setOpen({ key, target });
+    window.scrollTo({ top: 0 });
+  };
   const label = from === to ? shortDate(from) : `${shortDate(from)} – ${shortDate(to)}`;
+  const section = open && sections[open.key];
   return (
     <div className="reports">
-      <div className="report-toolbar card">
-        <div className="report-periods" role="group" aria-label="Periodo">
+      <div className="rp-bar">
+        <div className="rp-periods" role="group" aria-label="Periodo">
           {presets.map(([key, text]) => (
             <button
               key={key}
-              className={`report-chip${preset === key ? ' selected' : ''}`}
+              className={preset === key ? 'selected' : ''}
+              aria-pressed={preset === key}
               onClick={() => {
                 if (key === 'custom') setCustom([from, to]);
                 setPreset(key);
@@ -274,334 +376,659 @@ export default function Reports({
             </button>
           ))}
         </div>
-        {preset === 'custom' && (
-          <div className="report-dates">
-            <label>
-              Desde
-              <input
-                type="date"
-                value={custom[0]}
-                max={custom[1]}
-                onChange={(e) => setCustom([e.target.value, custom[1]])}
-              />
-            </label>
-            <label>
-              Hasta
-              <input
-                type="date"
-                value={custom[1]}
-                min={custom[0]}
-                max={today}
-                onChange={(e) => setCustom([custom[0], e.target.value])}
-              />
-            </label>
-          </div>
-        )}
-        <div className="report-toolbar-end">
-          <span>
-            {branchName} · {label}
-          </span>
-          <button
-            className="primary"
-            disabled={exporting || !data}
-            onClick={() => {
-              setExporting(true);
-              download(
-                `/reports/export?branch_id=${branchId}&from=${from}&to=${to}`,
-                `reportes-${from}-a-${to}.xlsx`,
-              )
-                .catch(onError)
-                .finally(() => setExporting(false));
-            }}
-          >
-            <Download size={15} /> {exporting ? 'Generando…' : 'Exportar Excel'}
-          </button>
+        <button
+          className="secondary rp-export"
+          disabled={exporting || !data}
+          title="Descarga todo el periodo en un archivo de Excel"
+          onClick={() => {
+            setExporting(true);
+            download(
+              `/reports/export?branch_id=${branchId}&from=${from}&to=${to}`,
+              `reportes-${from}-a-${to}.xlsx`,
+            )
+              .catch(onError)
+              .finally(() => setExporting(false));
+          }}
+        >
+          <Download size={15} /> {exporting ? 'Generando…' : 'Descargar Excel'}
+        </button>
+      </div>
+      {preset === 'custom' && (
+        <div className="rp-dates">
+          <label>
+            Desde
+            <input
+              type="date"
+              value={custom[0]}
+              max={custom[1]}
+              onChange={(e) => setCustom([e.target.value, custom[1]])}
+            />
+          </label>
+          <label>
+            Hasta
+            <input
+              type="date"
+              value={custom[1]}
+              min={custom[0]}
+              max={today}
+              onChange={(e) => setCustom([custom[0], e.target.value])}
+            />
+          </label>
         </div>
-      </div>
-      <div className="report-tabs" role="tablist">
-        {tabs.map((t) => (
-          <button
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            className={tab === t ? 'selected' : ''}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      )}
+      <p className="rp-context">
+        {branchName} · <strong>{label}</strong>
+        {loading && data && <span> · Actualizando…</span>}
+      </p>
       {error && (
         <div className="error" role="alert">
           {error}
         </div>
       )}
       {!data ? (
-        <p className="report-note">{loading ? 'Cargando reportes…' : ''}</p>
+        !error && <p className="rp-note">Cargando reportes…</p>
+      ) : !open || !section ? (
+        <Home r={data} go={go} />
       ) : (
-        <div className={loading ? 'report-body is-loading' : 'report-body'}>
-          {tab === 'Gastos y proveedores' && <Expenses r={data.expenses} zone={zone} />}
-          {tab === 'Personal' && <Staff r={data.staff} zone={zone} />}
-          {tab === 'Operación' && (
-            <Operations r={data.operations} zone={zone} branchId={branchId} onError={onError} />
-          )}
-          {tab === 'Auditoría' && <Audit branchId={branchId} from={from} to={to} zone={zone} />}
-        </div>
+        <section className="card rp-section">
+          <header className="rp-section-head">
+            <button className="rp-back" onClick={() => setOpen(null)}>
+              <ArrowLeft size={15} /> Reportes
+            </button>
+            <div>
+              <i>
+                <section.icon size={18} />
+              </i>
+              <div>
+                <h2>{section.title}</h2>
+                <p>{section.about}</p>
+              </div>
+            </div>
+          </header>
+          {/* The key restarts a section when a shortcut asks for another view of it. */}
+          <Fragment key={`${open.key}:${open.target.view}:${open.target.filter}`}>
+            {open.key === 'ventas' && <Sales r={data.sales} target={open.target} />}
+            {open.key === 'gastos' && (
+              <Expenses r={data.expenses} zone={zone} target={open.target} />
+            )}
+            {open.key === 'proveedores' && <SupplierCash r={data.expenses} />}
+            {open.key === 'general' && <Treasury r={data.treasury} zone={zone} />}
+            {open.key === 'personal' && <Staff r={data.staff} zone={zone} target={open.target} />}
+            {open.key === 'tareas' && (
+              <Tasks
+                r={data.operations}
+                zone={zone}
+                branchId={branchId}
+                onError={onError}
+                target={open.target}
+              />
+            )}
+            {open.key === 'faltantes' && (
+              <Shortages r={data.operations} zone={zone} target={open.target} />
+            )}
+            {open.key === 'auditoria' && (
+              <Audit branchId={branchId} from={from} to={to} zone={zone} />
+            )}
+          </Fragment>
+        </section>
       )}
     </div>
   );
 }
 
-function Expenses({ r, zone }: { r: any; zone: string }) {
-  const t = r.totals;
-  const difference = BigInt(t.shift_difference_cents);
+// The opening view: what needs a look, and one door per topic.
+function Home({ r, go }: { r: any; go: (key: Key, target?: Target) => void }) {
+  const [all, setAll] = useState(false);
+  const sales = r.sales.totals,
+    spend = r.expenses.totals,
+    staff = r.staff.totals,
+    ops = r.operations.totals,
+    cash = r.treasury.totals;
+  const shifts: any[] = r.expenses.shifts;
+  const uneven = shifts.filter((s) => s.difference_cents != null && BigInt(s.difference_cents));
+  const noCut = r.staff.incidents.filter((i: any) => i.kind === 'missing_cut').length;
+  const attention: { key: string; text: string; to: Key; target?: Target }[] = [];
+  if (sales.with_difference)
+    attention.push({
+      key: 'cuts',
+      text: `${plural(sales.with_difference, 'corte con diferencia', 'cortes con diferencia')} · ${gap(sales.difference_cents).toLowerCase()} en total`,
+      to: 'ventas',
+      target: { view: 'cuts', filter: 'uneven' },
+    });
+  if (uneven.length)
+    attention.push({
+      key: 'shifts',
+      text: `Caja de proveedores: ${plural(uneven.length, 'turno con diferencia', 'turnos con diferencia')}`,
+      to: 'proveedores',
+    });
+  if (noCut)
+    attention.push({
+      key: 'no-cut',
+      text: plural(noCut, 'turno sin corte', 'turnos sin corte'),
+      to: 'personal',
+      target: { view: 'incidents' },
+    });
+  if (staff.absences)
+    attention.push({
+      key: 'absences',
+      text: plural(staff.absences, 'falta', 'faltas'),
+      to: 'personal',
+      target: { view: 'incidents' },
+    });
+  if (staff.late || staff.early_exit)
+    attention.push({
+      key: 'late',
+      text: [
+        staff.late && plural(staff.late, 'retardo', 'retardos'),
+        staff.early_exit && plural(staff.early_exit, 'salida anticipada', 'salidas anticipadas'),
+      ]
+        .filter(Boolean)
+        .join(' y '),
+      to: 'personal',
+      target: { view: 'incidents' },
+    });
+  if (ops.tasks_missed)
+    attention.push({
+      key: 'tasks',
+      text: plural(ops.tasks_missed, 'tarea no realizada', 'tareas no realizadas'),
+      to: 'tareas',
+      target: { filter: 'missed' },
+    });
+  if (ops.shortages_open)
+    attention.push({
+      key: 'shortages',
+      text: plural(ops.shortages_open, 'faltante sin resolver', 'faltantes sin resolver'),
+      to: 'faltantes',
+      target: { filter: 'open' },
+    });
+  if (spend.voided)
+    attention.push({
+      key: 'voided',
+      text: plural(spend.voided, 'ticket anulado', 'tickets anulados'),
+      to: 'gastos',
+      target: { view: 'tickets', filter: 'voided' },
+    });
+  const pendingTasks = ops.tasks - ops.tasks_done - ops.tasks_missed;
+  const cards: { key: Key; value: string; foot: string }[] = [
+    {
+      key: 'ventas',
+      value: money(sales.sales_cents),
+      foot: sales.cuts
+        ? `${plural(sales.cuts, 'corte', 'cortes')} · ${money(sales.card_cents)} con tarjeta`
+        : 'Sin cortes en el periodo',
+    },
+    {
+      key: 'gastos',
+      value: money(spend.net_cents),
+      foot: spend.tickets
+        ? `${plural(spend.tickets, 'ticket', 'tickets')} · ${plural(r.expenses.by_supplier.length, 'proveedor', 'proveedores')}`
+        : 'Sin compras en el periodo',
+    },
+    {
+      key: 'proveedores',
+      value: plural(shifts.length, 'turno', 'turnos'),
+      foot: shifts.length ? gap(spend.shift_difference_cents) : 'Sin turnos en el periodo',
+    },
+    {
+      key: 'general',
+      value: plural(cash.entries, 'movimiento', 'movimientos'),
+      foot: cash.entries
+        ? `Efectivo ${signed(cash.cash_cents)} · Banco ${signed(cash.bank_cents)}`
+        : 'Sin movimientos en el periodo',
+    },
+    {
+      key: 'personal',
+      value: hours(staff.hours),
+      foot: `${plural(r.staff.people.length, 'persona', 'personas')} con actividad`,
+    },
+    {
+      key: 'tareas',
+      value: ops.tasks ? `${Math.round((ops.tasks_done / ops.tasks) * 100)}%` : '—',
+      foot: ops.tasks
+        ? `${ops.tasks_done} de ${ops.tasks} cumplidas${pendingTasks ? ` · ${pendingTasks} pendientes` : ''}`
+        : 'Sin tareas en el periodo',
+    },
+    {
+      key: 'faltantes',
+      value: String(ops.shortages),
+      foot: ops.shortages
+        ? `${ops.shortages - ops.shortages_open} resueltos · ${ops.shortages_open} pendientes`
+        : 'Sin faltantes reportados',
+    },
+    { key: 'auditoria', value: 'Bitácora', foot: 'Todas las operaciones registradas' },
+  ];
   return (
     <>
-      <div className="stats">
-        <Tile
-          title="Gasto neto"
-          value={money(t.net_cents)}
-          foot={`Compras ${money(t.gross_cents)} − correcciones ${money(t.corrected_cents)}`}
-          icon={<ShoppingBag />}
-        />
-        <Tile
-          title="Tickets"
-          value={String(t.tickets)}
-          foot={t.voided ? `${t.voided} anulados aparte` : 'Sin tickets anulados'}
-          icon={<Receipt />}
-        />
-        <Tile
-          title="Proveedores"
-          value={String(r.by_supplier.length)}
-          foot="Con compras en el periodo"
-          icon={<Users />}
-        />
-        <Tile
-          title="Diferencia caja proveedores"
-          value={money(t.shift_difference_cents)}
-          foot={`${r.shifts.length} turnos de caja`}
-          icon={<AlertTriangle />}
-          tone={difference !== 0n ? 'warn' : undefined}
-        />
+      {attention.length ? (
+        <section className="rp-attention" aria-label="Requiere tu atención">
+          <h2>
+            <AlertTriangle size={15} /> Requiere tu atención
+          </h2>
+          <ul>
+            {(all ? attention : attention.slice(0, 4)).map((a) => (
+              <li key={a.key}>
+                <button onClick={() => go(a.to, a.target)}>
+                  <span>{a.text}</span>
+                  <ChevronRight size={15} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {!all && attention.length > 4 && (
+            <button className="rp-rest" onClick={() => setAll(true)}>
+              Ver {attention.length - 4} más
+            </button>
+          )}
+        </section>
+      ) : (
+        <p className="rp-calm">
+          <CheckCircle2 size={16} /> Todo en orden: sin diferencias, faltas ni pendientes en este
+          periodo.
+        </p>
+      )}
+      <div className="rp-cards">
+        {cards.map((c) => {
+          const s = sections[c.key];
+          return (
+            <button key={c.key} className="rp-card" onClick={() => go(c.key)}>
+              <span className="rp-card-top">
+                <i>
+                  <s.icon size={17} />
+                </i>
+                {s.title}
+                <ChevronRight size={16} />
+              </span>
+              <strong>{c.value}</strong>
+              <small>{c.foot}</small>
+            </button>
+          );
+        })}
       </div>
-      <div className="grid report-grid">
-        <Section
-          title="Gasto por proveedor"
-          subtitle="Ordenado de mayor a menor; no incluye anulados."
-        >
-          <Bars
-            items={r.by_supplier.slice(0, 8).map((s: any) => ({
-              label: s.company,
-              value: BigInt(s.net_cents),
-              foot: money(s.net_cents),
-            }))}
-          />
-          <Grid
-            empty="Sin compras en este periodo."
-            headers={['Proveedor', 'Tickets', 'Compras', 'Correcciones', 'Neto']}
-            rows={r.by_supplier.map((s: any) => ({
-              key: s.company,
-              text: s.company,
-              cells: [
-                s.company,
-                s.tickets,
-                money(s.gross_cents),
-                money(s.corrected_cents),
-                <strong>{money(s.net_cents)}</strong>,
-              ],
-            }))}
-            footer={[
-              'Total',
-              t.tickets,
-              money(t.gross_cents),
-              money(t.corrected_cents),
-              <strong>{money(t.net_cents)}</strong>,
-            ]}
-          />
-        </Section>
-        <Section title="Gasto por día">
-          <Bars
-            items={r.by_day.map((d: any) => ({
-              label: shortDate(d.date),
-              value: BigInt(d.gross_cents),
-              foot: money(d.gross_cents),
-            }))}
-          />
-          {!r.by_day.length && <p className="report-note">Sin compras en este periodo.</p>}
-        </Section>
-      </div>
-      <Section
-        title="Tickets de compra y pago"
-        subtitle={`${r.tickets.length} registros en el periodo`}
-      >
+    </>
+  );
+}
+
+function Sales({ r, target }: { r: any; target: Target }) {
+  const t = r.totals;
+  const [view, setView] = useState(target.view || 'cuts'),
+    [uneven, setUneven] = useState(target.filter === 'uneven');
+  const cuts = uneven ? r.cuts.filter((c: any) => BigInt(c.difference_cents)) : r.cuts;
+  return (
+    <>
+      <Facts
+        items={[
+          { label: 'Ventas', value: money(t.sales_cents), foot: plural(t.cuts, 'corte', 'cortes') },
+          { label: 'Con tarjeta', value: money(t.card_cents) },
+          { label: 'En efectivo', value: money(t.cash_cents) },
+          {
+            label: 'Diferencia en cortes',
+            value: gap(t.difference_cents),
+            foot: t.with_difference
+              ? plural(t.with_difference, 'corte no cuadró', 'cortes no cuadraron')
+              : undefined,
+            warn: !!t.with_difference,
+          },
+        ]}
+      />
+      <Choice
+        label="Vista"
+        value={view}
+        onChange={setView}
+        options={[
+          ['cuts', 'Cortes', r.cuts.length],
+          ['days', 'Ventas por día'],
+        ]}
+      />
+      {view === 'days' ? (
+        <Ranking
+          empty="Sin ventas en este periodo."
+          items={r.by_day.map((d: any) => ({
+            key: d.date,
+            label: shortDate(d.date),
+            sub: plural(d.cuts, 'corte', 'cortes'),
+            value: BigInt(d.sales_cents),
+          }))}
+        />
+      ) : (
         <Grid
-          empty="Sin tickets en este periodo."
-          headers={['Fecha', 'Proveedor', 'Importe', 'Registró', 'Estado', 'Nota']}
-          rows={r.tickets.map((x: any) => ({
+          empty={uneven ? 'Ningún corte con diferencia.' : 'Sin cortes en este periodo.'}
+          tools={
+            <label className="rp-check">
+              <input
+                type="checkbox"
+                checked={uneven}
+                onChange={(e) => setUneven(e.target.checked)}
+              />
+              Solo con diferencia
+            </label>
+          }
+          headers={['Fecha', 'Responsable', 'Ventas', 'Tarjeta', 'Efectivo contado', 'Diferencia']}
+          rows={cuts.map((c: any) => ({
+            key: c.id,
+            text: `${c.employee} caja ${c.register_number} ${c.label} ${c.note}`,
+            cells: [
+              shortDate(c.date),
+              <>
+                <strong>{c.employee}</strong>
+                <small className="rp-sub">
+                  Caja {c.register_number}
+                  {c.label ? ` · ${c.label}` : ''}
+                </small>
+                {c.note && <small className="rp-sub">«{c.note}»</small>}
+              </>,
+              money(c.sales_cents),
+              money(c.card_cents),
+              <>
+                {money(c.declared_cents)}
+                <small className="rp-sub">esperado {money(c.expected_cents)}</small>
+              </>,
+              <Difference cents={c.difference_cents} />,
+            ],
+          }))}
+        />
+      )}
+    </>
+  );
+}
+
+function Expenses({ r, zone, target }: { r: any; zone: string; target: Target }) {
+  const t = r.totals;
+  const [view, setView] = useState(target.view || 'suppliers'),
+    [voided, setVoided] = useState(target.filter === 'voided');
+  const tickets = voided ? r.tickets.filter((x: any) => x.voided) : r.tickets;
+  return (
+    <>
+      <Facts
+        items={[
+          {
+            label: 'Gasto neto',
+            value: money(t.net_cents),
+            foot: BigInt(t.corrected_cents)
+              ? `Compras ${money(t.gross_cents)} − correcciones ${money(t.corrected_cents)}`
+              : undefined,
+          },
+          {
+            label: 'Tickets',
+            value: String(t.tickets),
+            foot: t.voided ? `${plural(t.voided, 'anulado', 'anulados')} aparte` : undefined,
+            warn: !!t.voided,
+          },
+          { label: 'Proveedores', value: String(r.by_supplier.length) },
+        ]}
+      />
+      <Choice
+        label="Vista"
+        value={view}
+        onChange={setView}
+        options={[
+          ['suppliers', 'Por proveedor', r.by_supplier.length],
+          ['days', 'Por día'],
+          ['tickets', 'Tickets', r.tickets.length],
+          ['corrections', 'Correcciones', r.corrections.length],
+        ]}
+      />
+      {view === 'suppliers' && (
+        <Ranking
+          empty="Sin compras en este periodo."
+          items={r.by_supplier.map((s: any) => ({
+            key: s.company,
+            label: s.company,
+            sub:
+              plural(s.tickets, 'ticket', 'tickets') +
+              (BigInt(s.corrected_cents) ? ` · corregido −${money(s.corrected_cents)}` : ''),
+            value: BigInt(s.net_cents),
+          }))}
+        />
+      )}
+      {view === 'days' && (
+        <Ranking
+          empty="Sin compras en este periodo."
+          items={r.by_day.map((d: any) => ({
+            key: d.date,
+            label: shortDate(d.date),
+            sub: plural(d.tickets, 'ticket', 'tickets'),
+            value: BigInt(d.gross_cents),
+          }))}
+        />
+      )}
+      {view === 'tickets' && (
+        <Grid
+          empty={voided ? 'Sin tickets anulados.' : 'Sin tickets en este periodo.'}
+          tools={
+            <label className="rp-check">
+              <input
+                type="checkbox"
+                checked={voided}
+                onChange={(e) => setVoided(e.target.checked)}
+              />
+              Solo anulados
+            </label>
+          }
+          headers={['Fecha', 'Proveedor', 'Importe', 'Registró', 'Estado']}
+          rows={tickets.map((x: any) => ({
             key: x.id,
             text: `${x.company} ${x.employee} ${x.note} ${x.void_reason || ''}`,
             cells: [
               when(x.occurred_at, zone),
-              x.company,
-              BigInt(x.corrected_cents) ? (
-                <>
-                  {money(x.amount_cents)}
-                  <small className="report-sub">corregido −{money(x.corrected_cents)}</small>
-                </>
-              ) : (
-                money(x.amount_cents)
-              ),
+              <>
+                <strong>{x.company}</strong>
+                {x.note && <small className="rp-sub">{x.note}</small>}
+              </>,
+              <>
+                {money(x.amount_cents)}
+                {BigInt(x.corrected_cents) !== 0n && (
+                  <small className="rp-sub">corregido −{money(x.corrected_cents)}</small>
+                )}
+              </>,
               x.employee,
               x.voided ? (
                 <Pill tone="warn">Anulado{x.void_reason ? `: ${x.void_reason}` : ''}</Pill>
               ) : (
                 <Pill>Registrado</Pill>
               ),
-              x.note || '—',
             ],
           }))}
         />
-      </Section>
-      <div className="grid report-grid">
-        <Section
-          title="Turnos de caja proveedores"
-          subtitle="Apertura, lo que el sistema esperaba y lo que se contó al cerrar."
-        >
-          <Grid
-            empty="Sin turnos de caja en este periodo."
-            headers={['Fecha', 'Responsable', 'Apertura', 'Esperado', 'Contado', 'Diferencia']}
-            rows={r.shifts.map((s: any) => ({
-              key: s.id,
-              text: s.employee,
-              cells: [
-                shortDate(s.date),
-                s.employee,
-                money(s.opening_cents),
-                s.expected_cents == null ? '—' : money(s.expected_cents),
-                s.counted_cents == null ? (
-                  <Pill tone="muted">Abierto</Pill>
-                ) : (
-                  money(s.counted_cents)
-                ),
-                s.difference_cents == null ? (
-                  '—'
-                ) : BigInt(s.difference_cents) !== 0n ? (
-                  <Pill tone="warn">{money(s.difference_cents)}</Pill>
-                ) : (
-                  money(s.difference_cents)
-                ),
-              ],
-            }))}
-          />
-        </Section>
-        <Section title="Correcciones a tickets">
-          <Grid
-            empty="Sin correcciones en este periodo."
-            headers={['Fecha', 'Proveedor', 'Tipo', 'Importe', 'Motivo']}
-            rows={r.corrections.map((c: any) => ({
-              key: c.id,
-              text: `${c.company} ${c.reason} ${c.employee}`,
-              cells: [
-                when(c.occurred_at, zone),
-                c.company,
-                c.type === 'refund' ? 'Reembolso' : 'Documental',
-                money(c.amount_cents),
-                c.reason,
-              ],
-            }))}
-          />
-        </Section>
-      </div>
+      )}
+      {view === 'corrections' && (
+        <Grid
+          empty="Sin correcciones en este periodo."
+          headers={['Fecha', 'Proveedor', 'Tipo', 'Importe', 'Motivo', 'Registró']}
+          rows={r.corrections.map((c: any) => ({
+            key: c.id,
+            text: `${c.company} ${c.reason} ${c.employee}`,
+            cells: [
+              when(c.occurred_at, zone),
+              <strong>{c.company}</strong>,
+              c.type === 'refund' ? 'Reembolso' : 'Documental',
+              money(c.amount_cents),
+              c.reason,
+              c.employee,
+            ],
+          }))}
+        />
+      )}
     </>
   );
 }
 
-function Staff({ r, zone }: { r: any; zone: string }) {
+function SupplierCash({ r }: { r: any }) {
+  const shifts: any[] = r.shifts;
+  const open = shifts.filter((s) => s.counted_cents == null).length;
+  const uneven = shifts.filter((s) => s.difference_cents != null && BigInt(s.difference_cents));
+  return (
+    <>
+      <Facts
+        items={[
+          {
+            label: 'Turnos',
+            value: String(shifts.length),
+            foot: open ? `${plural(open, 'abierto', 'abiertos')} ahora` : undefined,
+          },
+          {
+            label: 'Diferencia acumulada',
+            value: gap(r.totals.shift_difference_cents),
+            foot: uneven.length
+              ? plural(uneven.length, 'turno no cuadró', 'turnos no cuadraron')
+              : undefined,
+            warn: !!uneven.length,
+          },
+        ]}
+      />
+      <Grid
+        empty="Sin turnos de caja en este periodo."
+        headers={['Fecha', 'Responsable', 'Apertura', 'Esperado', 'Contado', 'Diferencia']}
+        rows={shifts.map((s) => ({
+          key: s.id,
+          text: s.employee,
+          cells: [
+            shortDate(s.date),
+            <strong>{s.employee}</strong>,
+            money(s.opening_cents),
+            s.expected_cents == null ? '—' : money(s.expected_cents),
+            s.counted_cents == null ? <Pill tone="muted">Abierto</Pill> : money(s.counted_cents),
+            <Difference cents={s.difference_cents} />,
+          ],
+        }))}
+      />
+    </>
+  );
+}
+
+function Treasury({ r, zone }: { r: any; zone: string }) {
+  const amount = (cents: string) =>
+    BigInt(cents) === 0n ? (
+      '—'
+    ) : (
+      <span className={BigInt(cents) < 0n ? 'negative-amount' : ''}>{signed(cents)}</span>
+    );
+  return (
+    <>
+      <Facts
+        items={[
+          { label: 'Movimientos', value: String(r.totals.entries) },
+          {
+            label: 'Efectivo',
+            value: signed(r.totals.cash_cents),
+            foot: 'Cambio en el periodo',
+          },
+          { label: 'Banco', value: signed(r.totals.bank_cents), foot: 'Cambio en el periodo' },
+        ]}
+      />
+      <Grid
+        empty="Sin movimientos de caja general en este periodo."
+        headers={['Fecha', 'Concepto', 'Registró', 'Efectivo', 'Banco']}
+        rows={r.entries.map((e: any) => ({
+          key: e.id,
+          text: `${e.note} ${treasuryKinds[e.kind] || ''} ${e.employee}`,
+          cells: [
+            when(e.occurred_at, zone),
+            <>
+              <strong>{treasuryKinds[e.kind] || e.note || e.kind}</strong>
+              {e.note && e.note !== treasuryKinds[e.kind] && (
+                <small className="rp-sub">{e.note}</small>
+              )}
+            </>,
+            e.employee,
+            amount(e.cash_cents),
+            amount(e.bank_cents),
+          ],
+        }))}
+      />
+    </>
+  );
+}
+
+function Staff({ r, zone, target }: { r: any; zone: string; target: Target }) {
   const t = r.totals;
-  const incidents = [
+  const [view, setView] = useState(target.view || 'people'),
+    [person, setPerson] = useState('');
+  const incidents: any[] = [
     ...r.absences.map((a: any) => ({
       key: `a-${a.id}`,
+      user_id: a.user_id,
       date: a.date,
       kind: 'Falta',
-      employee: a.employee,
-      detail: `Horario ${a.start_time}–${a.end_time} sin entrada`,
+      detail: `${a.employee} · horario ${a.start_time}–${a.end_time} sin entrada`,
     })),
     ...r.incidents.map((i: any) => ({
       key: i.id,
+      user_id: i.user_id,
       date: i.date,
       kind: incidentNames[i.kind] || i.kind,
-      employee: '',
       detail: i.message,
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
+  const mine = (list: any[]) => (person ? list.filter((x) => x.user_id === person) : list);
+  const who = (
+    <select
+      className="rp-select"
+      aria-label="Persona"
+      value={person}
+      onChange={(e) => setPerson(e.target.value)}
+    >
+      <option value="">Todo el personal</option>
+      {r.people.map((p: any) => (
+        <option key={p.user_id} value={p.user_id}>
+          {p.employee}
+        </option>
+      ))}
+    </select>
+  );
   return (
     <>
-      <div className="stats">
-        <Tile
-          title="Horas trabajadas"
-          value={hours(t.hours)}
-          icon={<Timer />}
-          foot="Entradas cerradas"
-        />
-        <Tile
-          title="Faltas"
-          value={String(t.absences)}
-          foot="Horarios sin entrada registrada"
-          icon={<AlertTriangle />}
-          tone={t.absences ? 'warn' : undefined}
-        />
-        <Tile
-          title="Retardos y salidas"
-          value={`${t.late} · ${t.early_exit}`}
-          foot="Retardos · salidas anticipadas"
-          icon={<Clock3 />}
-          tone={t.late || t.early_exit ? 'warn' : undefined}
-        />
-        <Tile
-          title="Tareas cumplidas"
-          value={t.tasks ? `${Math.round((t.tasks_done / t.tasks) * 100)}%` : '—'}
-          foot={`${t.tasks_done} de ${t.tasks} · ${t.tasks_missed} no realizadas`}
-          icon={<ClipboardCheck />}
-          tone={t.tasks_missed ? 'warn' : undefined}
-        />
-      </div>
-      <Section
-        title="Resumen por empleado"
-        subtitle="Programado contra lo que realmente se registró."
-      >
+      <Facts
+        items={[
+          { label: 'Horas trabajadas', value: hours(t.hours), foot: 'Entradas con salida' },
+          { label: 'Faltas', value: String(t.absences), warn: !!t.absences },
+          { label: 'Retardos', value: String(t.late), warn: !!t.late },
+          { label: 'Salidas anticipadas', value: String(t.early_exit), warn: !!t.early_exit },
+        ]}
+      />
+      <Choice
+        label="Vista"
+        value={view}
+        onChange={setView}
+        options={[
+          ['people', 'Por persona', r.people.length],
+          ['attendance', 'Asistencia', r.attendance.length],
+          ['incidents', 'Faltas e incidencias', incidents.length],
+        ]}
+      />
+      {view === 'people' && (
         <Grid
           empty="Sin actividad del personal en este periodo."
-          headers={[
-            'Empleado',
-            'Turnos',
-            'Horas programadas',
-            'Días trabajados',
-            'Horas trabajadas',
-            'Faltas',
-            'Retardos',
-            'Salidas antes',
-            'Tareas',
-          ]}
+          headers={['Persona', 'Horas', 'Días', 'Faltas', 'Retardos', 'Salidas antes', 'Tareas']}
           rows={r.people.map((p: any) => ({
             key: p.user_id,
             text: p.employee,
             cells: [
-              <strong>{p.employee}</strong>,
-              p.scheduled,
-              hours(p.scheduled_hours),
-              p.days,
+              <button
+                className="text-button rp-link"
+                title="Ver su asistencia"
+                onClick={() => {
+                  setPerson(p.user_id);
+                  setView('attendance');
+                }}
+              >
+                {p.employee}
+              </button>,
               <>
                 {hours(p.hours)}
-                {p.open > 0 && <small className="report-sub">{p.open} en curso</small>}
+                <small className="rp-sub">
+                  de {hours(p.scheduled_hours)} programadas
+                  {p.open > 0 ? ` · ${p.open} en curso` : ''}
+                </small>
               </>,
-              p.absences ? <Pill tone="warn">{p.absences}</Pill> : 0,
+              p.days,
+              p.absences ? <Pill tone="danger">{p.absences}</Pill> : 0,
               p.late ? <Pill tone="warn">{p.late}</Pill> : 0,
               p.early_exit ? <Pill tone="warn">{p.early_exit}</Pill> : 0,
               p.tasks ? (
                 <>
-                  {p.tasks_done}/{p.tasks}
+                  {p.tasks_done} de {p.tasks}
                   {p.tasks_missed > 0 && (
-                    <small className="report-sub">{p.tasks_missed} no realizadas</small>
+                    <small className="rp-sub">{p.tasks_missed} no realizadas</small>
                   )}
                 </>
               ) : (
@@ -610,35 +1037,19 @@ function Staff({ r, zone }: { r: any; zone: string }) {
             ],
           }))}
         />
-      </Section>
-      <Section
-        title="Faltas e incidencias"
-        subtitle="Una falta puede ser un registro pendiente de sincronizar; confírmala antes de actuar."
-      >
+      )}
+      {view === 'attendance' && (
         <Grid
-          empty="Sin faltas ni incidencias en este periodo."
-          headers={['Fecha', 'Tipo', 'Detalle']}
-          rows={incidents.map((i) => ({
-            key: i.key,
-            text: `${i.kind} ${i.employee} ${i.detail}`,
-            cells: [
-              shortDate(i.date),
-              <Pill tone="warn">{i.kind}</Pill>,
-              i.employee ? `${i.employee} · ${i.detail}` : i.detail,
-            ],
-          }))}
-        />
-      </Section>
-      <Section title="Asistencia registrada">
-        <Grid
+          key={person}
+          tools={who}
           empty="Sin entradas registradas en este periodo."
-          headers={['Empleado', 'Fecha', 'Horario', 'Entrada', 'Salida', 'Horas']}
-          rows={r.attendance.map((a: any) => ({
+          headers={['Fecha', 'Persona', 'Horario', 'Entrada', 'Salida', 'Horas']}
+          rows={mine(r.attendance).map((a: any) => ({
             key: a.id,
             text: a.employee,
             cells: [
-              a.employee,
               shortDate(a.date),
+              <strong>{a.employee}</strong>,
               a.schedule || <Pill tone="muted">Sin horario</Pill>,
               when(a.clock_in, zone, false),
               a.clock_out ? when(a.clock_out, zone, false) : <Pill>En curso</Pill>,
@@ -648,24 +1059,50 @@ function Staff({ r, zone }: { r: any; zone: string }) {
             ],
           }))}
         />
-      </Section>
+      )}
+      {view === 'incidents' && (
+        <>
+          <Grid
+            key={person}
+            tools={who}
+            empty="Sin faltas ni incidencias en este periodo."
+            headers={['Fecha', 'Tipo', 'Detalle']}
+            rows={mine(incidents).map((i) => ({
+              key: i.key,
+              text: `${i.kind} ${i.detail}`,
+              cells: [
+                shortDate(i.date),
+                <Pill tone={i.kind === 'Falta' ? 'danger' : 'warn'}>{i.kind}</Pill>,
+                i.detail,
+              ],
+            }))}
+          />
+          {r.absences.length > 0 && (
+            <p className="rp-note">
+              Una falta puede ser un registro pendiente de sincronizar; confírmala antes de actuar.
+            </p>
+          )}
+        </>
+      )}
     </>
   );
 }
 
-function Operations({
+function Tasks({
   r,
   zone,
   branchId,
   onError,
+  target,
 }: {
   r: any;
   zone: string;
   branchId: string;
   onError: (e: unknown) => void;
+  target: Target;
 }) {
   const t = r.totals;
-  const [status, setStatus] = useState<'all' | 'pending' | 'done' | 'missed'>('all');
+  const [status, setStatus] = useState(target.filter || 'all');
   const tasks = r.tasks.filter((x: any) =>
     status === 'all'
       ? true
@@ -686,82 +1123,89 @@ function Operations({
   }
   return (
     <>
-      <div className="stats">
-        <Tile
-          title="Faltantes reportados"
-          value={String(t.shortages)}
-          foot={`${t.shortages_open} pendientes de resolver`}
-          icon={<PackageX />}
-          tone={t.shortages_open ? 'warn' : undefined}
-        />
-        <Tile
-          title="Tareas del periodo"
-          value={String(t.tasks)}
-          foot={`${t.tasks_done} cumplidas · ${t.tasks_missed} no realizadas · ${t.tasks - t.tasks_done - t.tasks_missed} pendientes`}
-          icon={<ClipboardCheck />}
-          tone={t.tasks_missed ? 'warn' : undefined}
-        />
-      </div>
-      <Section title="Faltantes de producto">
-        <Grid
-          empty="Sin faltantes reportados en este periodo."
-          headers={['Fecha', 'Producto', 'Reportó', 'Nota', 'Estado']}
-          rows={r.shortages.map((s: any) => ({
-            key: s.id,
-            text: `${s.product} ${s.employee} ${s.note}`,
-            cells: [
-              when(s.occurred_at, zone),
-              <strong>{s.product}</strong>,
-              s.employee,
-              s.note || '—',
-              s.resolved ? <Pill>Resuelto</Pill> : <Pill tone="warn">Pendiente</Pill>,
-            ],
-          }))}
-        />
-      </Section>
-      <Section
-        title="Tareas"
-        aside={
-          <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-            <option value="all">Todas</option>
-            <option value="pending">Pendientes</option>
-            <option value="done">Cumplidas</option>
-            <option value="missed">No realizadas</option>
-          </select>
-        }
-      >
-        <Grid
-          empty="Sin tareas con este filtro."
-          headers={['Fecha', 'Tarea', 'Empleado', 'Prioridad', 'Estado', 'Evidencia']}
-          rows={tasks.map((x: any) => ({
-            key: x.id,
-            text: `${x.title} ${x.employee} ${x.note}`,
-            cells: [
-              shortDate(x.date),
-              <>
-                {x.title}
-                {x.note && <small className="report-sub">{x.note}</small>}
-              </>,
-              x.employee,
-              priorities[x.priority] || x.priority,
-              x.completed_at ? (
-                <Pill>Cumplida {when(x.completed_at, zone, false)}</Pill>
-              ) : x.missed ? (
-                <Pill tone="danger">No realizada</Pill>
-              ) : (
-                <Pill tone="warn">Pendiente</Pill>
-              ),
-              x.media_id ? (
-                <button className="text-button" onClick={() => photo(x.media_id)}>
-                  Ver foto
-                </button>
-              ) : (
-                '—'
-              ),
-            ],
-          }))}
-        />
-      </Section>
+      <Choice
+        label="Estado"
+        value={status}
+        onChange={setStatus}
+        options={[
+          ['all', 'Todas', t.tasks],
+          ['done', 'Cumplidas', t.tasks_done],
+          ['pending', 'Pendientes', t.tasks - t.tasks_done - t.tasks_missed],
+          ['missed', 'No realizadas', t.tasks_missed],
+        ]}
+      />
+      <Grid
+        key={status}
+        empty="Sin tareas con este filtro."
+        headers={['Fecha', 'Tarea', 'Persona', 'Estado', 'Evidencia']}
+        rows={tasks.map((x: any) => ({
+          key: x.id,
+          text: `${x.title} ${x.employee} ${x.note}`,
+          cells: [
+            shortDate(x.date),
+            <>
+              <strong>{x.title}</strong>
+              {x.priority === 'alta' && <small className="rp-sub">Prioridad alta</small>}
+              {x.note && <small className="rp-sub">«{x.note}»</small>}
+            </>,
+            x.employee,
+            x.completed_at ? (
+              <Pill>Cumplida {when(x.completed_at, zone, false)}</Pill>
+            ) : x.missed ? (
+              <Pill tone="danger">No realizada</Pill>
+            ) : (
+              <Pill tone="warn">Pendiente</Pill>
+            ),
+            x.media_id ? (
+              <button className="text-button rp-link" onClick={() => photo(x.media_id)}>
+                Ver foto
+              </button>
+            ) : (
+              '—'
+            ),
+          ],
+        }))}
+      />
+    </>
+  );
+}
+
+function Shortages({ r, zone, target }: { r: any; zone: string; target: Target }) {
+  const t = r.totals;
+  const [status, setStatus] = useState(target.filter || 'all');
+  const list = r.shortages.filter((s: any) =>
+    status === 'all' ? true : status === 'open' ? !s.resolved : s.resolved,
+  );
+  return (
+    <>
+      <Choice
+        label="Estado"
+        value={status}
+        onChange={setStatus}
+        options={[
+          ['all', 'Todos', t.shortages],
+          ['open', 'Pendientes', t.shortages_open],
+          ['resolved', 'Resueltos', t.shortages - t.shortages_open],
+        ]}
+      />
+      <Grid
+        key={status}
+        empty="Sin faltantes con este filtro."
+        headers={['Fecha', 'Producto', 'Reportó', 'Estado']}
+        rows={list.map((s: any) => ({
+          key: s.id,
+          text: `${s.product} ${s.employee} ${s.note}`,
+          cells: [
+            when(s.occurred_at, zone),
+            <>
+              <strong>{s.product}</strong>
+              {s.note && <small className="rp-sub">{s.note}</small>}
+            </>,
+            s.employee,
+            s.resolved ? <Pill>Resuelto</Pill> : <Pill tone="warn">Pendiente</Pill>,
+          ],
+        }))}
+      />
     </>
   );
 }
@@ -809,71 +1253,80 @@ function Audit({
   };
   const events = page?.events ?? [];
   return (
-    <Section
-      title="Bitácora de operaciones"
-      subtitle={
-        page
-          ? `Mostrando ${events.length} de ${page.total} operaciones en el periodo`
-          : loading
-            ? 'Cargando…'
-            : ''
-      }
-      aside={
-        <div className="report-filters">
-          <select value={action} onChange={(e) => setAction(e.target.value)}>
-            <option value="">Todas las acciones</option>
-            {(page?.actions ?? []).map((k) => (
-              <option key={k} value={k}>
-                {actions[k] || k}
-              </option>
-            ))}
-          </select>
-          <select value={person} onChange={(e) => setPerson(e.target.value)}>
-            <option value="">Todos los usuarios</option>
-            {(page?.people ?? []).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </div>
-      }
-    >
+    <>
+      <div className="rp-tools">
+        <select
+          className="rp-select"
+          aria-label="Acción"
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+        >
+          <option value="">Todas las acciones</option>
+          {(page?.actions ?? []).map((k) => (
+            <option key={k} value={k}>
+              {actions[k] || k}
+            </option>
+          ))}
+        </select>
+        <select
+          className="rp-select"
+          aria-label="Usuario"
+          value={person}
+          onChange={(e) => setPerson(e.target.value)}
+        >
+          <option value="">Todos los usuarios</option>
+          {(page?.people ?? []).map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <span className="rp-count">
+          {page ? `${events.length} de ${page.total} operaciones` : loading ? 'Cargando…' : ''}
+        </span>
+      </div>
       {error && (
         <div className="error" role="alert">
           {error}
         </div>
       )}
-      <Grid
-        className="audit-table"
-        empty="Sin operaciones con este filtro."
-        headers={['Fecha', 'Acción', 'Usuario', 'Detalle']}
-        rows={events.map((e: any) => ({
-          key: e.id,
-          text: `${actions[e.action] || e.action} ${e.employee} ${e.detail.map((d: any) => `${d.label} ${d.value}`).join(' ')}`,
-          cells: [
-            when(e.received_at, zone),
-            actions[e.action] || e.action,
-            e.employee,
-            <details className="report-detail">
-              <summary>Ver</summary>
-              <dl className="audit-detail">
-                {e.detail.map((d: any) => (
-                  <Fragment key={d.label}>
-                    <dt>{d.label}</dt>
-                    <dd>{d.value}</dd>
-                  </Fragment>
-                ))}
-              </dl>
-            </details>,
-          ],
-        }))}
-      />
+      {page && !events.length && (
+        <div className="empty">
+          <ClipboardCheck size={30} />
+          <p>Sin operaciones con este filtro.</p>
+        </div>
+      )}
+      <ul className="rp-log">
+        {events.map((e: any) => (
+          <li key={e.id}>
+            <details>
+              <summary>
+                <time>{when(e.received_at, zone)}</time>
+                <strong>{actions[e.action] || e.action}</strong>
+                <span>{e.employee}</span>
+                <ChevronRight size={15} />
+              </summary>
+              {e.detail.length ? (
+                <dl className="audit-detail">
+                  {e.detail.map((d: any) => (
+                    <Fragment key={d.label}>
+                      <dt>{d.label}</dt>
+                      <dd>{d.value}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              ) : (
+                <p className="rp-note">Sin más detalle.</p>
+              )}
+            </details>
+          </li>
+        ))}
+      </ul>
       {page && events.length < page.total && (
-        <button className="secondary" disabled={loading} onClick={more}>
-          {loading ? 'Cargando…' : `Cargar más (${page.total - events.length} restantes)`}
+        <button className="secondary rp-more" disabled={loading} onClick={more}>
+          {loading ? 'Cargando…' : `Ver más (${page.total - events.length} restantes)`}
         </button>
       )}
-    </Section>
+    </>
   );
 }

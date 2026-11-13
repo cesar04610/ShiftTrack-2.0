@@ -445,7 +445,8 @@ function CutsPanel({
         </button>
       </div>
       <p className="muted">
-        Aquí se ven los cortes de los últimos 15 días. Los anteriores están en Reportes › Auditoría.
+        Aquí se ven los cortes de los últimos 15 días. Los anteriores están en Reportes › Ventas y
+        cortes.
       </p>
       {(from || to) && !ranged && (
         <p className="muted">
@@ -864,7 +865,7 @@ export default function App() {
     bank = data?.treasury_totals
       ? BigInt(data.treasury_totals.bank_cents)
       : treasury.reduce((s: bigint, t: any) => s + BigInt(t.bank_cents), 0n);
-  const recentHint = 'Últimos 15 días. Lo anterior está en Reportes › Auditoría.';
+  const recentHint = 'Últimos 15 días. Lo anterior está en Reportes › Caja general.';
   const date = b ? localTime(new Date(), b.timezone).date : new Date().toISOString().slice(0, 10);
   // Tasks follow the work day (05:00 to 05:00): an afternoon shift past midnight still sees its own.
   const workDay = b ? shiftBusinessDate(new Date(now), b.timezone) : date;
@@ -888,7 +889,7 @@ export default function App() {
     'Caja general': 'Efectivo y banco, con movimientos trazables.',
     Faltantes: 'Productos que hacen falta en la sucursal.',
     Configuración: 'Sucursales, cajas y accesos preparados.',
-    Reportes: 'Gastos, personal, operación y auditoría de esta sucursal por periodo.',
+    Reportes: 'Elige un periodo y entra al tema que quieras revisar.',
   };
   const supplierForm = (
     <Form
@@ -1975,7 +1976,7 @@ export default function App() {
                   </div>
                   <Card
                     title="Cierres y diferencias"
-                    subtitle="Últimos 15 días. Lo anterior está en Reportes › Gastos y proveedores."
+                    subtitle="Últimos 15 días. Lo anterior está en Reportes › Gastos a proveedores."
                   >
                     <Table
                       headers={['Fecha', 'Esperado', 'Contado', 'Diferencia']}

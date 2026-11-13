@@ -66,6 +66,20 @@ Quien entra a una caja recibe en ese momento las tareas de ese día de la semana
 
 El catálogo de plantillas y las asignaciones recurrentes por persona se retiraron: sus tablas (`task_catalog`, `task_assignments`) se conservan con su historial, pero ya no generan tareas.
 
+## Reportes
+
+**Reportes** abre con una portada breve de la sucursal y el periodo elegidos (Hoy, Ayer, 7 días, Este mes, Mes pasado u otro rango de hasta 400 días). Arriba, **Requiere tu atención** lista solo lo que no cuadró o quedó pendiente: cortes y turnos de caja de proveedores con diferencia, turnos sin corte, faltas, retardos y salidas anticipadas, tareas no realizadas, faltantes sin resolver y tickets anulados; cada renglón lleva directo a esos registros. Si no hay nada, lo dice en una línea. Debajo hay una ficha por tema con su cifra principal; el detalle se ve al entrar:
+
+- **Ventas y cortes:** ventas, tarjeta, efectivo y diferencia; cada corte con su responsable, caja y nota, y las ventas por día.
+- **Gastos a proveedores:** gasto neto por proveedor y por día, tickets (con filtro de anulados) y correcciones.
+- **Caja de proveedores:** apertura, esperado, contado y diferencia de cada turno.
+- **Caja general:** movimientos de efectivo y banco, y cuánto cambió cada uno en el periodo (no su saldo).
+- **Personal:** horas, faltas, retardos y tareas por persona; al tocar un nombre se ve su asistencia. Las faltas e incidencias se pueden filtrar por persona.
+- **Tareas** y **Faltantes:** por estado, con nota y fotografía.
+- **Auditoría:** cada operación con quién y cuándo; al tocarla se despliega su detalle. Se filtra por acción y usuario.
+
+Las listas muestran primero 15 registros, con buscador y **Ver más**. **Descargar Excel** entrega todo el periodo, una hoja por tema. Reportes requiere conexión y permiso de administrador.
+
 ## Sucursales y cajas
 
 El dueño configura la cantidad de cajas y elige la caja de proveedores entre 1 y ese total. Cada empleado selecciona su caja al entrar. Con conexión, la reserva es exclusiva por sucursal y se comprueba cada 30 segundos, sin vencimiento automático. Cerrar sesión o cerrar la ventana la libera cuando el aviso llega al servidor. Si el navegador se cierra sin red o de forma abrupta, el mismo usuario puede recuperar su caja al volver a entrar desde ese equipo. Otra pestaña abierta no puede apropiarse de la caja. Si alguien dejó una sesión abierta, el administrador puede liberar la caja desde Configuración confirmando su contraseña. El menú de proveedores depende de seleccionar la caja de proveedores configurada.
@@ -109,7 +123,7 @@ Importes MXN en centavos enteros, enviados como cadenas. Fecha operativa calcula
 
 **Aclaración del propietario en esta conversación:** el efectivo contado corresponde únicamente a ventas de ese turno. General recibe ese contado, banco recibe tarjeta, y cada ticket de proveedores descuenta su importe separadamente. La diferencia de corte no se suma otra vez.
 
-**Historia reciente en pantalla:** cada actualización de pantalla (cada 30 segundos) y la copia guardada en el equipo para trabajar sin conexión solo incluyen los últimos 15 días de historia: cortes, asistencia, tareas, horarios (más los futuros), tickets y cierres de proveedores, movimientos de Caja general, auditoría y faltantes resueltos. Siempre viajan, sin importar su antigüedad, los faltantes pendientes, el turno de proveedores abierto y el último cierre con sus tickets. El saldo de Caja general lo calcula el servidor con todos los movimientos. Lo anterior se consulta en Reportes: cortes y movimientos de Caja general en Auditoría (los bancarios, de cualquier fecha, en Movimientos bancarios), cierres de proveedores en Gastos y proveedores, asistencia en Personal. Una corrección de proveedores solo puede elegir tickets de los últimos 15 días. El plazo está en `SNAPSHOT_DAYS` (`apps/api/src/server.ts`).
+**Historia reciente en pantalla:** cada actualización de pantalla (cada 30 segundos) y la copia guardada en el equipo para trabajar sin conexión solo incluyen los últimos 15 días de historia: cortes, asistencia, tareas, horarios (más los futuros), tickets y cierres de proveedores, movimientos de Caja general, auditoría y faltantes resueltos. Siempre viajan, sin importar su antigüedad, los faltantes pendientes, el turno de proveedores abierto y el último cierre con sus tickets. El saldo de Caja general lo calcula el servidor con todos los movimientos. Lo anterior se consulta en Reportes: cortes en Ventas y cortes, movimientos en Caja general (los bancarios, de cualquier fecha, también en Movimientos bancarios), cierres de proveedores en Caja de proveedores, tickets en Gastos a proveedores y asistencia en Personal. Una corrección de proveedores solo puede elegir tickets de los últimos 15 días. El plazo está en `SNAPSHOT_DAYS` (`apps/api/src/server.ts`).
 
 Cada comando y su proyección se guardan juntos en IndexedDB. Contraseña local: PBKDF2 y AES-GCM para proteger la clave de firma del empleado; no se guarda la contraseña. La concesión se firma con ECDSA P-256 en el servidor. El transporte de dispositivo solo permite subir/confirmar pendientes; no reemplaza la identidad del empleado ni habilita consultas administrativas.
 

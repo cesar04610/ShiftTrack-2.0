@@ -1071,6 +1071,15 @@ test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel
   a.equal(summary.expenses.by_supplier.length, 1);
   a.equal(summary.expenses.totals.net_cents, '27000');
   a.equal(summary.operations.tasks.length, 1);
+  // Sales cuts and general cash travel with the same report; their totals match their rows.
+  a.equal(summary.sales.totals.cuts, summary.sales.cuts.length);
+  a.equal(
+    summary.sales.totals.sales_cents,
+    summary.sales.cuts.reduce((s: bigint, c: any) => s + BigInt(c.sales_cents), 0n).toString(),
+  );
+  a.ok(summary.sales.cuts.length > 0);
+  a.equal(summary.treasury.totals.entries, summary.treasury.entries.length);
+  a.ok(summary.treasury.entries.length > 0);
   a.equal(
     (await call(`/reports?branch_id=${branch}&${period}`, undefined, employeeToken)).status,
     403,
@@ -1085,6 +1094,8 @@ test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel
   // Title, blank line and headings come before the data.
   a.equal(book.getWorksheet('Tickets')!.rowCount, 4);
   a.equal(book.getWorksheet('Tareas')!.rowCount, 4);
+  a.equal(book.getWorksheet('Cortes de ventas')!.rowCount, 3 + summary.sales.cuts.length);
+  a.equal(book.getWorksheet('Caja general')!.rowCount, 3 + summary.treasury.entries.length);
   const analytics = (await call(`/analytics?branch_id=${branch}`)).body;
   a.equal(analytics.spending.find((s: any) => s.id === supplier).net_cents, '27000');
   // The baseline of this cut: employee, register 1, weekday of today's work day. Other tests add

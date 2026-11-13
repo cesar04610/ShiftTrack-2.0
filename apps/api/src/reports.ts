@@ -6,7 +6,13 @@ import { identity } from './security.js';
 import { admin, context, transaction } from './db.js';
 import { alertsReady } from './alerts.js';
 import { auditDetails } from './audit-detail.js';
-import { assert, auditActions, money, shiftBusinessDate } from '../../../packages/domain/index.js';
+import {
+  assert,
+  auditActions,
+  money,
+  shiftBusinessDate,
+  treasuryKinds,
+} from '../../../packages/domain/index.js';
 
 export const reports = express.Router();
 
@@ -164,8 +170,27 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
      FROM shortages s JOIN users u ON u.id=s.actor_user_id
      WHERE ${day('s.occurred_at')} BETWEEN $1 AND $2 ORDER BY s.occurred_at DESC`,
   );
+  const cuts = await rows(
+    `SELECT c.id,c.business_date::text AS date,c.occurred_at,u.name AS employee,c.register_number,c.label,
+       c.sales_cents::text,c.card_cents::text,c.declared_cents::text,c.expected_cents::text,
+       c.difference_cents::text,c.note
+     FROM cuts c JOIN users u ON u.id=c.user_id
+     WHERE c.business_date BETWEEN $1 AND $2 ORDER BY c.occurred_at DESC`,
+  );
+  const treasury = await rows(
+    `SELECT t.id,t.occurred_at,t.kind,t.note,t.cash_cents::text,t.bank_cents::text,u.name AS employee
+     FROM treasury_entries t JOIN users u ON u.id=t.actor_user_id
+     WHERE ${day('t.occurred_at')} BETWEEN $1 AND $2 ORDER BY t.occurred_at DESC`,
+  );
   const live = tickets.filter((t) => !t.voided);
   const sum = (list: any[], key: string) => list.reduce((s, r) => s + BigInt(r[key] ?? 0), 0n);
+  const salesDaily = new Map<string, any>();
+  for (const c of cuts) {
+    const d = salesDaily.get(c.date) || { date: c.date, cuts: 0, sales: 0n };
+    d.cuts++;
+    d.sales += BigInt(c.sales_cents);
+    salesDaily.set(c.date, d);
+  }
   const suppliers = new Map<string, any>();
   const daily = new Map<string, any>();
   for (const t of live) {
@@ -188,6 +213,29 @@ async function build(db: pg.PoolClient, zone: string, from: string, to: string) 
     corrected = sum(live, 'corrected_cents');
   return {
     range: { from, to },
+    sales: {
+      totals: {
+        cuts: cuts.length,
+        sales_cents: sum(cuts, 'sales_cents').toString(),
+        card_cents: sum(cuts, 'card_cents').toString(),
+        cash_cents: (sum(cuts, 'sales_cents') - sum(cuts, 'card_cents')).toString(),
+        difference_cents: sum(cuts, 'difference_cents').toString(),
+        with_difference: cuts.filter((c) => BigInt(c.difference_cents) !== 0n).length,
+      },
+      by_day: [...salesDaily.values()]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((d) => ({ date: d.date, cuts: d.cuts, sales_cents: d.sales.toString() })),
+      cuts,
+    },
+    // Net change of the general cash and the bank in the period, not their balance.
+    treasury: {
+      totals: {
+        entries: treasury.length,
+        cash_cents: sum(treasury, 'cash_cents').toString(),
+        bank_cents: sum(treasury, 'bank_cents').toString(),
+      },
+      entries: treasury,
+    },
     expenses: {
       totals: {
         tickets: live.length,
@@ -372,6 +420,44 @@ reports.get('/reports/export', async (req, res) => {
     s.views = [{ state: 'frozen', ySplit: 3 }];
   };
   const e = r.expenses;
+  sheet(
+    'Cortes de ventas',
+    [
+      'Fecha',
+      'Empleado',
+      'Caja',
+      'Turno',
+      'Ventas',
+      'Tarjeta',
+      'Esperado',
+      'Contado',
+      'Diferencia',
+      'Nota',
+    ],
+    r.sales.cuts.map((c) => [
+      c.date,
+      c.employee,
+      c.register_number,
+      c.label,
+      pesos(c.sales_cents),
+      pesos(c.card_cents),
+      pesos(c.expected_cents),
+      pesos(c.declared_cents),
+      pesos(c.difference_cents),
+      c.note,
+    ]),
+  );
+  sheet(
+    'Caja general',
+    ['Fecha', 'Concepto', 'Registró', 'Efectivo', 'Banco'],
+    r.treasury.entries.map((t) => [
+      localDate(t.occurred_at, zone),
+      t.note || treasuryKinds[t.kind] || t.kind,
+      t.employee,
+      pesos(t.cash_cents),
+      pesos(t.bank_cents),
+    ]),
+  );
   sheet(
     'Gastos por proveedor',
     ['Proveedor', 'Tickets', 'Compras', 'Correcciones', 'Neto'],
