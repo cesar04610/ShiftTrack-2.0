@@ -666,8 +666,10 @@ test('ficha previa, corte único y contado de ventas alimentan general', async (
     'UPDATE clock_records SET clock_out=now() WHERE user_id=$1 AND clock_out IS NULL',
     [employee.id],
   );
+  // One second earlier: the database clock has microseconds and the command only milliseconds, so
+  // an entry "now" could land after the cut and the cut would attach to the previous entry.
   await sql.query(
-    'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,$4,now())',
+    "INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,$4,now()-interval '1 second')",
     [branch, randomUUID(), employee.id, date],
   );
   const c = command('cut.create', {
