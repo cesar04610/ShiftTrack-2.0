@@ -35,6 +35,9 @@ const day = (v: unknown) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v);
 };
 const time = (v: unknown) => String(v).slice(0, 5);
+const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const setupName = (c: any) =>
+  `${c.weekday == null ? '' : `${dayNames[c.weekday]} · `}Caja ${c.register_number} · ${c.half ? 'Medio turno ' : 'Turno '}${c.shift === 'morning' ? 'mañana' : 'tarde'}`;
 
 // Everything an audit row may point at, looked up once for the whole list.
 type Lookups = {
@@ -260,6 +263,23 @@ function describe(e: any, k: Lookups, zone: string): DetailLine[] {
       break;
     case 'task.catalog.create':
       add('Tarea', k.tasks.get(p.id));
+      break;
+    case 'task.create':
+    case 'task.delete':
+      add('Tarea', p.title);
+      add('Persona', k.users.get(p.user_id));
+      add('Fecha', p.due_date);
+      break;
+    case 'task.setup.create':
+    case 'task.setup.update':
+    case 'task.setup.delete':
+      add('Tarea', p.title);
+      if (p.shift) add('Lista', setupName(p));
+      break;
+    case 'task.setup.copy':
+      add('De', setupName(p.from));
+      add('A', setupName(p.to));
+      add('Tareas copiadas', p.copied);
       break;
     case 'shortage.create':
       add('Producto', k.shortages.get(p.id) ?? p.product);

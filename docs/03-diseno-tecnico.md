@@ -1,6 +1,6 @@
 # Diseño técnico
 
-Mostrador 2.0 es una PWA React/TypeScript con API Node.js/Express y PostgreSQL en Railway. La API y el frontend comparten imagen; las fotografías se almacenan en un volumen privado. El worker separado genera tareas recurrentes y evalúa alertas.
+Mostrador 2.0 es una PWA React/TypeScript con API Node.js/Express y PostgreSQL en Railway. La API y el frontend comparten imagen; las fotografías se almacenan en un volumen privado. El worker separado completa las tareas por caja y turno de quien está trabajando y evalúa alertas.
 
 La API autentica con sesiones propias y contraseñas Argon2. PostgreSQL aplica aislamiento por sucursal y el rol `shifttrack_app` opera sin propiedad de tablas ni bypass de RLS. Las sesiones online vencen a las nueve horas.
 

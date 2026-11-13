@@ -47,7 +47,7 @@ El usuario indicó hasta 10 USD/mes para pruebas. Hobby tiene un mínimo de 5 US
 
 El propietario revisó y estableció el límite antes de crear recursos. Un hard limit detiene servicios al alcanzarlo y se aplica al workspace; confirmar qué otros proyectos afecta y cómo contempla los créditos incluidos y la cuota de Hobby. No prometer un total mensual exacto, ni confundir una alerta con un límite efectivo.
 
-Objetivo inicial: una réplica API, PostgreSQL pequeño y dos volúmenes, sin importar datos antiguos. Configurar límites de memoria/CPU y monitorear consumo. El worker genera tareas y evalúa alertas; no envía correo.
+Objetivo inicial: una réplica API, PostgreSQL pequeño y dos volúmenes, sin importar datos antiguos. Configurar límites de memoria/CPU y monitorear consumo. El worker completa las tareas por caja y turno de quien está trabajando y evalúa alertas; no envía correo.
 
 El servicio `ShiftTrack-Worker` usa la misma imagen con `node dist/apps/api/src/entrypoint.js dist/apps/worker/run.js`, cron `*/5 * * * *` y política de reinicio `NEVER`. Finaliza después de cada ejecución, usa el rol SQL restringido y no tiene dominio público, puerto HTTP ni SMTP. No crear un cron en cada réplica API.
 
@@ -80,9 +80,10 @@ La API de Railway rechazó `volumeInstanceBackupScheduleUpdate` con «Not Author
 | 013       | Las sesiones abiertas antes de esa versión vencen a las 9 horas.                                                               |
 | 014       | Bitácora de alertas (`alert_log`).                                                                                             |
 | 015       | Zona `America/Chihuahua` (UTC-6) para las sucursales que tenían `America/Mazatlan`.                                            |
+| 016       | Tareas por día, caja y turno (`task_setup_items`), origen de cada tarea y permiso para quitar tareas pendientes.               |
 | 017       | Borra `alerts`, `alert_settings` y `notification_outbox` solo si están vacías; con datos, las conserva.                        |
 
-**Permisos de tablas nuevas:** `provision.js` aplica `infra/runtime-role.sql` después de migrar, pero el pre-deploy automático (`migrate.js`) no lo hace. Una migración que cree tablas debe otorgar sus permisos a `shifttrack_app` con el bloque condicional de las migraciones 006, 010 y 014 (`IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='shifttrack_app')`). Si la tabla necesita `DELETE`, agrégala también a `infra/runtime-role.sql` y a la lista local de `scripts/migrate.ts`.
+**Permisos de tablas nuevas:** `provision.js` aplica `infra/runtime-role.sql` después de migrar, pero el pre-deploy automático (`migrate.js`) no lo hace. Una migración que cree tablas debe otorgar sus permisos a `shifttrack_app` con el bloque condicional de las migraciones 006, 010 y 014 (`IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='shifttrack_app')`). La 016 otorga además `DELETE` sobre `tasks`. Si la tabla necesita `DELETE`, agrégala también a `infra/runtime-role.sql` y a la lista local de `scripts/migrate.ts`.
 
 La migración `008-users-per-branch.sql` agrega `users.deleted_at` y sustituye la unicidad global del nombre por un índice único de cuentas no eliminadas por sucursal. Conserva usuarios, contraseñas e historial existentes. El runtime comprueba la nueva columna antes de servir solicitudes. El login valida contraseña antes de ofrecer sucursales; confirmaciones internas validan el ID de cuenta, evitando ambigüedad cuando dos cuentas comparten nombre.
 

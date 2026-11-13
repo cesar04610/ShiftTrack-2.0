@@ -33,6 +33,7 @@ import SupplierImport from './SupplierImport';
 import SearchSelect from './SearchSelect';
 import Reports from './Reports';
 import UserBoard from './UserBoard';
+import TaskBoard, { setupLabel } from './TaskBoard';
 import ScheduleBoard, { addDays, monday } from './ScheduleBoard';
 import {
   login,
@@ -754,6 +755,16 @@ export default function App() {
     await refresh();
     setMessage('Registro guardado correctamente.');
   }
+  async function openPhoto(mediaId: string) {
+    try {
+      const local = await db.media.get(mediaId);
+      const url = local ? URL.createObjectURL(local.blob) : await imageUrl(mediaId, branchId);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      notify(e);
+    }
+  }
   async function command(type: Command['type'], values: Record<string, string>, photo?: Blob) {
     if (online && !hasOnlineSession())
       throw new Error(
@@ -857,10 +868,8 @@ export default function App() {
   const date = b ? localTime(new Date(), b.timezone).date : new Date().toISOString().slice(0, 10);
   // Tasks follow the work day (05:00 to 05:00): an afternoon shift past midnight still sees its own.
   const workDay = b ? shiftBusinessDate(new Date(now), b.timezone) : date;
-  const visibleTasks = (data?.tasks || []).filter((t: any) =>
-    page === 'Gestionar tareas'
-      ? true
-      : t.user_id === user?.id && t.due_date.slice(0, 10) === workDay,
+  const visibleTasks = (data?.tasks || []).filter(
+    (t: any) => t.user_id === user?.id && t.due_date.slice(0, 10) === workDay,
   );
   const meta: Record<string, string> = {
     Inicio: 'Un vistazo a la operación de tu sucursal.',
@@ -869,7 +878,7 @@ export default function App() {
     Horarios: 'Organiza los turnos de tu equipo.',
     Horario: 'Consulta tus próximos turnos.',
     Tareas: 'Lo que hay que hacer, en un solo lugar.',
-    'Gestionar tareas': 'Asigna tareas y revisa el trabajo del equipo.',
+    'Gestionar tareas': 'Las tareas de cada caja y turno se asignan solas.',
     Proveedores: 'Directorio y pagos de proveedores.',
     'Caja proveedores': 'Registra pagos y consulta los tickets de proveedores.',
     'Movimientos bancarios': 'Entradas y salidas del saldo bancario por periodo.',
@@ -1600,163 +1609,65 @@ export default function App() {
                   )}
                 </>
               )}
-              {(page === 'Tareas' || page === 'Gestionar tareas') && (
-                <>
-                  {isAdmin && page === 'Gestionar tareas' && (
-                    <Card title="Asignar tarea">
-                      <Form
-                        fields={[
-                          { name: 'title', label: 'Tarea' },
-                          { name: 'user_id', label: 'Empleado', options: employeeOptions },
-                          { name: 'due_date', label: 'Fecha', type: 'date', value: date },
-                          {
-                            name: 'priority',
-                            label: 'Prioridad',
-                            options: [
-                              { value: 'normal', label: 'Normal' },
-                              { value: 'alta', label: 'Alta' },
-                            ],
-                          },
-                        ]}
-                        onSubmit={(v) => mutate('/tasks', v)}
-                      />
+              {isAdmin && page === 'Gestionar tareas' && (
+                <TaskBoard
+                  key={branchId}
+                  items={data.task_setup || []}
+                  tasks={data.tasks || []}
+                  users={data.users || []}
+                  registerCount={data.branch.register_count || 1}
+                  occupied={data.occupied_registers || []}
+                  workDay={workDay}
+                  since={data.history_since}
+                  online={online}
+                  onSave={async (path, values) => {
+                    // Lists are edited row by row: the change itself is the confirmation.
+                    await request(path, { ...values, branch_id: branchId });
+                    await refresh();
+                  }}
+                  onPhoto={openPhoto}
+                />
+              )}
+              {page === 'Tareas' && (
+                <div className="tasks-list">
+                  {visibleTasks.length ? (
+                    visibleTasks.map((t: any) => (
+                      <Card
+                        key={t.id}
+                        title={t.title}
+                        subtitle={t.setup_item_id ? setupLabel(t) : 'Tarea extra'}
+                      >
+                        <div className="task-state">
+                          {t.completed_at ? (
+                            <span className="badge">
+                              <Check size={14} />
+                              Completada
+                            </span>
+                          ) : (
+                            <span className="badge amber-badge">Pendiente</span>
+                          )}
+                        </div>
+                        {t.note && <p>{t.note}</p>}
+                        {canCapture && !t.completed_at && (
+                          <PhotoForm
+                            onSubmit={(note, photo) =>
+                              command('task.complete', { id: t.id, note }, photo)
+                            }
+                          />
+                        )}
+                        {t.media_id && (
+                          <button className="text-button" onClick={() => openPhoto(t.media_id)}>
+                            Ver fotografía
+                          </button>
+                        )}
+                      </Card>
+                    ))
+                  ) : (
+                    <Card title="Tareas">
+                      <Empty text="Hoy no tienes tareas pendientes. ¡Buen trabajo!" />
                     </Card>
                   )}
-                  {isAdmin && page === 'Gestionar tareas' && (
-                    <div className="grid">
-                      <Card title="Catálogo de tareas">
-                        <Form
-                          fields={[
-                            { name: 'title', label: 'Nombre de plantilla' },
-                            { name: 'description', label: 'Descripción', optional: true },
-                            {
-                              name: 'priority',
-                              label: 'Prioridad',
-                              options: [
-                                { value: 'normal', label: 'Normal' },
-                                { value: 'alta', label: 'Alta' },
-                              ],
-                            },
-                          ]}
-                          label="Crear plantilla"
-                          onSubmit={(v) => mutate('/tasks/catalog', v)}
-                        />
-                      </Card>
-                      <Card title="Asignación recurrente">
-                        <Form
-                          fields={[
-                            {
-                              name: 'catalog_id',
-                              label: 'Plantilla',
-                              options: (data.catalog || [])
-                                .filter((t: any) => t.active)
-                                .map((t: any) => ({ value: t.id, label: t.title })),
-                            },
-                            { name: 'user_id', label: 'Empleado', options: employeeOptions },
-                            {
-                              name: 'recurrence',
-                              label: 'Recurrencia',
-                              options: [
-                                { value: 'once', label: 'Una vez' },
-                                { value: 'daily', label: 'Diaria' },
-                                { value: 'weekly', label: 'Semanal' },
-                              ],
-                            },
-                            {
-                              name: 'start_date',
-                              label: 'Fecha inicial',
-                              type: 'date',
-                              value: date,
-                            },
-                            {
-                              name: 'weekdays',
-                              label: 'Días semanales (0 domingo, 1 lunes … 6 sábado)',
-                              optional: true,
-                              placeholder: '1,2,3,4,5',
-                            },
-                          ]}
-                          label="Asignar recurrencia"
-                          onSubmit={(v) =>
-                            mutate('/tasks/assignments', {
-                              ...v,
-                              weekdays: v.weekdays ? v.weekdays.split(',').map(Number) : [],
-                            })
-                          }
-                        />
-                      </Card>
-                    </div>
-                  )}
-                  <div className="tasks-list">
-                    {visibleTasks.length ? (
-                      visibleTasks.map((t: any) => (
-                        <Card
-                          key={t.id}
-                          title={t.title}
-                          subtitle={`${t.due_date.slice(0, 10)} · Prioridad ${t.priority}`}
-                        >
-                          <div className="task-state">
-                            {t.completed_at ? (
-                              <span className="badge">
-                                <Check size={14} />
-                                Completada
-                              </span>
-                            ) : t.due_date.slice(0, 10) < workDay ? (
-                              <span className="badge danger-badge">No realizada</span>
-                            ) : (
-                              <span className="badge amber-badge">Pendiente</span>
-                            )}
-                            {isAdmin && page === 'Gestionar tareas' && (
-                              <span>{data.users.find((u: any) => u.id === t.user_id)?.name}</span>
-                            )}
-                          </div>
-                          {t.note && <p>{t.note}</p>}
-                          {page === 'Tareas' &&
-                            t.user_id === user.id &&
-                            canCapture &&
-                            !t.completed_at &&
-                            t.due_date.slice(0, 10) === workDay && (
-                              <PhotoForm
-                                onSubmit={(note, photo) =>
-                                  command('task.complete', { id: t.id, note }, photo)
-                                }
-                              />
-                            )}
-                          {isAdmin && page === 'Gestionar tareas' && t.completed_at && (
-                            <button
-                              className="text-button"
-                              onClick={() => mutate(`/tasks/${t.id}/revert`, {}).catch(notify)}
-                            >
-                              Reabrir tarea
-                            </button>
-                          )}
-                          {t.media_id && (
-                            <button
-                              className="text-button"
-                              onClick={async () => {
-                                try {
-                                  const local = await db.media.get(t.media_id);
-                                  const url = local
-                                    ? URL.createObjectURL(local.blob)
-                                    : await imageUrl(t.media_id, branchId);
-                                  const win = window.open(url, '_blank', 'noopener');
-                                  setTimeout(() => URL.revokeObjectURL(url), 60000);
-                                } catch (e) {
-                                  notify(e);
-                                }
-                              }}
-                            >
-                              Ver fotografía
-                            </button>
-                          )}
-                        </Card>
-                      ))
-                    ) : (
-                      <Card title="Tareas">
-                        <Empty text="Hoy no tienes tareas pendientes. ¡Buen trabajo!" />
-                      </Card>
-                    )}
-                  </div>
-                </>
+                </div>
               )}
               {page === 'Caja proveedores' && (
                 <>

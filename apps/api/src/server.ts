@@ -34,6 +34,7 @@ import { supplierImport } from './supplier-import.js';
 import { media, purgeExpiredMedia } from './media.js';
 import { closeAbandonedClocks } from './attendance.js';
 import { alertsReady } from './alerts.js';
+import { assignSetupTasks, setupReady, taskSetup } from './task-setup.js';
 import { prepareMediaStorage } from './storage.js';
 export const app = express();
 app.use(
@@ -395,6 +396,8 @@ async function reserveRegister(req: express.Request, heartbeat = false) {
     ).rows[0];
     if (!heartbeat && (!held || held.session_hash !== sessionHash))
       await audit(db, selectedBranch.id, user, 'register.select', { register_number });
+    // Whoever takes a register receives the tasks of that register and shift.
+    if (!heartbeat) await assignSetupTasks(db, branch, user.id, register_number);
     return lease;
   });
 }
@@ -690,8 +693,14 @@ app.get('/api/v1/snapshot', async (req, res) => {
           )
         ).rows[0];
         result.audit = await select('audit_events', false, 'received_at>=$1', [sinceAt]);
-        result.catalog = await select('task_catalog');
-        result.assignments = await select('task_assignments');
+        // The task lists of every register and shift, for Gestionar tareas.
+        result.task_setup = (await setupReady(db))
+          ? (
+              await db.query(
+                'SELECT id,shift,half,register_number,title,weekdays FROM task_setup_items WHERE active ORDER BY created_at,id',
+              )
+            ).rows
+          : [];
         result.corrections = await select('supplier_corrections', false, 'occurred_at>=$1', [
           sinceAt,
         ]);
@@ -925,27 +934,7 @@ app.post('/api/v1/clock/:action', async (req, res) => {
   res.json({ ok: true });
 });
 app.use('/api/v1/schedules', schedules);
-app.post('/api/v1/tasks', async (req, res) => {
-  const u = await identity(req.headers.authorization);
-  admin(u);
-  const b = await context(u, req.body.branch_id);
-  const p = z
-    .object({
-      user_id: z.uuid(),
-      title: z.string().min(1).max(200),
-      due_date: z.iso.date(),
-      priority: z.enum(['normal', 'alta']).default('normal'),
-    })
-    .parse(req.body);
-  await transaction(b.id, async (db) => {
-    await employee(db, b.id, p.user_id);
-    await db.query(
-      'INSERT INTO tasks(branch_id,id,user_id,title,due_date,priority) VALUES($1,$2,$3,$4,$5,$6)',
-      [b.id, randomUUID(), p.user_id, p.title, p.due_date, p.priority],
-    );
-  });
-  res.status(201).json({ ok: true });
-});
+app.use('/api/v1/tasks', taskSetup);
 app.post('/api/v1/treasury/opening', async (req, res) => {
   const u = await identity(req.headers.authorization);
   admin(u);
