@@ -2346,6 +2346,9 @@ main > * {
   background: #ffffff33;
   color: #fff;
 }
+.task-weekdays {
+  margin-bottom: 10px;
+}
 .task-working {
   font-size: 12px;
   color: #64748b;

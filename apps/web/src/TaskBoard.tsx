@@ -49,21 +49,23 @@ export function setupLabel(c: {
 }
 // Monday first, as the week is read in the store; values follow JavaScript (0 is Sunday).
 const days = [
-  { value: 1, letter: 'L', name: 'Lun' },
-  { value: 2, letter: 'M', name: 'Mar' },
-  { value: 3, letter: 'X', name: 'Mié' },
-  { value: 4, letter: 'J', name: 'Jue' },
-  { value: 5, letter: 'V', name: 'Vie' },
-  { value: 6, letter: 'S', name: 'Sáb' },
-  { value: 0, letter: 'D', name: 'Dom' },
+  { value: 1, letter: 'L', name: 'Lun', full: 'Lunes' },
+  { value: 2, letter: 'M', name: 'Mar', full: 'Martes' },
+  { value: 3, letter: 'X', name: 'Mié', full: 'Miércoles' },
+  { value: 4, letter: 'J', name: 'Jue', full: 'Jueves' },
+  { value: 5, letter: 'V', name: 'Vie', full: 'Viernes' },
+  { value: 6, letter: 'S', name: 'Sáb', full: 'Sábado' },
+  { value: 0, letter: 'D', name: 'Dom', full: 'Domingo' },
 ];
 const daysLabel = (weekdays: number[]) =>
   weekdays.length >= 7
     ? 'Todos los días'
-    : days
-        .filter((d) => weekdays.includes(d.value))
-        .map((d) => d.name)
-        .join(', ');
+    : weekdays.length === 1
+      ? `Solo ${days.find((d) => d.value === weekdays[0])!.full.toLowerCase()}`
+      : days
+          .filter((d) => weekdays.includes(d.value))
+          .map((d) => d.name)
+          .join(', ');
 const typeIndex = (c: Config) =>
   shiftTypes.findIndex((t) => t.shift === c.shift && t.half === c.half);
 const same = (a: Config, b: Config) =>
@@ -106,6 +108,8 @@ export default function TaskBoard({
 }) {
   const [tab, setTab] = useState<'lists' | 'day'>('lists'),
     [register, setRegister] = useState(1),
+    // The lists open on today's weekday.
+    [weekday, setWeekday] = useState(() => new Date(`${workDay}T12:00:00Z`).getUTCDay()),
     [day, setDay] = useState(workDay),
     [extra, setExtra] = useState(false),
     [error, setError] = useState(''),
@@ -186,9 +190,28 @@ export default function TaskBoard({
       {tab === 'lists' && (
         <>
           <p className="task-hint">
-            Escribe una sola vez las tareas de cada caja y turno. Quien trabaje ese turno en esa
-            caja las recibe automáticamente al entrar, todas las semanas.
+            Elige el día y la caja, y escribe una sola vez las tareas de cada turno. Quien trabaje
+            ese día, en ese turno y en esa caja las recibe automáticamente al entrar, todas las
+            semanas.
           </p>
+          <div className="task-registers task-weekdays" role="group" aria-label="Día de la semana">
+            {days.map((d) => (
+              <button
+                key={d.value}
+                className={d.value === weekday ? 'active' : ''}
+                aria-pressed={d.value === weekday}
+                onClick={() => setWeekday(d.value)}
+              >
+                {d.full}
+                <small>
+                  {
+                    items.filter((i) => i.register_number === caja && i.weekdays.includes(d.value))
+                      .length
+                  }
+                </small>
+              </button>
+            ))}
+          </div>
           <div className="task-registers" role="group" aria-label="Caja">
             {Array.from({ length: registerCount }, (_, i) => i + 1).map((n) => (
               <button
@@ -198,7 +221,12 @@ export default function TaskBoard({
                 onClick={() => setRegister(n)}
               >
                 Caja {n}
-                <small>{items.filter((i) => i.register_number === n).length}</small>
+                <small>
+                  {
+                    items.filter((i) => i.register_number === n && i.weekdays.includes(weekday))
+                      .length
+                  }
+                </small>
               </button>
             ))}
             {working && <span className="task-working">Ahora: {nameOf(working.user_id)}</span>}
@@ -208,10 +236,11 @@ export default function TaskBoard({
               const target = { shift: type.shift, half: type.half, register_number: caja };
               return (
                 <SetupList
-                  key={`${caja}-${type.shift}-${type.half}`}
+                  key={`${weekday}-${caja}-${type.shift}-${type.half}`}
                   type={type}
                   target={target}
-                  list={items.filter((i) => same(i, target))}
+                  weekday={weekday}
+                  list={items.filter((i) => same(i, target) && i.weekdays.includes(weekday))}
                   all={items}
                   locked={locked}
                   save={save}
@@ -360,6 +389,7 @@ function DayPicker({ value, onChange }: { value: number[]; onChange: (v: number[
 function SetupList({
   type,
   target,
+  weekday,
   list,
   all,
   locked,
@@ -367,6 +397,8 @@ function SetupList({
 }: {
   type: (typeof shiftTypes)[number];
   target: Config;
+  // The day of the week being edited (0 is Sunday).
+  weekday: number;
   list: Item[];
   all: Item[];
   locked: boolean;
@@ -375,18 +407,23 @@ function SetupList({
   const [title, setTitle] = useState(''),
     [editing, setEditing] = useState<Item | null>(null),
     [removing, setRemoving] = useState('');
-  // Other lists that already have tasks, to start this one from a copy.
-  const sources = [
-    ...new Map(
-      all
-        .filter((i) => !same(i, target))
-        .map((i) => [`${i.register_number}|${i.shift}|${i.half}`, i]),
-    ).values(),
-  ].sort((a, b) => a.register_number - b.register_number || typeIndex(a) - typeIndex(b));
+  const dayName = days.find((d) => d.value === weekday)!.full;
+  // Lists that already have tasks, to start this one from a copy: the same day in another
+  // register or shift, or this same register and shift on another day.
+  const sources: (Config & { weekday: number; key: string })[] = [];
+  for (const d of days)
+    for (let n = 1; n <= Math.max(...all.map((i) => i.register_number), 0); n++)
+      for (const t of shiftTypes) {
+        const c = { shift: t.shift, half: t.half, register_number: n };
+        const here = same(c, target);
+        if (here ? d.value === weekday : d.value !== weekday) continue;
+        if (all.some((i) => same(i, c) && i.weekdays.includes(d.value)))
+          sources.push({ ...c, weekday: d.value, key: `${d.value}|${n}|${t.shift}|${t.half}` });
+      }
   async function add(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    if (await save('/tasks/setup', { ...target, title })) setTitle('');
+    if (await save('/tasks/setup', { ...target, title, weekdays: [weekday] })) setTitle('');
   }
   return (
     <section className="card task-list" data-shift={type.shift}>
@@ -452,11 +489,15 @@ function SetupList({
                       className="danger-link"
                       disabled={locked}
                       onClick={async () => {
-                        await save(`/tasks/setup/${item.id}/delete`, {});
+                        // A task shared with other days only leaves this one.
+                        const rest = item.weekdays.filter((d) => d !== weekday);
+                        await (rest.length
+                          ? save(`/tasks/setup/${item.id}`, { title: item.title, weekdays: rest })
+                          : save(`/tasks/setup/${item.id}/delete`, {}));
                         setRemoving('');
                       }}
                     >
-                      Quitar
+                      {item.weekdays.length > 1 ? `Quitar del ${dayName.toLowerCase()}` : 'Quitar'}
                     </button>
                     <button
                       className="icon-button"
@@ -513,22 +554,17 @@ function SetupList({
             value=""
             disabled={locked}
             onChange={(e) => {
-              const from = sources.find((s) => s.id === e.target.value);
-              if (from)
-                void save('/tasks/setup/copy', {
-                  from: {
-                    shift: from.shift,
-                    half: from.half,
-                    register_number: from.register_number,
-                  },
-                  to: target,
-                });
+              const from = sources.find((s) => s.key === e.target.value);
+              if (from) {
+                const { key: _key, ...origin } = from;
+                void save('/tasks/setup/copy', { from: origin, to: { ...target, weekday } });
+              }
             }}
           >
             <option value="">Copiar tareas de otra lista…</option>
             {sources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {setupLabel(s)}
+              <option key={s.key} value={s.key}>
+                {days.find((d) => d.value === s.weekday)!.full} · {setupLabel(s)}
               </option>
             ))}
           </select>

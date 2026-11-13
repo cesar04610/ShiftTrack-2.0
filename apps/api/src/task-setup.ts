@@ -155,6 +155,35 @@ function inBranch(branch: Branch, c: Config) {
   );
 }
 
+// Puts a task on the given days of a list. A task with the same name already in that list only
+// gains the days it lacks, so a rename or removal later covers every day at once.
+async function addToDay(
+  db: pg.PoolClient,
+  branch: string,
+  c: Config,
+  name: string,
+  days: number[],
+) {
+  const existing = (
+    await db.query(
+      `SELECT id,weekdays FROM task_setup_items WHERE active AND shift=$1 AND half=$2 AND register_number=$3
+       AND lower(title)=lower($4) ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
+      [c.shift, c.half, c.register_number, name],
+    )
+  ).rows[0];
+  if (!existing) {
+    await db.query(
+      'INSERT INTO task_setup_items(branch_id,id,shift,half,register_number,title,weekdays,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp())',
+      [branch, randomUUID(), c.shift, c.half, c.register_number, name, days],
+    );
+    return 1;
+  }
+  const merged = [...new Set([...existing.weekdays, ...days])].sort();
+  if (merged.length === existing.weekdays.length) return 0;
+  await db.query('UPDATE task_setup_items SET weekdays=$2 WHERE id=$1', [existing.id, merged]);
+  return 1;
+}
+
 // Extraordinary task: one person, one day, outside the lists.
 taskSetup.post('/', async (req, res) => {
   const user = await identity(req.headers.authorization);
@@ -197,47 +226,34 @@ taskSetup.post('/setup', async (req, res) => {
   const b = await context(user, req.body.branch_id);
   const p = config.extend({ title, weekdays: weekdays.default(everyDay) }).parse(req.body);
   inBranch(b, p);
-  const id = randomUUID();
   await transaction(b.id, async (db) => {
-    await db.query(
-      'INSERT INTO task_setup_items(branch_id,id,shift,half,register_number,title,weekdays) VALUES($1,$2,$3,$4,$5,$6,$7)',
-      [b.id, id, p.shift, p.half, p.register_number, p.title, p.weekdays],
-    );
-    await writeAudit(db, b.id, user.id, 'task.setup.create', { id, ...p });
+    await addToDay(db, b.id, p, p.title, p.weekdays);
+    await writeAudit(db, b.id, user.id, 'task.setup.create', { ...p });
     await assignWorkingStaff(db, b);
   });
-  res.status(201).json({ ok: true, id });
+  res.status(201).json({ ok: true });
 });
 
-// Copies the list of one register and shift into another, skipping tasks it already has.
+// Copies the list of one day, register and shift into another. A task the destination already has
+// on other days only gains the new day; nothing is duplicated.
 taskSetup.post('/setup/copy', async (req, res) => {
   const user = await identity(req.headers.authorization);
   admin(user);
   const b = await context(user, req.body.branch_id);
-  const p = z.object({ from: config, to: config }).parse(req.body);
+  const dayConfig = config.extend({ weekday: z.number().int().min(0).max(6) });
+  const p = z.object({ from: dayConfig, to: dayConfig }).parse(req.body);
   inBranch(b, p.from);
   inBranch(b, p.to);
   const count = await transaction(b.id, async (db) => {
-    const copied =
-      (
-        await db.query(
-          `INSERT INTO task_setup_items(branch_id,id,shift,half,register_number,title,weekdays,created_at)
-           SELECT s.branch_id,gen_random_uuid(),$5,$6,$7,s.title,s.weekdays,now()+(row_number() OVER (ORDER BY s.created_at,s.id))*interval '1 microsecond'
-           FROM task_setup_items s
-           WHERE s.branch_id=$1 AND s.active AND s.shift=$2 AND s.half=$3 AND s.register_number=$4
-             AND NOT EXISTS(SELECT 1 FROM task_setup_items d WHERE d.active AND d.shift=$5 AND d.half=$6
-                            AND d.register_number=$7 AND lower(d.title)=lower(s.title))`,
-          [
-            b.id,
-            p.from.shift,
-            p.from.half,
-            p.from.register_number,
-            p.to.shift,
-            p.to.half,
-            p.to.register_number,
-          ],
-        )
-      ).rowCount || 0;
+    const source = (
+      await db.query(
+        `SELECT title FROM task_setup_items WHERE active AND shift=$1 AND half=$2 AND register_number=$3
+         AND $4::integer=ANY(weekdays) ORDER BY created_at,id`,
+        [p.from.shift, p.from.half, p.from.register_number, p.from.weekday],
+      )
+    ).rows;
+    let copied = 0;
+    for (const item of source) copied += await addToDay(db, b.id, p.to, item.title, [p.to.weekday]);
     await writeAudit(db, b.id, user.id, 'task.setup.copy', { ...p, copied });
     await assignWorkingStaff(db, b);
     return copied;

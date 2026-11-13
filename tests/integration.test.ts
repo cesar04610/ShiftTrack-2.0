@@ -930,21 +930,32 @@ test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel
     assignSetupTasks(db, zone, employee.id, 1, new Date(`${date}T23:00:00Z`)),
   );
   a.deepEqual(await assigned(), [{ title: 'Medio turno', register_number: 1, half: true }]);
-  const copied = await call('/tasks/setup/copy', {
-    branch_id: branch,
-    from: { shift: 'afternoon', half: false, register_number: 1 },
-    to: { shift: 'afternoon', half: true, register_number: 1 },
-  });
-  a.equal(copied.body.count, 2);
-  a.equal(
+  // Copying a day brings only that day's tasks; a task already there just gains the new day.
+  const copy = async (weekday: number) =>
     (
       await call('/tasks/setup/copy', {
         branch_id: branch,
-        from: { shift: 'afternoon', half: false, register_number: 1 },
-        to: { shift: 'afternoon', half: true, register_number: 1 },
+        from: { shift: 'afternoon', half: false, register_number: 1, weekday: today },
+        to: { shift: 'afternoon', half: true, register_number: 1, weekday },
       })
-    ).body.count,
-    0,
+    ).body.count;
+  a.equal(await copy((today + 1) % 7), 1);
+  a.equal(await copy((today + 1) % 7), 0);
+  a.equal(await copy(today), 1);
+  a.deepEqual(
+    (
+      await sql.query(
+        "SELECT weekdays FROM task_setup_items WHERE branch_id=$1 AND half AND title='Aseo diario'",
+        [branch],
+      )
+    ).rows.map((r) => r.weekdays),
+    [[today, (today + 1) % 7].sort()],
+  );
+  // Adding a task that the list already has on another day does not duplicate it either.
+  a.equal(
+    (await call('/tasks/setup', { ...list, title: 'otro DÍA', weekdays: [(today + 2) % 7] }))
+      .status,
+    201,
   );
   await schedule('15:00', '21:30');
   await transaction(branch, (db) => assignSetupTasks(db, zone, employee.id, 1, afternoon));
@@ -952,7 +963,7 @@ test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel
   // Renaming follows today's pending task; removing it from the list takes the pending task away.
   const snapshot = (await call(`/snapshot?branch_id=${branch}`)).body;
   const item = snapshot.task_setup.find((i: any) => i.title === 'Aseo diario' && !i.half);
-  a.equal(snapshot.task_setup.length, 6);
+  a.equal(snapshot.task_setup.length, 5);
   a.equal(
     (
       await call(`/tasks/setup/${item.id}`, {

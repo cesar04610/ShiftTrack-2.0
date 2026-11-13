@@ -59,6 +59,12 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   // Tasks are written once per register and shift; whoever enters that register receives them.
   await nav(page, 'Gestionar tareas');
   await page.getByRole('button', { name: /^Caja 2/ }).click();
+  // The lists open on today's weekday; another day has its own, empty lists.
+  const weekdays = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const today = (
+    await page.locator('.task-weekdays button[aria-pressed="true"]').innerText()
+  ).split(/\s/)[0];
+  expect(weekdays).toContain(today);
   const taskList = (name: string) =>
     page.locator('.task-list').filter({ has: page.getByRole('heading', { name, exact: true }) });
   const morning = taskList('Turno mañana'),
@@ -78,9 +84,13 @@ test('dos empleados: preparación, persistencia tras reinicio, relevo offline y 
   // The afternoon copies the morning list, so the employee gets one task at any hour.
   await afternoon
     .getByLabel('Copiar tareas a Turno tarde')
-    .selectOption({ label: 'Caja 2 · Turno mañana' });
+    .selectOption({ label: `${today} · Caja 2 · Turno mañana` });
   await expect(afternoon.getByText('Limpiar mostrador', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Caja 2/ })).toContainText('2');
+  const tomorrow = weekdays[(weekdays.indexOf(today) + 1) % 7];
+  await page.getByRole('button', { name: new RegExp(`^${tomorrow}`) }).click();
+  await expect(page.getByText('Limpiar mostrador', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Sin tareas todavía.')).toHaveCount(4);
   // An extraordinary task goes to one person and can be removed while pending.
   await page.getByRole('button', { name: 'Tarea extra', exact: true }).click();
   await page.getByLabel('Persona', { exact: true }).selectOption({ label: 'Ana prueba' });

@@ -35,8 +35,9 @@ const day = (v: unknown) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v);
 };
 const time = (v: unknown) => String(v).slice(0, 5);
+const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const setupName = (c: any) =>
-  `Caja ${c.register_number} · ${c.half ? 'Medio turno ' : 'Turno '}${c.shift === 'morning' ? 'mañana' : 'tarde'}`;
+  `${c.weekday == null ? '' : `${dayNames[c.weekday]} · `}Caja ${c.register_number} · ${c.half ? 'Medio turno ' : 'Turno '}${c.shift === 'morning' ? 'mañana' : 'tarde'}`;
 
 // Everything an audit row may point at, looked up once for the whole list.
 type Lookups = {
