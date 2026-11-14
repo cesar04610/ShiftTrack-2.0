@@ -478,7 +478,7 @@ export async function enqueue(
       assert(
         !pending.some((x) => x.state === 'needs_review' || x.state === 'blocked'),
         'REQUIRES_ADMIN_REVIEW',
-        'Resuelve la revisión pendiente antes de operar la caja.',
+        'Hay una captura de la caja de proveedores que el servidor rechazó. Un administrador debe revisarla en este equipo, en el recuadro de operaciones que requieren revisión, antes de seguir operando la caja.',
       );
     const date = localTime(occurred_at, b.timezone).date;
     if (supplier) {
@@ -682,8 +682,9 @@ export async function sync() {
   if (syncing) return;
   syncing = true;
   try {
+    // A capture whose dependency was still pending is sent again: the dependency may be confirmed now.
     const allRows = (await db.outbox.toArray()).filter(
-      (x) => x.state === 'pending' || x.state === 'sending',
+      (x) => x.state === 'pending' || x.state === 'sending' || x.state === 'blocked',
     );
     const current = await getDevice();
     const known = (await db.meta.toArray())
@@ -853,4 +854,24 @@ export async function loadCatalog(branchId: string): Promise<CatalogProduct[]> {
 }
 export async function listPending() {
   return (await db.outbox.toArray()).filter((x) => x.state !== 'confirmed');
+}
+// A capture the server rejected never took effect there. An administrator can discard it so the
+// device can operate again; a copy stays in this browser, and the screen offers a backup file first.
+export async function discardPending(id: string) {
+  await navigator.locks.request('shifttrack-write', async () => {
+    const row = await db.outbox.get(id);
+    assert(
+      row && row.state === 'needs_review',
+      'NOT_FOUND',
+      'Esta captura ya no requiere revisión.',
+    );
+    await db.transaction('rw', db.outbox, db.media, db.meta, async () => {
+      await db.meta.put({
+        id: `discarded:${id}`,
+        value: { ...row, discarded_at: new Date().toISOString() },
+      });
+      if (row.command.payload.media_id) await db.media.delete(row.command.payload.media_id);
+      await db.outbox.delete(id);
+    });
+  });
 }

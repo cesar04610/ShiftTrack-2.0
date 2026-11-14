@@ -27,6 +27,7 @@ import {
   parseMoney,
   localTime,
   shiftBusinessDate,
+  auditActions,
   type User,
   type Command,
 } from '../../../packages/domain/index.js';
@@ -45,6 +46,7 @@ import {
   enqueue,
   sync,
   listPending,
+  discardPending,
   getDevice,
   db,
   expiresAt,
@@ -1196,19 +1198,70 @@ export default function App() {
                   ? 'Hay operaciones que requieren revisión'
                   : `${pending.length} registro(s) guardado(s) correctamente`}
               </summary>
-              {pending.map((x) => (
-                <div key={x.id}>
-                  <strong>{x.command.type}</strong>
-                  <span>
-                    {x.state === 'needs_review'
-                      ? 'Requiere revisión'
-                      : x.state === 'blocked'
-                        ? 'Dependencia pendiente'
-                        : 'Pendiente'}{' '}
-                    · {x.message || x.command.occurred_at}
-                  </span>
-                </div>
-              ))}
+              {pending.map((x) => {
+                const label = auditActions[x.command.type] || x.command.type,
+                  when = new Intl.DateTimeFormat('es-MX', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                    timeZone: data?.branch?.timezone || 'America/Chihuahua',
+                  }).format(new Date(x.command.occurred_at));
+                return (
+                  <div key={x.id} className="pending-item">
+                    <strong>{label}</strong>
+                    <span>
+                      {x.state === 'needs_review'
+                        ? 'Requiere revisión'
+                        : x.state === 'blocked'
+                          ? 'Dependencia pendiente'
+                          : 'Pendiente'}{' '}
+                      · {when}
+                      {x.message ? ` · ${x.message}` : ''}
+                    </span>
+                    {x.state === 'needs_review' &&
+                      (isAdmin ? (
+                        <button
+                          className="danger-link"
+                          disabled={!online || busy}
+                          title={online ? undefined : 'Conecta a Internet para descartar.'}
+                          onClick={async () => {
+                            if (
+                              !window.confirm(
+                                `¿Descartar «${label}» del ${when}?\n\nEl servidor la rechazó y no se aplicó. Se descargará un respaldo de esta captura. Si el movimiento sí ocurrió, vuelve a capturarlo.`,
+                              )
+                            )
+                              return;
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(
+                              new Blob([JSON.stringify(x, null, 2)], {
+                                type: 'application/json',
+                              }),
+                            );
+                            a.download = `mostrador-descartada-${x.id}.json`;
+                            a.click();
+                            URL.revokeObjectURL(a.href);
+                            setBusy(true);
+                            try {
+                              await discardPending(x.id);
+                              // The server's state replaces this device's projection of the discarded capture.
+                              await refresh();
+                              setMessage('Captura descartada. Revisa el estado actual de la caja.');
+                            } catch (error) {
+                              notify(error);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Descartar
+                        </button>
+                      ) : (
+                        <small>
+                          Un administrador puede revisarla y descartarla en este equipo.
+                        </small>
+                      ))}
+                  </div>
+                );
+              })}
               <button
                 className="secondary"
                 onClick={() => {
