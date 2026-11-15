@@ -2422,7 +2422,7 @@ export default function App() {
                   onError={notify}
                 />
               )}
-              {page === 'Métricas' && (
+              {page === 'Métricas' && isAdmin && (
                 <Metrics key={branchId} branchId={branchId} branchName={b.name} today={date} />
               )}
               {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}

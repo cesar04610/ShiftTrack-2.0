@@ -22,6 +22,7 @@ let server: ReturnType<typeof app.listen>,
   base: string,
   adminToken: string,
   employeeToken: string,
+  superToken: string,
   adminId: string,
   employeeId: string,
   otherAdminId: string;
@@ -82,6 +83,7 @@ before(async () => {
     ['admin', branch],
     ['employee', branch],
     ['admin', other],
+    ['superadmin', null],
   ]) {
     const u = (
       await db.query(
@@ -89,7 +91,8 @@ before(async () => {
         [randomUUID(), `${role}-${randomUUID().slice(0, 8)}`, `Persona ${role}`, role, home],
       )
     ).rows[0];
-    if (home === other) otherAdminId = u.id;
+    if (role === 'superadmin') superToken = (await issueSession(u)).access_token;
+    else if (home === other) otherAdminId = u.id;
     else if (role === 'admin') {
       adminId = u.id;
       adminToken = (await issueSession(u)).access_token;
@@ -248,6 +251,11 @@ test('métricas: un día sin movimientos, permisos y rango', async () => {
   a.equal(
     (await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`, employeeToken)).status,
     403,
+  );
+  // Solo administradores y superadministradores.
+  a.equal(
+    (await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`, superToken)).status,
+    200,
   );
   a.equal((await get(`/metrics?branch_id=${branch}&from=2026-03-07&to=2026-03-01`)).status, 400);
   a.equal((await get(`/metrics?branch_id=${branch}&from=2025-01-01&to=2026-03-01`)).status, 400);
