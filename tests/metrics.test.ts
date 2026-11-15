@@ -40,11 +40,13 @@ async function cut(
   register: number,
   sales: number,
   card: number,
+  clock: string | null = null,
+  difference = 0,
 ) {
   await db.query(
     `INSERT INTO cuts(branch_id,id,user_id,register_number,business_date,label,sales_cents,card_cents,
-       declared_cents,expected_cents,difference_cents,occurred_at)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,0,$10)`,
+       declared_cents,expected_cents,difference_cents,occurred_at,clock_record_id)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9+$11::bigint,$9,$11,$10,$12)`,
     [
       target,
       randomUUID(),
@@ -56,8 +58,18 @@ async function cut(
       card,
       sales - card,
       `${date}T20:00:00Z`,
+      difference,
+      clock,
     ],
   );
+}
+async function clock(user: string, date: string, from: string, to: string) {
+  const id = randomUUID();
+  await db.query(
+    'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in,clock_out) VALUES($1,$2,$3,$4,$5,$6)',
+    [branch, id, user, date, from, to],
+  );
+  return id;
 }
 const supplier = randomUUID(),
   dairy = randomUUID(),
@@ -104,9 +116,48 @@ before(async () => {
     }
   }
   // Periodo elegido: domingo 1 al sábado 7 de marzo de 2026. Anterior: 22 al 28 de febrero.
-  await cut(branch, employeeId, '2026-03-02', 'Mañana', 1, 100_000, 30_000);
-  await cut(branch, employeeId, '2026-03-02', 'Tarde', 2, 50_000, 0);
-  await cut(branch, adminId, '2026-03-04', 'Mañana', 1, 60_000, 60_000);
+  // Entradas en hora de Chihuahua (UTC-6): mañana 07:30–15:30 (8 h), tarde 15:00–21:00 (6 h).
+  const morning = await clock(
+    employeeId,
+    '2026-03-02',
+    '2026-03-02T13:30:00Z',
+    '2026-03-02T21:30:00Z',
+  );
+  const evening = await clock(
+    employeeId,
+    '2026-03-02',
+    '2026-03-02T21:00:00Z',
+    '2026-03-03T03:00:00Z',
+  );
+  const adminShift = await clock(
+    adminId,
+    '2026-03-04',
+    '2026-03-04T14:00:00Z',
+    '2026-03-04T18:00:00Z',
+  );
+  await cut(branch, employeeId, '2026-03-02', 'Mañana', 1, 100_000, 30_000, morning);
+  await cut(branch, employeeId, '2026-03-02', 'Tarde', 2, 50_000, 0, evening, -5_000);
+  await cut(branch, adminId, '2026-03-04', 'Mañana', 1, 60_000, 60_000, adminShift);
+  // Horarios del empleado: el 2 cumple mañana y tarde; el 3 falta.
+  await db.query(
+    `INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES
+       ($1,gen_random_uuid(),$2,'2026-03-02','07:30','15:00'),($1,gen_random_uuid(),$2,'2026-03-02','15:00','21:30'),
+       ($1,gen_random_uuid(),$2,'2026-03-03','07:30','15:00')`,
+    [branch, employeeId],
+  );
+  await db.query(
+    `INSERT INTO alert_log(branch_id,id,kind,user_id,business_date,message,source_key) VALUES
+       ($1,gen_random_uuid(),'late',$2,'2026-03-02','Llegó tarde',$4),
+       ($1,gen_random_uuid(),'missing_cut',$3,'2026-03-05','Sin corte',$5)`,
+    [branch, employeeId, adminId, `late:test:${employeeId}`, `nocut:test:${adminId}`],
+  );
+  await db.query(
+    `INSERT INTO tasks(branch_id,id,user_id,title,due_date,completed_at) VALUES
+       ($1,gen_random_uuid(),$2,'Barrer','2026-03-02','2026-03-02T16:00:00Z'),
+       ($1,gen_random_uuid(),$2,'Acomodar','2026-03-03',NULL),
+       ($1,gen_random_uuid(),$3,'Revisar','2026-03-04','2026-03-04T16:00:00Z')`,
+    [branch, employeeId, adminId],
+  );
   await cut(branch, employeeId, '2026-02-25', 'Mañana', 1, 100_000, 10_000);
   // Fuera del periodo y de otra sucursal: no deben contar.
   await cut(branch, employeeId, '2026-03-08', 'Mañana', 1, 999_900, 0);
@@ -143,6 +194,26 @@ before(async () => {
        supplier_cash_effect_cents,reason,actor_user_id,occurred_at)
      VALUES($1,$2,$3,'refund',5000,0,5000,'Devolución',$4,'2026-03-03T19:00:00Z')`,
     [branch, randomUUID(), corrected, adminId],
+  );
+  // Cierres de la caja de proveedores: faltan $20 el 3 y sobran $10 el 4. El turno abierto del
+  // 25 de febrero no cuenta.
+  await db.query(
+    `INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,closed_at,opening_cents,
+       expected_cents,counted_cents,difference_cents) VALUES
+       ($1,gen_random_uuid(),$2,'2026-03-03','2026-03-03T14:00:00Z','2026-03-03T22:00:00Z',0,10000,8000,-2000),
+       ($1,gen_random_uuid(),$3,'2026-03-04','2026-03-04T14:00:00Z','2026-03-04T22:00:00Z',0,10000,11000,1000)`,
+    [branch, employeeId, adminId],
+  );
+  // Caja general: un gasto extraordinario en el periodo, uno en el anterior y un ajuste que no
+  // es gasto.
+  await db.query(
+    `INSERT INTO treasury_entries(branch_id,id,source_id,kind,cash_cents,bank_cents,note,actor_user_id,occurred_at)
+     SELECT $1,x.id,x.id,x.kind,x.cash,0,x.note,$2,x.at FROM (VALUES
+       (gen_random_uuid(),'expense',-12000::bigint,'Reparación de refrigerador','2026-03-03T18:00:00Z'::timestamptz),
+       (gen_random_uuid(),'expense',-3000::bigint,'Papelería','2026-02-27T18:00:00Z'::timestamptz),
+       (gen_random_uuid(),'cash_adjustment',-500::bigint,'Ajuste','2026-03-03T19:00:00Z'::timestamptz)
+     ) x(id,kind,cash,note,at)`,
+    [branch, adminId],
   );
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -275,6 +346,161 @@ test('métricas de proveedores: actual, anterior y última visita', async () => 
       ['Lácteos Sierra', 'Lácteos', false, 0, 0, '0', 1, 1, '8000', '2026-02-26'],
     ],
   );
+});
+
+test('métricas de empleados: puntualidad, horas, tareas, cortes y venta por hora', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  const e = r.body.employees;
+  const pick = (id: string) => {
+    const p = e.people.find((x: any) => x.user_id === id);
+    return [
+      p.scheduled,
+      p.scheduled_hours,
+      p.absences,
+      p.late,
+      p.early_exit,
+      p.missing_cut,
+      p.hours,
+      p.days,
+      p.tasks_done,
+      p.tasks_missed,
+      p.cuts,
+      p.cuts_uneven,
+      p.difference_cents,
+      p.abs_difference_cents,
+      p.rate_sales_cents,
+      p.rate_hours,
+      p.rate_expected_cents,
+      p.rate_alone,
+    ];
+  };
+  // Mañana: $1,600 en 12 h; tarde: $500 en 6 h. El empleado vendería al promedio
+  // 8 h × $133.33 + 6 h × $83.33 = $1,566.67 y vendió $1,500.
+  // Comparte la mañana con el administrador, así que tiene con quién compararse.
+  a.deepEqual(pick(employeeId), [
+    3,
+    21.5,
+    1,
+    1,
+    0,
+    0,
+    14,
+    1,
+    1,
+    1,
+    2,
+    1,
+    '-5000',
+    '5000',
+    '150000',
+    14,
+    '156667',
+    false,
+  ]);
+  a.deepEqual(pick(adminId), [
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    4,
+    1,
+    1,
+    0,
+    1,
+    0,
+    '0',
+    '0',
+    '60000',
+    4,
+    '53333',
+    false,
+  ]);
+  a.deepEqual(e.shift_rates.map((x: any) => [x.label, x.sales_cents, x.hours]).sort(), [
+    ['Mañana', '160000', 12],
+    ['Tarde', '50000', 6],
+  ]);
+  a.equal(e.totals.scheduled, 3);
+  a.equal(e.totals.difference_cents, '-5000');
+  // En el periodo anterior solo está el corte del 25 de febrero.
+  a.equal(e.previous.totals.people, 1);
+  a.equal(e.previous.totals.cuts, 1);
+  // La otra sucursal no aparece.
+  a.ok(!e.people.some((x: any) => x.user_id === otherAdminId));
+});
+
+test('métricas de rentabilidad: gastos extraordinarios de Caja general', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  const x = r.body.expenses;
+  a.deepEqual(x.totals, { entries: 1, amount_cents: '12000' });
+  a.deepEqual(x.by_day, [{ date: '2026-03-03', amount_cents: '12000' }]);
+  a.deepEqual(
+    x.entries.map((e: any) => [e.date, e.note, e.amount_cents]),
+    [['2026-03-03', 'Reparación de refrigerador', '12000']],
+  );
+  a.deepEqual(x.previous.totals, { entries: 1, amount_cents: '3000' });
+  a.deepEqual(x.previous.by_day, [{ date: '2026-02-27', amount_cents: '3000' }]);
+  // Resultado: ventas $2,100 − compras $250 − gastos $120 = $1,730.
+  const result =
+    Number(r.body.sales.totals.sales_cents) -
+    Number(r.body.purchases.totals.net_cents) -
+    Number(x.totals.amount_cents);
+  a.equal(result, 173_000);
+});
+
+test('métricas de control de efectivo: faltantes y sobrantes por separado', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  const c = r.body.cash;
+  const m = (x: any) => [x.counts, x.short, x.short_cents, x.over, x.over_cents];
+  a.deepEqual(m(c.totals.cut), [3, 1, '5000', 0, '0']);
+  a.deepEqual(m(c.totals.supplier), [2, 1, '2000', 1, '1000']);
+  a.deepEqual(
+    c.by_day.map((d: any) => [d.date, ...m(d)]),
+    [
+      ['2026-03-02', 2, 1, '5000', 0, '0'],
+      ['2026-03-03', 1, 1, '2000', 0, '0'],
+      ['2026-03-04', 2, 0, '0', 1, '1000'],
+    ],
+  );
+  const person = (id: string) => c.by_person.find((p: any) => p.user_id === id);
+  a.deepEqual(
+    [m(person(employeeId).cut), m(person(employeeId).supplier)],
+    [
+      [2, 1, '5000', 0, '0'],
+      [1, 1, '2000', 0, '0'],
+    ],
+  );
+  a.deepEqual(
+    [m(person(adminId).cut), m(person(adminId).supplier)],
+    [
+      [1, 0, '0', 0, '0'],
+      [1, 0, '0', 1, '1000'],
+    ],
+  );
+  a.deepEqual(
+    c.by_register.map((x: any) => [x.register, ...m(x)]),
+    [
+      ['1', 2, 0, '0', 0, '0'],
+      ['2', 1, 1, '5000', 0, '0'],
+      ['supplier', 2, 1, '2000', 1, '1000'],
+    ],
+  );
+  a.deepEqual(
+    c.by_shift.map((x: any) => [x.label, ...m(x)]),
+    [
+      ['Mañana', 2, 0, '0', 0, '0'],
+      ['Tarde', 1, 1, '5000', 0, '0'],
+    ],
+  );
+  a.equal(c.totals.adjustments, 1);
+  a.equal(c.totals.adjustments_cash_cents, '-500');
+  a.deepEqual(
+    c.adjustments.map((x: any) => [x.date, x.kind, x.note, x.cash_cents]),
+    [['2026-03-03', 'cash_adjustment', 'Ajuste', '-500']],
+  );
+  // En el periodo anterior solo está el corte del 25 de febrero, sin diferencia.
+  a.deepEqual(m(c.previous.totals.cut), [1, 0, '0', 0, '0']);
 });
 
 test('métricas: un día sin movimientos, permisos y rango', async () => {

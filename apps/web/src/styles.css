@@ -3850,3 +3850,18 @@ main > * {
 .mt-inline {
   margin-left: 8px;
 }
+.mt-chart .bar.negative {
+  fill: #d03b3b;
+}
+.mt-legend i.negative {
+  background: #d03b3b;
+}
+.mt-caveat {
+  margin: -4px 2px 16px;
+}
+.mt-rows.danger .mt-track {
+  background: #fdecec;
+}
+.mt-rows.danger .mt-track i {
+  background: #d03b3b;
+}
