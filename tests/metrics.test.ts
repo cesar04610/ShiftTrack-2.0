@@ -148,8 +148,16 @@ before(async () => {
   await db.query(
     `INSERT INTO alert_log(branch_id,id,kind,user_id,business_date,message,source_key) VALUES
        ($1,gen_random_uuid(),'late',$2,'2026-03-02','Llegó tarde',$4),
-       ($1,gen_random_uuid(),'missing_cut',$3,'2026-03-05','Sin corte',$5)`,
-    [branch, employeeId, adminId, `late:test:${employeeId}`, `nocut:test:${adminId}`],
+       ($1,gen_random_uuid(),'missing_cut',$3,'2026-03-05','Sin corte',$5),
+       ($1,gen_random_uuid(),'absent',$2,'2026-02-26','Faltó',$6)`,
+    [
+      branch,
+      employeeId,
+      adminId,
+      `late:test:${employeeId}`,
+      `nocut:test:${adminId}`,
+      `absent:test:${employeeId}`,
+    ],
   );
   await db.query(
     `INSERT INTO tasks(branch_id,id,user_id,title,due_date,completed_at) VALUES
@@ -501,6 +509,73 @@ test('métricas de control de efectivo: faltantes y sobrantes por separado', asy
   );
   // En el periodo anterior solo está el corte del 25 de febrero, sin diferencia.
   a.deepEqual(m(c.previous.totals.cut), [1, 0, '0', 0, '0']);
+});
+
+test('comparación entre sucursales: solo el dueño, cada sucursal con sus cifras', async () => {
+  const path = '/metrics/branches?from=2026-03-01&to=2026-03-07';
+  a.equal((await get(path)).status, 403);
+  a.equal((await get(path, employeeToken)).status, 403);
+  const r = await get(path, superToken);
+  a.equal(r.status, 200);
+  a.deepEqual(r.body.previous, { from: '2026-02-22', to: '2026-02-28' });
+  const mine = r.body.branches.find((b: any) => b.id === branch);
+  const theirs = r.body.branches.find((b: any) => b.id === other);
+  a.deepEqual(mine.current, {
+    sales_cents: '210000',
+    card_cents: '90000',
+    cuts: 3,
+    sale_days: 2,
+    purchases_cents: '25000',
+    tickets: 2,
+    expenses_cents: '12000',
+    counts: 5,
+    short_counts: 2,
+    short_cents: '7000',
+    over_cents: '1000',
+    scheduled: 3,
+    absences: 1,
+    late: 1,
+    tasks_done: 2,
+    tasks_missed: 1,
+    hours: 18,
+  });
+  a.equal(mine.previous.sales_cents, '100000');
+  // La otra sucursal solo trae su propio corte.
+  a.equal(theirs.current.sales_cents, '777700');
+  a.equal(theirs.current.purchases_cents, '0');
+});
+
+test('tendencia de alertas: solo el dueño, por tipo, día y persona', async () => {
+  const path = `/metrics/alerts?branch_id=${branch}&from=2026-03-01&to=2026-03-07`;
+  a.equal((await get(path)).status, 403);
+  const r = await get(path, superToken);
+  a.equal(r.status, 200);
+  a.deepEqual(
+    r.body.current.by_kind.map((x: any) => [x.kind, x.alerts]),
+    [
+      ['late', 1],
+      ['missing_cut', 1],
+    ],
+  );
+  a.deepEqual(
+    r.body.current.by_day.map((x: any) => [x.date, x.kind, x.alerts]),
+    [
+      ['2026-03-02', 'late', 1],
+      ['2026-03-05', 'missing_cut', 1],
+    ],
+  );
+  a.deepEqual(
+    r.body.current.by_person.map((x: any) => [x.user_id, x.kind, x.alerts]),
+    [
+      [adminId, 'missing_cut', 1],
+      [employeeId, 'late', 1],
+    ],
+  );
+  a.deepEqual(
+    r.body.before.by_kind.map((x: any) => [x.kind, x.alerts]),
+    [['absent', 1]],
+  );
+  a.deepEqual(r.body.before.by_day, [{ date: '2026-02-26', kind: 'absent', alerts: 1 }]);
 });
 
 test('métricas: un día sin movimientos, permisos y rango', async () => {

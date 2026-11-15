@@ -2,7 +2,7 @@ import express from 'express';
 import { z } from 'zod';
 import type pg from 'pg';
 import { identity } from './security.js';
-import { admin, context, transaction } from './db.js';
+import { admin, context, owner, pool, transaction } from './db.js';
 import { alertsReady } from './alerts.js';
 import { assert, shiftBusinessDate } from '../../../packages/domain/index.js';
 
@@ -26,9 +26,7 @@ export function previousPeriod(from: string, to: string) {
   return { from: shift(from, -days), to: shift(from, -1) };
 }
 
-async function load(req: express.Request) {
-  const user = await identity(req.headers.authorization);
-  admin(user);
+function period(req: express.Request) {
   const q = range.parse(req.query);
   assert(q.from <= q.to, 'INVALID_RANGE', 'La fecha inicial debe ser anterior a la final.', 400);
   assert(
@@ -37,6 +35,12 @@ async function load(req: express.Request) {
     'El rango máximo es de 400 días.',
     400,
   );
+  return q;
+}
+async function load(req: express.Request) {
+  const user = await identity(req.headers.authorization);
+  admin(user);
+  const q = period(req);
   const b = await context(user, q.branch_id, true);
   return { b, from: q.from, to: q.to };
 }
@@ -527,4 +531,109 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
 metrics.get('/metrics', async (req, res) => {
   const { b, from, to } = await load(req);
   res.json(await transaction(b.id, (db) => buildMetrics(db, b.timezone, from, to)));
+});
+
+// The few figures that compare one branch with another, for one period.
+async function branchSummary(db: pg.PoolClient, zone: string, from: string, to: string) {
+  const s = (await sales(db, from, to)).totals,
+    p = (await purchases(db, zone, from, to)).totals,
+    x = (await expenses(db, zone, from, to)).totals,
+    c = (await cash(db, zone, from, to)).totals,
+    e = (await employees(db, zone, from, to)).totals;
+  return {
+    sales_cents: s.sales_cents,
+    card_cents: s.card_cents,
+    cuts: s.cuts,
+    sale_days: s.days,
+    purchases_cents: p.net_cents,
+    tickets: p.tickets,
+    expenses_cents: x.amount_cents,
+    counts: c.cut.counts + c.supplier.counts,
+    short_counts: c.cut.short + c.supplier.short,
+    short_cents: (BigInt(c.cut.short_cents) + BigInt(c.supplier.short_cents)).toString(),
+    over_cents: (BigInt(c.cut.over_cents) + BigInt(c.supplier.over_cents)).toString(),
+    scheduled: e.scheduled,
+    absences: e.absences,
+    late: e.late,
+    tasks_done: e.tasks_done,
+    tasks_missed: e.tasks_missed,
+    hours: e.hours,
+  };
+}
+
+// Comparación entre sucursales: only the owner sees every branch. Each branch is read in its own
+// transaction, so row-level isolation still applies to every query.
+metrics.get('/metrics/branches', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  owner(user);
+  const { from, to } = period(req);
+  const previous = previousPeriod(from, to);
+  const branches = (
+    await pool.query('SELECT id,name,timezone FROM branches WHERE active ORDER BY name')
+  ).rows;
+  const out = [];
+  for (const b of branches)
+    out.push(
+      await transaction(b.id, async (db) => ({
+        id: b.id,
+        name: b.name,
+        current: await branchSummary(db, b.timezone, from, to),
+        previous: await branchSummary(db, b.timezone, previous.from, previous.to),
+      })),
+    );
+  res.json({ range: { from, to }, previous, branches: out });
+});
+
+// Tendencia de alertas: the store alerts of one branch, counted by day, type and person. Like
+// Notificaciones, only the owner sees them.
+async function alertCounts(db: pg.PoolClient, zone: string, from: string, to: string) {
+  if (!(await alertsReady(db))) return { by_kind: [], by_day: [], by_person: [] };
+  const day = `coalesce(a.business_date,(a.occurred_at AT TIME ZONE $3)::date)`;
+  const args = [from, to, zone];
+  const where = `WHERE ${day} BETWEEN $1 AND $2`;
+  const [byKind, byDay, byPerson] = await serial([
+    () =>
+      db.query(
+        `SELECT a.kind,count(*)::int AS alerts,coalesce(sum(abs(a.amount_cents)),0)::text AS amount_cents
+         FROM alert_log a ${where} GROUP BY 1 ORDER BY 1`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT ${day}::text AS date,a.kind,count(*)::int AS alerts FROM alert_log a ${where}
+         GROUP BY 1,2 ORDER BY 1,2`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT a.user_id,u.name AS employee,u.deleted_at IS NOT NULL AS deleted,a.kind,count(*)::int AS alerts
+         FROM alert_log a JOIN users u ON u.id=a.user_id ${where} GROUP BY 1,2,3,4 ORDER BY 2,4`,
+        args,
+      ),
+  ]);
+  return { by_kind: byKind.rows, by_day: byDay.rows, by_person: byPerson.rows };
+}
+
+metrics.get('/metrics/alerts', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  owner(user);
+  const q = period(req);
+  const b = await context(user, q.branch_id, true);
+  const previous = previousPeriod(q.from, q.to);
+  res.json(
+    await transaction(b.id, async (db) => {
+      const current = await alertCounts(db, b.timezone, q.from, q.to),
+        before = await alertCounts(db, b.timezone, previous.from, previous.to);
+      return {
+        range: { from: q.from, to: q.to },
+        previous,
+        // The alert log started in October 2026: earlier days have no alerts recorded.
+        first_alert: (await alertsReady(db))
+          ? ((await db.query('SELECT min(occurred_at) AS at FROM alert_log')).rows[0].at ?? null)
+          : null,
+        current,
+        before: { by_kind: before.by_kind, by_day: before.by_day },
+      };
+    }),
+  );
 });
