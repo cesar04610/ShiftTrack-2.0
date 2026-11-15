@@ -6,6 +6,7 @@ const { modules } = await import('../apps/api/src/modules.js');
 const { media } = await import('../apps/api/src/media.js');
 const { schedules } = await import('../apps/api/src/schedules.js');
 const { reports } = await import('../apps/api/src/reports.js');
+const { metrics } = await import('../apps/api/src/metrics.js');
 const { supplierImport } = await import('../apps/api/src/supplier-import.js');
 const { sales } = await import('../apps/api/src/sales.js');
 const { commandSchema } = await import('../apps/api/src/commands.js');
@@ -63,6 +64,7 @@ inspect((media as any).stack, '/media');
 // Routers mounted with app.use are not routes of the app itself, so each is inspected with its prefix.
 inspect((schedules as any).stack, '/schedules');
 inspect((reports as any).stack, '');
+inspect((metrics as any).stack, '');
 inspect((supplierImport as any).stack, '/suppliers/import');
 inspect((sales as any).stack, '');
 paths['/sync/push'].post.requestBody = {

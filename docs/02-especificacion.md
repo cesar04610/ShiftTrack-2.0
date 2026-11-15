@@ -11,3 +11,5 @@ La entrada determina el turno del corte: mañana de 05:00 a antes de 15:00; tard
 Las fotografías de evidencia se eliminan automáticamente tras 30 días. La importación de proveedores desde Excel está disponible en Caja proveedores.
 
 Ventas es un punto de venta de respaldo para cuando SICAR falla. El administrador importa en Productos el catálogo que exporta SICAR (`.xls`); de él solo se toman clave, clave alterna, descripción, precio 1 con impuestos y granel. El cajero vende escaneando o buscando, con las teclas de SICAR, y cobra en efectivo o tarjeta. Un producto ausente del catálogo o sin precio no se vende. Las ventas funcionan sin conexión y son informativas: el corte se sigue capturando en Mi corte con las cantidades reales, y solo el corte mueve Caja general.
+
+Métricas compara ventas (de los cortes) y compras a proveedores (con la misma definición neta de Reportes), y por proveedor el gasto, su frecuencia, el ticket promedio y quién dejó de venir, contra el periodo anterior de igual duración. Es solo consulta, para administradores y con conexión.
