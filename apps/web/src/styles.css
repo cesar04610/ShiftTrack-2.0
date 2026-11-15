@@ -3880,3 +3880,9 @@ main > * {
   font-size: 11px;
   color: var(--muted);
 }
+.mt-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+}

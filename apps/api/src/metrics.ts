@@ -583,3 +583,57 @@ metrics.get('/metrics/branches', async (req, res) => {
     );
   res.json({ range: { from, to }, previous, branches: out });
 });
+
+// Tendencia de alertas: the store alerts of one branch, counted by day, type and person. Like
+// Notificaciones, only the owner sees them.
+async function alertCounts(db: pg.PoolClient, zone: string, from: string, to: string) {
+  if (!(await alertsReady(db))) return { by_kind: [], by_day: [], by_person: [] };
+  const day = `coalesce(a.business_date,(a.occurred_at AT TIME ZONE $3)::date)`;
+  const args = [from, to, zone];
+  const where = `WHERE ${day} BETWEEN $1 AND $2`;
+  const [byKind, byDay, byPerson] = await serial([
+    () =>
+      db.query(
+        `SELECT a.kind,count(*)::int AS alerts,coalesce(sum(abs(a.amount_cents)),0)::text AS amount_cents
+         FROM alert_log a ${where} GROUP BY 1 ORDER BY 1`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT ${day}::text AS date,a.kind,count(*)::int AS alerts FROM alert_log a ${where}
+         GROUP BY 1,2 ORDER BY 1,2`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT a.user_id,u.name AS employee,u.deleted_at IS NOT NULL AS deleted,a.kind,count(*)::int AS alerts
+         FROM alert_log a JOIN users u ON u.id=a.user_id ${where} GROUP BY 1,2,3,4 ORDER BY 2,4`,
+        args,
+      ),
+  ]);
+  return { by_kind: byKind.rows, by_day: byDay.rows, by_person: byPerson.rows };
+}
+
+metrics.get('/metrics/alerts', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  owner(user);
+  const q = period(req);
+  const b = await context(user, q.branch_id, true);
+  const previous = previousPeriod(q.from, q.to);
+  res.json(
+    await transaction(b.id, async (db) => {
+      const current = await alertCounts(db, b.timezone, q.from, q.to),
+        before = await alertCounts(db, b.timezone, previous.from, previous.to);
+      return {
+        range: { from: q.from, to: q.to },
+        previous,
+        // The alert log started in October 2026: earlier days have no alerts recorded.
+        first_alert: (await alertsReady(db))
+          ? ((await db.query('SELECT min(occurred_at) AS at FROM alert_log')).rows[0].at ?? null)
+          : null,
+        current,
+        before: { by_kind: before.by_kind, by_day: before.by_day },
+      };
+    }),
+  );
+});

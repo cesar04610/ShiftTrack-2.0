@@ -7,7 +7,16 @@ import { addDays } from './ScheduleBoard';
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
 type Tab =
-  'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad' | 'efectivo' | 'sucursales';
+  | 'ventas'
+  | 'compras'
+  | 'proveedores'
+  | 'empleados'
+  | 'rentabilidad'
+  | 'efectivo'
+  | 'sucursales'
+  | 'alertas';
+// Tabs only the owner sees.
+const ownerTabs: Tab[] = ['sucursales', 'alertas'];
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
@@ -17,6 +26,7 @@ const tabs: [Tab, string][] = [
   ['efectivo', 'Control de efectivo'],
   // Only the owner sees every branch.
   ['sucursales', 'Sucursales'],
+  ['alertas', 'Alertas'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -505,7 +515,8 @@ export default function Metrics({
     [data, setData] = useState<any>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
-    [branches, setBranches] = useState<any>(null);
+    [branches, setBranches] = useState<any>(null),
+    [alerts, setAlerts] = useState<any>(null);
   const [from, to] = preset === 'custom' ? custom : period(preset, today);
   const days = dayCount(from, to);
   const grain =
@@ -537,6 +548,19 @@ export default function Metrics({
   }, [comparing, from, to]);
   const compared =
     branches && branches.range.from === from && branches.range.to === to ? branches : null;
+  // The alert trend is the owner's too, like Notificaciones.
+  const alerting = owner && tab === 'alertas';
+  useEffect(() => {
+    if (!alerting || !from || !to || from > to) return;
+    let current = true;
+    request(`/metrics/alerts?branch_id=${branchId}&from=${from}&to=${to}`)
+      .then((r) => current && setAlerts(r))
+      .catch((e) => current && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      current = false;
+    };
+  }, [alerting, branchId, from, to]);
+  const alerted = alerts && alerts.range.from === from && alerts.range.to === to ? alerts : null;
   // Only the answer for the dates on screen is drawn.
   const ready = data && data.range.from === from && data.range.to === to ? data : null;
   return (
@@ -584,7 +608,7 @@ export default function Metrics({
       <div className="mt-head">
         <div className="rp-choice" role="group" aria-label="Tema">
           {tabs
-            .filter(([key]) => key !== 'sucursales' || owner)
+            .filter(([key]) => !ownerTabs.includes(key) || owner)
             .map(([key, text]) => (
               <button
                 key={key}
@@ -596,7 +620,7 @@ export default function Metrics({
               </button>
             ))}
         </div>
-        {['ventas', 'compras', 'rentabilidad', 'efectivo'].includes(tab) && (
+        {['ventas', 'compras', 'rentabilidad', 'efectivo', 'alertas'].includes(tab) && (
           <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
             {grains.map(([key, text]) => (
               <button
@@ -635,6 +659,12 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : alerting ? (
+        alerted ? (
+          <AlertMetrics a={alerted} grain={grain} />
+        ) : (
+          <p className="rp-note">Cargando alertas…</p>
+        )
       ) : comparing ? (
         compared ? (
           <BranchMetrics c={compared} current={branchId} />
@@ -1878,6 +1908,226 @@ function BranchMetrics({ c, current }: { c: any; current: string }) {
           }))}
         />
       </Panel>
+    </>
+  );
+}
+
+// The groups of Notificaciones, each with its slot of the validated categorical palette.
+const alertGroupList = [
+  { key: 'absent', label: 'Faltas', kinds: ['absent'], color: '#2a78d6' },
+  { key: 'time', label: 'Retardos y salidas', kinds: ['late', 'early_exit'], color: '#eb6834' },
+  {
+    key: 'money',
+    label: 'Diferencias de dinero',
+    kinds: ['cut_difference', 'supplier_difference'],
+    color: '#1baf7a',
+  },
+  {
+    key: 'pending',
+    label: 'Sin corte o tarea',
+    kinds: ['missing_cut', 'task_incomplete'],
+    color: '#eda100',
+  },
+];
+const alertKindNames: Record<string, string> = {
+  late: 'Llegó tarde',
+  absent: 'Faltó',
+  early_exit: 'Salió antes',
+  cut_difference: 'Diferencia en corte',
+  missing_cut: 'Sin corte',
+  task_incomplete: 'Tarea sin terminar',
+  supplier_difference: 'Diferencia proveedores',
+};
+const groupOf = (kind: string) =>
+  alertGroupList.find((g) => g.kinds.includes(kind))?.key ?? 'pending';
+const countText = (n: number) => (Number.isInteger(n) ? n.toLocaleString('es-MX') : '');
+
+// Tendencia de alertas: whether absences, late arrivals, money differences and missing cuts
+// go up or down over time.
+function AlertMetrics({ a, grain }: { a: any; grain: Grain }) {
+  const sumBy = (rows: any[], pick: (r: any) => boolean) =>
+    rows.filter(pick).reduce((s, r) => s + r.alerts, 0);
+  const now = a.current.by_kind as any[],
+    before = a.before.by_kind as any[];
+  const total = sumBy(now, () => true),
+    totalBefore = sumBy(before, () => true);
+  const grainName = { day: 'día', week: 'semana', month: 'mes' }[grain];
+  const m = { range: a.range, previous: a.previous };
+  const pick = (r: any) => ({ [groupOf(r.kind)]: r.alerts, total: r.alerts });
+  const series = trend(m, a.current.by_day, a.before.by_day, grain, pick);
+  // The alert log started in October 2026: a period before that cannot be compared.
+  const firstAlert = a.first_alert ? String(a.first_alert).slice(0, 10) : null;
+  const partial = firstAlert != null && firstAlert > a.previous.from;
+  const bars: Bar[] = series.map(({ key, now: n, before: b }) => ({
+    key,
+    label: bucketLabel(key, grain),
+    title: bucketTitle(key, grain, a.range.from, a.range.to),
+    value: n?.total ?? 0,
+    segments: alertGroupList.map((g) => ({
+      name: g.label,
+      value: n?.[g.key] ?? 0,
+      color: g.color,
+    })),
+    previous: b && !partial ? b.total : null,
+    tip: [
+      ...alertGroupList.map((g) => [g.label, String(n?.[g.key] ?? 0)] as [string, string]),
+      ['Total', String(n?.total ?? 0)],
+      ['Periodo anterior', b ? String(b.total) : 'Sin registros'],
+    ],
+  }));
+  // People with alerts, most first.
+  const people = new Map<string, any>();
+  for (const r of a.current.by_person as any[]) {
+    const p = people.get(r.user_id) || {
+      id: r.user_id,
+      name: r.employee,
+      total: 0,
+      absent: 0,
+      time: 0,
+      money: 0,
+      pending: 0,
+    };
+    p[groupOf(r.kind)] += r.alerts;
+    p.total += r.alerts;
+    people.set(r.user_id, p);
+  }
+  const ranked = [...people.values()].sort((x, y) => y.total - x.total);
+  if (!total && !totalBefore)
+    return (
+      <section className="card mt-panel">
+        <Empty text="No hay alertas en este periodo ni en el anterior." />
+      </section>
+    );
+  const kinds = Object.keys(alertKindNames).filter(
+    (k) => now.some((r) => r.kind === k) || before.some((r) => r.kind === k),
+  );
+  const count = (rows: any[], kind: string) => rows.find((r) => r.kind === kind)?.alerts ?? 0;
+  // Within the period: alerts per day in its second half against its first. It works even when
+  // the period before has no records.
+  // If the log started inside the period, the halves start with it.
+  const start = firstAlert && firstAlert > a.range.from ? firstAlert : a.range.from;
+  const length = dayCount(start, a.range.to);
+  const mid = addDays(start, Math.floor(length / 2));
+  const halves = (pick: (kind: string) => boolean) => {
+    const rows = (a.current.by_day as any[]).filter((r) => pick(r.kind));
+    const first = rows
+      .filter((r) => r.date >= start && r.date < mid)
+      .reduce((s, r) => s + r.alerts, 0);
+    const second = rows.filter((r) => r.date >= mid).reduce((s, r) => s + r.alerts, 0);
+    const firstDays = dayCount(start, mid) - 1,
+      secondDays = length - firstDays;
+    return { first: firstDays ? first / firstDays : 0, second: second / secondDays };
+  };
+  const split = length >= 4;
+  return (
+    <>
+      <div className="mt-stats">
+        {alertGroupList.map((g) => {
+          const n = sumBy(now, (r) => g.kinds.includes(r.kind)),
+            b = sumBy(before, (r) => g.kinds.includes(r.kind));
+          const amount = now
+            .filter((r) => g.kinds.includes(r.kind))
+            .reduce((s, r) => s + num(r.amount_cents), 0);
+          return (
+            <Stat key={g.key} label={g.label} value={String(n)}>
+              {partial ? (
+                <small className="mt-change">Sin comparación con el periodo anterior</small>
+              ) : (
+                <Change now={n} before={b} upIs="bad" />
+              )}
+              {split &&
+                (() => {
+                  const h = halves((k) => g.kinds.includes(k));
+                  return h.first || h.second ? (
+                    <small className="mt-split">
+                      Segunda mitad contra la primera:{' '}
+                      <Change now={h.second} before={h.first} upIs="bad" brief />
+                    </small>
+                  ) : null;
+                })()}
+              {g.key === 'money' && amount > 0 && <small>Suman {pesos(amount)}</small>}
+            </Stat>
+          );
+        })}
+      </div>
+      <p className="rp-note mt-caveat">
+        {plural(total, 'alerta', 'alertas')} en el periodo
+        {totalBefore && !partial ? ` contra ${totalBefore} del anterior` : ''}. Son los mismos
+        avisos de Notificaciones. «Segunda mitad contra la primera» compara las alertas por día de
+        cada mitad del periodo: muestra si van subiendo o bajando.
+        {partial &&
+          ` Las alertas se registran desde el ${shortDate(firstAlert!)}: el periodo anterior está incompleto y no se compara.`}
+      </p>
+      <Panel
+        title={`Alertas por ${grainName}`}
+        note={`Cada barra suma las alertas de ese periodo por grupo.${partial ? '' : ' La línea punteada es el total del periodo anterior.'}`}
+        legend={[
+          ...alertGroupList.map((g) => ({ label: g.label, color: g.color })),
+          ...(partial ? [] : [{ label: 'Periodo anterior', dashed: true }]),
+        ]}
+        table={{
+          headers: ['Periodo', ...alertGroupList.map((g) => g.label), 'Total', 'Periodo anterior'],
+          rows: bars.map((b) => [b.title, ...b.tip.map(([, v]) => v)]),
+        }}
+      >
+        <BarChart bars={bars} axis={countText} />
+      </Panel>
+      <div className="mt-pair">
+        <Panel
+          title="Por tipo"
+          note={
+            partial
+              ? 'Cada tipo de alerta y si subió o bajó dentro del periodo.'
+              : 'Cada tipo de alerta contra el periodo anterior y dentro del periodo.'
+          }
+        >
+          <Table
+            headers={[
+              'Tipo',
+              'Este periodo',
+              ...(partial ? [] : ['Anterior', 'Contra el anterior']),
+              'Tendencia en el periodo',
+            ]}
+            rows={kinds.map((k) => {
+              const n = count(now, k),
+                b = count(before, k);
+              return {
+                key: k,
+                cells: [
+                  alertKindNames[k],
+                  String(n),
+                  ...(partial ? [] : [String(b), <Change now={n} before={b} upIs="bad" brief />]),
+                  split
+                    ? (() => {
+                        const h = halves((x) => x === k);
+                        return <Change now={h.second} before={h.first} upIs="bad" brief />;
+                      })()
+                    : '—',
+                ],
+              };
+            })}
+          />
+        </Panel>
+        <Panel title="Por persona" note="Quién acumula más alertas en el periodo.">
+          {ranked.length ? (
+            <Rows
+              danger
+              items={ranked.map((p) => ({
+                key: p.id,
+                label: p.name,
+                sub: alertGroupList
+                  .filter((g) => p[g.key])
+                  .map((g) => `${g.label.toLowerCase()} ${p[g.key]}`)
+                  .join(' · '),
+                value: p.total,
+                text: plural(p.total, 'alerta', 'alertas'),
+              }))}
+            />
+          ) : (
+            <Empty text="Ninguna alerta de este periodo es de una persona." />
+          )}
+        </Panel>
+      </div>
     </>
   );
 }
