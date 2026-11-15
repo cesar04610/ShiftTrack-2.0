@@ -6,11 +6,12 @@ import { addDays } from './ScheduleBoard';
 
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
-type Tab = 'ventas' | 'compras' | 'proveedores';
+type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados';
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
   ['proveedores', 'Proveedores'],
+  ['empleados', 'Empleados'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -335,10 +336,13 @@ function BarChart({
 // Horizontal bars for a few named groups (turnos, cajas): name, bar, value.
 function Rows({
   items,
+  scale,
 }: {
   items: { key: string; label: string; sub?: string; value: number; text: string }[];
+  // A fixed full bar, such as 1 for percentages; otherwise the largest value.
+  scale?: number;
 }) {
-  const max = Math.max(0, ...items.map((i) => i.value));
+  const max = scale ?? Math.max(0, ...items.map((i) => i.value));
   return (
     <ul className="mt-rows">
       {items.map((i) => (
@@ -530,7 +534,7 @@ export default function Metrics({
             </button>
           ))}
         </div>
-        {tab !== 'proveedores' && (
+        {(tab === 'ventas' || tab === 'compras') && (
           <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
             {grains.map(([key, text]) => (
               <button
@@ -569,6 +573,8 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : tab === 'empleados' ? (
+        <EmployeeMetrics m={ready} />
       ) : tab === 'proveedores' ? (
         <SupplierMetrics m={ready} days={days} />
       ) : (
@@ -793,7 +799,7 @@ function Table({
             <tr key={r.key}>
               {r.cells.map((c, i) => (
                 <td key={i} data-label={headers[i]}>
-                  {c}
+                  <div>{c}</div>
                 </td>
               ))}
             </tr>
@@ -1010,6 +1016,251 @@ function SupplierMetrics({ m, days }: { m: any; days: number }) {
           />
         ) : (
           <Empty text="Todos los proveedores siguen viniendo con su frecuencia habitual." />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+// A cut difference reads as what happened to the cash.
+const gap = (cents: number) =>
+  !cents ? 'Sin diferencia' : `${cents < 0 ? 'Faltan' : 'Sobran'} ${pesos(Math.abs(cents))}`;
+const ratio = (part: number, whole: number) => (whole > 0 ? part / whole : null);
+// On time: scheduled shifts that already ended, minus absences and late arrivals.
+const onTime = (p: any) => ratio(Math.max(0, p.scheduled - p.absences - p.late), p.scheduled);
+// Done against what could still be done: today's pending tasks don't count yet.
+const taskRate = (p: any) => ratio(p.tasks_done, p.tasks_done + p.tasks_missed);
+const hoursText = (n: number) => `${n.toLocaleString('es-MX', { maximumFractionDigits: 1 })} h`;
+// Fewer hours than this in a register say little about a person's sales per hour.
+const MIN_RATE_HOURS = 8;
+
+function EmployeeMetrics({ m }: { m: any }) {
+  const e = m.employees,
+    t = e.totals,
+    p = e.previous.totals;
+  const people: any[] = e.people;
+  if (!people.length)
+    return (
+      <section className="card mt-panel">
+        <Empty text="No hay horarios, entradas, tareas ni cortes en este periodo." />
+      </section>
+    );
+  const punctual = onTime(t),
+    punctualBefore = onTime(p);
+  const tasksNow = taskRate(t),
+    tasksBefore = taskRate(p);
+  const hoursNow = ratio(t.hours, t.scheduled_hours);
+  const scheduled = people.filter((x) => x.scheduled > 0);
+  const withTasks = people.filter((x) => x.tasks_done + x.tasks_missed > 0);
+  const cashiers = people.filter((x) => x.cuts > 0 || x.missing_cut > 0);
+  const rated = people
+    .filter((x) => x.rate_hours >= MIN_RATE_HOURS && num(x.rate_expected_cents) > 0)
+    .map((x) => ({
+      ...x,
+      perHour: num(x.rate_sales_cents) / x.rate_hours,
+      index: num(x.rate_sales_cents) / num(x.rate_expected_cents) - 1,
+    }))
+    .sort((a, b) => b.index - a.index);
+  const name = (x: any) => (
+    <>
+      {x.employee}
+      {x.deleted && <span className="badge muted-badge mt-inline">Eliminado</span>}
+    </>
+  );
+  const shiftRates = (e.shift_rates as any[])
+    .filter((r) => r.hours > 0)
+    .map((r) => `${r.label.toLowerCase()} ${pesos(num(r.sales_cents) / r.hours)} por hora`)
+    .join(' · ');
+  return (
+    <>
+      <div className="mt-stats">
+        <Stat label="Turnos a tiempo" value={punctual == null ? '—' : percent(punctual)}>
+          {punctual != null && punctualBefore != null ? (
+            <Change now={punctual} before={punctualBefore} points />
+          ) : (
+            <small>{plural(t.scheduled, 'turno programado', 'turnos programados')}</small>
+          )}
+        </Stat>
+        <Stat label="Horas trabajadas" value={hoursText(t.hours)}>
+          <small>
+            {hoursNow == null
+              ? 'Sin horarios terminados'
+              : `${percent(hoursNow, 0)} de ${hoursText(t.scheduled_hours)} programadas`}
+          </small>
+        </Stat>
+        <Stat label="Tareas cumplidas" value={tasksNow == null ? '—' : percent(tasksNow)}>
+          {tasksNow != null && tasksBefore != null ? (
+            <Change now={tasksNow} before={tasksBefore} points />
+          ) : (
+            <small>{plural(t.tasks_missed, 'tarea no realizada', 'tareas no realizadas')}</small>
+          )}
+        </Stat>
+        <Stat label="Diferencia en cortes" value={gap(num(t.difference_cents))}>
+          <small>
+            {plural(t.cuts_uneven, 'corte', 'cortes')} con diferencia de {t.cuts} ·{' '}
+            {plural(t.missing_cut, 'turno sin corte', 'turnos sin corte')}
+          </small>
+        </Stat>
+      </div>
+      <Panel
+        title="Puntualidad"
+        note="Turnos programados que ya terminaron y en los que la persona llegó a tiempo. Primero quien tuvo más incidencias."
+        table={{
+          headers: ['Persona', 'A tiempo', 'Turnos', 'Retardos', 'Faltas', 'Salidas anticipadas'],
+          rows: scheduled.map((x) => [
+            x.employee,
+            percent(onTime(x)!),
+            String(x.scheduled),
+            String(x.late),
+            String(x.absences),
+            String(x.early_exit),
+          ]),
+        }}
+      >
+        {scheduled.length ? (
+          <Rows
+            items={[...scheduled]
+              .sort((a, b) => onTime(a)! - onTime(b)! || b.early_exit - a.early_exit)
+              .map((x) => ({
+                key: x.user_id,
+                label: x.employee,
+                sub: [
+                  plural(x.scheduled, 'turno', 'turnos'),
+                  x.late && plural(x.late, 'retardo', 'retardos'),
+                  x.absences && plural(x.absences, 'falta', 'faltas'),
+                  x.early_exit && plural(x.early_exit, 'salida anticipada', 'salidas anticipadas'),
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+                value: onTime(x)!,
+                text: `${percent(onTime(x)!, 0)} a tiempo`,
+              }))}
+            scale={1}
+          />
+        ) : (
+          <Empty text="Nadie tuvo horario terminado en este periodo." />
+        )}
+      </Panel>
+      <Panel
+        title="Horas trabajadas contra programadas"
+        note="Horas de las entradas ya cerradas contra las de los horarios que ya terminaron. Las horas de más pueden ser dobles turnos o entradas sin horario."
+      >
+        <Table
+          headers={['Persona', 'Programadas', 'Trabajadas', 'Diferencia', 'Días trabajados']}
+          rows={people
+            .filter((x) => x.hours > 0 || x.scheduled_hours > 0)
+            .map((x) => ({
+              key: x.user_id,
+              cells: [
+                name(x),
+                hoursText(x.scheduled_hours),
+                <>
+                  {hoursText(x.hours)}
+                  {x.open > 0 && <span className="badge muted-badge mt-inline">En curso</span>}
+                </>,
+                `${x.hours - x.scheduled_hours >= 0 ? '+' : '−'}${hoursText(Math.abs(x.hours - x.scheduled_hours))}`,
+                String(x.days),
+              ],
+            }))}
+        />
+      </Panel>
+      <Panel
+        title="Tareas cumplidas"
+        note="Tareas realizadas contra las que ya no se pueden hacer; las de hoy aún pendientes no cuentan. Primero quien cumplió menos."
+        table={{
+          headers: ['Persona', 'Cumplidas', 'Realizadas', 'No realizadas', 'Pendientes de hoy'],
+          rows: withTasks.map((x) => [
+            x.employee,
+            percent(taskRate(x)!),
+            String(x.tasks_done),
+            String(x.tasks_missed),
+            String(x.tasks - x.tasks_done - x.tasks_missed),
+          ]),
+        }}
+      >
+        {withTasks.length ? (
+          <Rows
+            items={[...withTasks]
+              .sort((a, b) => taskRate(a)! - taskRate(b)! || b.tasks_missed - a.tasks_missed)
+              .map((x) => ({
+                key: x.user_id,
+                label: x.employee,
+                sub: `${x.tasks_done} de ${x.tasks_done + x.tasks_missed} · ${plural(x.tasks_missed, 'no realizada', 'no realizadas')}`,
+                value: taskRate(x)!,
+                text: percent(taskRate(x)!, 0),
+              }))}
+            scale={1}
+          />
+        ) : (
+          <Empty text="No hubo tareas que vencieran en este periodo." />
+        )}
+      </Panel>
+      <Panel
+        title="Precisión de cortes"
+        note="Diferencia entre lo contado y lo esperado en los cortes de cada persona. Una diferencia pequeña que se repite pesa más que una grande aislada."
+      >
+        {cashiers.length ? (
+          <Table
+            headers={[
+              'Persona',
+              'Cortes',
+              'Con diferencia',
+              'Diferencia promedio',
+              'Acumulado',
+              'Turnos sin corte',
+            ]}
+            rows={[...cashiers]
+              .sort((a, b) => num(b.abs_difference_cents) - num(a.abs_difference_cents))
+              .map((x) => ({
+                key: x.user_id,
+                cells: [
+                  name(x),
+                  String(x.cuts),
+                  String(x.cuts_uneven),
+                  x.cuts ? pesos(num(x.abs_difference_cents) / x.cuts) : '—',
+                  num(x.difference_cents) ? (
+                    <span
+                      className={`badge ${num(x.difference_cents) < 0 ? 'danger-badge' : 'amber-badge'}`}
+                    >
+                      {gap(num(x.difference_cents))}
+                    </span>
+                  ) : (
+                    'Sin diferencia'
+                  ),
+                  x.missing_cut ? <span className="badge amber-badge">{x.missing_cut}</span> : '0',
+                ],
+              }))}
+          />
+        ) : (
+          <Empty text="No hubo cortes en este periodo." />
+        )}
+      </Panel>
+      <Panel
+        title="Venta por hora trabajada"
+        note={`Lo vendido en cada corte entre las horas de la entrada que cerró, comparado con el promedio de su mismo turno (${shiftRates || 'sin datos'}). Quien es el único en su turno no tiene con quién compararse. Solo personas con al menos ${MIN_RATE_HOURS} horas en caja. Depende también de la caja y del día: úsalo como referencia, no como calificación.`}
+      >
+        {rated.length ? (
+          <Table
+            headers={['Persona', 'Vendido', 'Horas en caja', 'Venta por hora', 'Contra su turno']}
+            rows={rated.map((x) => ({
+              key: x.user_id,
+              cells: [
+                name(x),
+                pesos(num(x.rate_sales_cents)),
+                hoursText(x.rate_hours),
+                pesos(x.perHour),
+                x.rate_alone
+                  ? 'Único en su turno'
+                  : Math.abs(x.index) < 0.005
+                    ? 'Igual al promedio'
+                    : `${x.index > 0 ? 'Arriba' : 'Abajo'} ${percent(Math.abs(x.index))}`,
+              ],
+            }))}
+          />
+        ) : (
+          <Empty
+            text={`Nadie tiene ${MIN_RATE_HOURS} horas o más en caja con corte ligado a su entrada en este periodo.`}
+          />
         )}
       </Panel>
     </>

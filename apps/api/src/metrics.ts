@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type pg from 'pg';
 import { identity } from './security.js';
 import { admin, context, transaction } from './db.js';
-import { assert } from '../../../packages/domain/index.js';
+import { alertsReady } from './alerts.js';
+import { assert, shiftBusinessDate } from '../../../packages/domain/index.js';
 
 // Métricas: tendencias y comparaciones de una sucursal. Reportes lista cada registro;
 // aquí cada cifra se compara con el periodo anterior de la misma duración.
@@ -212,19 +213,193 @@ async function suppliers(
   ).rows;
 }
 
+// Empleados, with the rules of Reportes and Notificaciones: an absence is a finished schedule
+// without an entry from two hours before its start; late arrivals, early exits and shifts
+// without a cut come from the alert log; a task is missed once its work day is over.
+async function employees(db: pg.PoolClient, zone: string, from: string, to: string) {
+  const args = [from, to, zone];
+  const alerts = await alertsReady(db);
+  const workDay = shiftBusinessDate(new Date(), zone);
+  const [schedules, absences, clocks, incidents, tasks, cuts, rates] = await serial([
+    // Only schedules that already ended count: today's afternoon shift is not owed yet.
+    () =>
+      db.query(
+        `SELECT s.user_id,count(*)::int AS scheduled,
+           coalesce(sum(extract(epoch FROM (s.end_time-s.start_time))/3600),0)::float AS scheduled_hours
+         FROM schedules s
+         WHERE s.business_date BETWEEN $1 AND $2 AND ((s.business_date+s.end_time) AT TIME ZONE $3)<now()
+         GROUP BY s.user_id`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT s.user_id,count(*)::int AS absences FROM schedules s
+         WHERE s.business_date BETWEEN $1 AND $2 AND ((s.business_date+s.end_time) AT TIME ZONE $3)<now()
+           AND NOT EXISTS(SELECT 1 FROM clock_records c WHERE c.user_id=s.user_id
+             AND c.clock_in>=((s.business_date+s.start_time) AT TIME ZONE $3)-interval '2 hours'
+             AND c.clock_in<((s.business_date+s.end_time) AT TIME ZONE $3))
+         GROUP BY s.user_id`,
+        args,
+      ),
+    () =>
+      db.query(
+        `SELECT user_id,count(DISTINCT business_date)::int AS days,
+           coalesce(sum(extract(epoch FROM (clock_out-clock_in))/3600) FILTER (WHERE clock_out IS NOT NULL),0)::float AS hours,
+           count(*) FILTER (WHERE clock_out IS NULL)::int AS open
+         FROM clock_records WHERE business_date BETWEEN $1 AND $2 GROUP BY user_id`,
+        args.slice(0, 2),
+      ),
+    () =>
+      alerts
+        ? db.query(
+            `SELECT user_id,count(*) FILTER (WHERE kind='late')::int AS late,
+               count(*) FILTER (WHERE kind='early_exit')::int AS early_exit,
+               count(*) FILTER (WHERE kind='missing_cut')::int AS missing_cut
+             FROM alert_log WHERE user_id IS NOT NULL AND kind IN ('late','early_exit','missing_cut')
+               AND business_date BETWEEN $1 AND $2 GROUP BY user_id`,
+            args.slice(0, 2),
+          )
+        : Promise.resolve({ rows: [] } as any),
+    () =>
+      db.query(
+        `SELECT user_id,count(*)::int AS tasks,count(*) FILTER (WHERE completed_at IS NOT NULL)::int AS tasks_done,
+           count(*) FILTER (WHERE completed_at IS NULL AND due_date<$3)::int AS tasks_missed
+         FROM tasks WHERE due_date BETWEEN $1 AND $2 GROUP BY user_id`,
+        [from, to, workDay],
+      ),
+    () =>
+      db.query(
+        `SELECT user_id,count(*)::int AS cuts,count(*) FILTER (WHERE difference_cents<>0)::int AS cuts_uneven,
+           sum(difference_cents)::text AS difference_cents,sum(abs(difference_cents))::text AS abs_difference_cents
+         FROM cuts WHERE business_date BETWEEN $1 AND $2 GROUP BY user_id`,
+        args.slice(0, 2),
+      ),
+    // Sales per hour: each cut against the hours of the entry it closed, by shift.
+    () =>
+      db.query(
+        `SELECT c.user_id,c.label,sum(c.sales_cents)::text AS sales_cents,
+           sum(extract(epoch FROM (r.clock_out-r.clock_in))/3600)::float AS hours
+         FROM cuts c JOIN clock_records r ON r.id=c.clock_record_id AND r.clock_out IS NOT NULL
+         WHERE c.business_date BETWEEN $1 AND $2 AND r.clock_out>r.clock_in
+         GROUP BY c.user_id,c.label`,
+        args.slice(0, 2),
+      ),
+  ]);
+  const people = new Map<string, any>();
+  const person = (id: string) => {
+    if (!people.has(id))
+      people.set(id, {
+        user_id: id,
+        scheduled: 0,
+        scheduled_hours: 0,
+        absences: 0,
+        days: 0,
+        hours: 0,
+        open: 0,
+        late: 0,
+        early_exit: 0,
+        missing_cut: 0,
+        tasks: 0,
+        tasks_done: 0,
+        tasks_missed: 0,
+        cuts: 0,
+        cuts_uneven: 0,
+        difference_cents: '0',
+        abs_difference_cents: '0',
+        rate_sales_cents: '0',
+        rate_hours: 0,
+        // Sales the hours would bring at the average rate of their shift.
+        rate_expected_cents: 0,
+      });
+    return people.get(id);
+  };
+  for (const list of [schedules, absences, clocks, incidents, tasks, cuts])
+    for (const { user_id, ...r } of list.rows) Object.assign(person(user_id), r);
+  const shiftRate = new Map<string, { sales: number; hours: number; people: Set<string> }>();
+  for (const r of rates.rows) {
+    const t = shiftRate.get(r.label) || { sales: 0, hours: 0, people: new Set<string>() };
+    t.sales += Number(r.sales_cents);
+    t.hours += r.hours;
+    t.people.add(r.user_id);
+    shiftRate.set(r.label, t);
+  }
+  for (const r of rates.rows) {
+    const p = person(r.user_id),
+      t = shiftRate.get(r.label)!;
+    p.rate_sales_cents = (BigInt(p.rate_sales_cents) + BigInt(r.sales_cents)).toString();
+    p.rate_hours += r.hours;
+    p.rate_expected_cents += t.hours ? (r.hours * t.sales) / t.hours : 0;
+    // Whoever is the only one in every shift they worked has no one to compare with.
+    p.rate_alone = (p.rate_alone ?? true) && t.people.size === 1;
+  }
+  const names = new Map<string, any>(
+    (
+      await db.query(
+        'SELECT id,name,role,deleted_at IS NOT NULL AS deleted FROM users WHERE id=ANY($1)',
+        [[...people.keys()]],
+      )
+    ).rows.map((u) => [u.id, u]),
+  );
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const list = [...people.values()]
+    .map((p) => ({
+      ...p,
+      employee: names.get(p.user_id)?.name ?? '—',
+      role: names.get(p.user_id)?.role,
+      deleted: names.get(p.user_id)?.deleted ?? false,
+      hours: round(p.hours),
+      scheduled_hours: round(p.scheduled_hours),
+      rate_hours: round(p.rate_hours),
+      rate_expected_cents: Math.round(p.rate_expected_cents).toString(),
+      rate_alone: p.rate_alone ?? false,
+    }))
+    .sort((a, b) => a.employee.localeCompare(b.employee, 'es'));
+  const sum = (key: string) => list.reduce((s, p) => s + Number(p[key]), 0);
+  return {
+    totals: {
+      people: list.length,
+      scheduled: sum('scheduled'),
+      scheduled_hours: round(sum('scheduled_hours')),
+      hours: round(sum('hours')),
+      absences: sum('absences'),
+      late: sum('late'),
+      early_exit: sum('early_exit'),
+      missing_cut: sum('missing_cut'),
+      tasks: sum('tasks'),
+      tasks_done: sum('tasks_done'),
+      tasks_missed: sum('tasks_missed'),
+      cuts: sum('cuts'),
+      cuts_uneven: sum('cuts_uneven'),
+      difference_cents: list.reduce((s, p) => s + BigInt(p.difference_cents), 0n).toString(),
+      abs_difference_cents: list
+        .reduce((s, p) => s + BigInt(p.abs_difference_cents), 0n)
+        .toString(),
+    },
+    shift_rates: [...shiftRate].map(([label, { people, ...t }]) => ({
+      label,
+      sales_cents: String(t.sales),
+      hours: round(t.hours),
+    })),
+    people: list,
+  };
+}
+
 export async function buildMetrics(db: pg.PoolClient, zone: string, from: string, to: string) {
   const previous = previousPeriod(from, to);
   const s = await sales(db, from, to),
     p = await purchases(db, zone, from, to),
     ps = await sales(db, previous.from, previous.to),
     pp = await purchases(db, zone, previous.from, previous.to),
-    sp = await suppliers(db, zone, { from, to }, previous);
+    sp = await suppliers(db, zone, { from, to }, previous),
+    e = await employees(db, zone, from, to),
+    pe = await employees(db, zone, previous.from, previous.to);
   return {
     range: { from, to },
     previous,
     sales: { ...s, previous: { totals: ps.totals, by_day: ps.by_day } },
     purchases: { ...p, previous: { totals: pp.totals, by_day: pp.by_day } },
     suppliers: sp,
+    employees: { ...e, previous: { totals: pe.totals } },
   };
 }
 
