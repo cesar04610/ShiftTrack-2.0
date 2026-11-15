@@ -195,6 +195,17 @@ before(async () => {
      VALUES($1,$2,$3,'refund',5000,0,5000,'Devolución',$4,'2026-03-03T19:00:00Z')`,
     [branch, randomUUID(), corrected, adminId],
   );
+  // Caja general: un gasto extraordinario en el periodo, uno en el anterior y un ajuste que no
+  // es gasto.
+  await db.query(
+    `INSERT INTO treasury_entries(branch_id,id,source_id,kind,cash_cents,bank_cents,note,actor_user_id,occurred_at)
+     SELECT $1,x.id,x.id,x.kind,x.cash,0,x.note,$2,x.at FROM (VALUES
+       (gen_random_uuid(),'expense',-12000::bigint,'Reparación de refrigerador','2026-03-03T18:00:00Z'::timestamptz),
+       (gen_random_uuid(),'expense',-3000::bigint,'Papelería','2026-02-27T18:00:00Z'::timestamptz),
+       (gen_random_uuid(),'cash_adjustment',-500::bigint,'Ajuste','2026-03-03T19:00:00Z'::timestamptz)
+     ) x(id,kind,cash,note,at)`,
+    [branch, adminId],
+  );
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -408,6 +419,25 @@ test('métricas de empleados: puntualidad, horas, tareas, cortes y venta por hor
   a.equal(e.previous.totals.cuts, 1);
   // La otra sucursal no aparece.
   a.ok(!e.people.some((x: any) => x.user_id === otherAdminId));
+});
+
+test('métricas de rentabilidad: gastos extraordinarios de Caja general', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  const x = r.body.expenses;
+  a.deepEqual(x.totals, { entries: 1, amount_cents: '12000' });
+  a.deepEqual(x.by_day, [{ date: '2026-03-03', amount_cents: '12000' }]);
+  a.deepEqual(
+    x.entries.map((e: any) => [e.date, e.note, e.amount_cents]),
+    [['2026-03-03', 'Reparación de refrigerador', '12000']],
+  );
+  a.deepEqual(x.previous.totals, { entries: 1, amount_cents: '3000' });
+  a.deepEqual(x.previous.by_day, [{ date: '2026-02-27', amount_cents: '3000' }]);
+  // Resultado: ventas $2,100 − compras $250 − gastos $120 = $1,730.
+  const result =
+    Number(r.body.sales.totals.sales_cents) -
+    Number(r.body.purchases.totals.net_cents) -
+    Number(x.totals.amount_cents);
+  a.equal(result, 173_000);
 });
 
 test('métricas: un día sin movimientos, permisos y rango', async () => {

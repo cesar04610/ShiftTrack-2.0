@@ -6,12 +6,13 @@ import { addDays } from './ScheduleBoard';
 
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
-type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados';
+type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad';
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
   ['proveedores', 'Proveedores'],
   ['empleados', 'Empleados'],
+  ['rentabilidad', 'Rentabilidad'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -106,12 +107,13 @@ function bucketize<T extends { date: string }>(
 
 const pesos = (cents: number) => money(BigInt(Math.round(cents)));
 const compact = (cents: number) => {
-  const v = cents / 100;
-  if (Math.abs(v) >= 1_000_000)
-    return `$${(v / 1_000_000).toLocaleString('es-MX', { maximumFractionDigits: 1 })} M`;
-  if (Math.abs(v) >= 1_000)
-    return `$${(v / 1_000).toLocaleString('es-MX', { maximumFractionDigits: 1 })} mil`;
-  return `$${v.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`;
+  const sign = cents < 0 ? '-' : '',
+    v = Math.abs(cents) / 100;
+  if (v >= 1_000_000)
+    return `${sign}$${(v / 1_000_000).toLocaleString('es-MX', { maximumFractionDigits: 1 })} M`;
+  if (v >= 1_000)
+    return `${sign}$${(v / 1_000).toLocaleString('es-MX', { maximumFractionDigits: 1 })} mil`;
+  return `${sign}$${v.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`;
 };
 const percent = (ratio: number, digits = 1) =>
   `${(ratio * 100).toLocaleString('es-MX', { maximumFractionDigits: digits })}%`;
@@ -217,9 +219,12 @@ function BarChart({
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const values = bars.flatMap((b) => [b.value ?? 0, b.previous ?? 0]);
-  const { top, step } = fixedTop
-    ? { top: fixedTop, step: fixedTop / 4 }
-    : niceMax(Math.max(0, ...values));
+  // The axis always holds zero; a negative value (a loss) extends it below.
+  const high = Math.max(0, ...values),
+    low = Math.min(0, ...values);
+  const { step } = fixedTop ? { step: fixedTop / 4 } : niceMax(high - low);
+  const top = fixedTop ?? Math.max(step, Math.ceil(high / step) * step),
+    floor = fixedTop ? 0 : Math.floor(low / step) * step;
   const left = 58,
     right = 8,
     pad = 8,
@@ -227,13 +232,14 @@ function BarChart({
   const plot = Math.max(0, width - left - right);
   const band = bars.length ? plot / bars.length : 0;
   const barW = Math.max(1, Math.min(36, band - 2, band * 0.72));
-  const y = (v: number) => pad + (height - pad - bottom) * (1 - Math.min(v, top) / top);
+  const y = (v: number) =>
+    pad + ((height - pad - bottom) * (top - Math.max(floor, Math.min(v, top)))) / (top - floor);
   const x = (i: number) => left + band * i + band / 2;
   // Labels thin out so they never collide.
   const labelWidth = Math.max(...bars.map((b) => b.label.length), 1) * 6.5 + 12;
   const every = Math.max(1, Math.ceil(bars.length / Math.max(1, Math.floor(plot / labelWidth))));
   const ticks: number[] = [];
-  for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
+  for (let i = 0; floor + i * step <= top + step / 2; i++) ticks.push(floor + i * step);
   const prev = bars.map((b, i) => (b.previous == null ? null : ([x(i), y(b.previous)] as const)));
   const prevPath = prev
     .map((p, i) => (p ? `${i && prev[i - 1] ? 'L' : 'M'}${p[0]},${p[1]}` : ''))
@@ -271,8 +277,23 @@ function BarChart({
             let acc = 0;
             const segs = b.segments || (b.value ? [{ name: '', value: b.value, color: '' }] : []);
             const shown = segs.filter((s) => s.value > 0);
+            const loss = !b.segments && (b.value ?? 0) < 0;
             return (
               <g key={b.key} className={hover != null && hover !== i ? 'dim' : ''}>
+                {loss && (
+                  // Hangs from the baseline, rounded at its lower end.
+                  <path
+                    d={(() => {
+                      const y0 = base,
+                        y1 = y(b.value!),
+                        r = Math.min(radius, y1 - y0),
+                        l = x(i) - barW / 2,
+                        rr = l + barW;
+                      return `M${l},${y0}V${y1 - r}Q${l},${y1} ${l + r},${y1}H${rr - r}Q${rr},${y1} ${rr},${y1 - r}V${y0}Z`;
+                    })()}
+                    className="bar negative"
+                  />
+                )}
                 {shown.map((s, j) => {
                   const y0 = y(acc) - (j ? 1 : 0),
                     y1 = y(acc + s.value) + (j < shown.length - 1 ? 1 : 0);
@@ -364,7 +385,7 @@ function Rows({
     </ul>
   );
 }
-type Legend = { label: string; color?: string; dashed?: boolean };
+type Legend = { label: string; color?: string; dashed?: boolean; negative?: boolean };
 // One chart with its title, legend and a table view of the same numbers.
 function Panel({
   title,
@@ -404,7 +425,7 @@ function Panel({
           {legend.map((l) => (
             <li key={l.label}>
               <i
-                className={l.dashed ? 'dashed' : ''}
+                className={l.dashed ? 'dashed' : l.negative ? 'negative' : ''}
                 style={l.color ? { background: l.color } : undefined}
               />
               {l.label}
@@ -534,7 +555,7 @@ export default function Metrics({
             </button>
           ))}
         </div>
-        {(tab === 'ventas' || tab === 'compras') && (
+        {(tab === 'ventas' || tab === 'compras' || tab === 'rentabilidad') && (
           <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
             {grains.map(([key, text]) => (
               <button
@@ -573,6 +594,8 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : tab === 'rentabilidad' ? (
+        <ProfitMetrics m={ready} grain={grain} />
       ) : tab === 'empleados' ? (
         <EmployeeMetrics m={ready} />
       ) : tab === 'proveedores' ? (
@@ -1261,6 +1284,165 @@ function EmployeeMetrics({ m }: { m: any }) {
           <Empty
             text={`Nadie tiene ${MIN_RATE_HOURS} horas o más en caja con corte ligado a su entrada en este periodo.`}
           />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+// Rentabilidad: what came in from sales minus what went out to suppliers and extraordinary
+// expenses. Cash flow, not profit: payroll, rent and inventory are not here.
+function ProfitMetrics({ m, grain }: { m: any; grain: Grain }) {
+  const sales = num(m.sales.totals.sales_cents),
+    salesBefore = num(m.sales.previous.totals.sales_cents);
+  const bought = num(m.purchases.totals.net_cents),
+    boughtBefore = num(m.purchases.previous.totals.net_cents);
+  const spent = num(m.expenses.totals.amount_cents),
+    spentBefore = num(m.expenses.previous.totals.amount_cents);
+  const result = sales - bought - spent,
+    resultBefore = salesBefore - boughtBefore - spentBefore;
+  const hadBefore = salesBefore > 0 || boughtBefore > 0 || spentBefore > 0;
+  const margin = sales ? result / sales : null,
+    marginBefore = salesBefore ? resultBefore / salesBefore : null;
+  const grainName = { day: 'día', week: 'semana', month: 'mes' }[grain];
+  const pick = (field: string) => (r: any) => ({ [field]: num(r[field]) });
+  const series = [
+    trend(m, m.sales.by_day, m.sales.previous.by_day, grain, pick('sales_cents')),
+    trend(m, m.purchases.by_day, m.purchases.previous.by_day, grain, pick('net_cents')),
+    trend(m, m.expenses.by_day, m.expenses.previous.by_day, grain, pick('amount_cents')),
+  ];
+  const bars: Bar[] = series[0].map(({ key }, i) => {
+    const [s, p, x] = series.map((list) => list[i]);
+    const now = (s.now?.sales_cents ?? 0) - (p.now?.net_cents ?? 0) - (x.now?.amount_cents ?? 0);
+    const any = s.before || p.before || x.before;
+    const before =
+      (s.before?.sales_cents ?? 0) - (p.before?.net_cents ?? 0) - (x.before?.amount_cents ?? 0);
+    const sold = s.now?.sales_cents ?? 0;
+    return {
+      key,
+      label: bucketLabel(key, grain),
+      title: bucketTitle(key, grain, m.range.from, m.range.to),
+      value: now,
+      // A stretch without any record is a gap in the line, not a zero.
+      previous: any ? before : null,
+      tip: [
+        ['Ventas', pesos(sold)],
+        ['Compras', pesos(p.now?.net_cents ?? 0)],
+        ['Gastos extraordinarios', pesos(x.now?.amount_cents ?? 0)],
+        ['Resultado', pesos(now)],
+        ['Margen', sold ? percent(now / sold) : 'Sin ventas'],
+      ],
+    };
+  });
+  if (!sales && !bought && !spent)
+    return (
+      <section className="card mt-panel">
+        <Empty text="No hay cortes, compras ni gastos extraordinarios en este periodo." />
+      </section>
+    );
+  const entries: any[] = m.expenses.entries;
+  return (
+    <>
+      <div className="mt-stats">
+        <Stat label="Resultado de caja" value={pesos(result)}>
+          {hadBefore ? (
+            <Change now={result} before={resultBefore} />
+          ) : (
+            <small className="mt-change">Sin datos del periodo anterior</small>
+          )}
+        </Stat>
+        <Stat label="Margen sobre ventas" value={margin == null ? 'Sin ventas' : percent(margin)}>
+          {margin != null && marginBefore != null ? (
+            <Change now={margin} before={marginBefore} points />
+          ) : (
+            <small className="mt-change">Sin ventas del periodo anterior</small>
+          )}
+        </Stat>
+        <Stat label="Entró por ventas" value={pesos(sales)}>
+          <Change now={sales} before={salesBefore} />
+        </Stat>
+        <Stat label="Salió" value={pesos(bought + spent)}>
+          <small>
+            {pesos(bought)} a proveedores · {pesos(spent)} en gastos extraordinarios
+          </small>
+        </Stat>
+      </div>
+      <p className="rp-note mt-caveat">
+        Es flujo de efectivo, no utilidad: no incluye nómina, renta, servicios ni el valor del
+        inventario, salvo lo que se haya registrado como gasto extraordinario en Caja general.
+      </p>
+      <Panel
+        title={`Resultado por ${grainName}`}
+        note="Ventas menos compras a proveedores y gastos extraordinarios. La línea punteada es el periodo anterior."
+        legend={[
+          { label: 'Este periodo' },
+          ...(bars.some((b) => (b.value ?? 0) < 0)
+            ? [{ label: 'Salió más de lo que entró', negative: true }]
+            : []),
+          { label: 'Periodo anterior', dashed: true },
+        ]}
+        table={{
+          headers: [
+            'Periodo',
+            'Ventas',
+            'Compras',
+            'Gastos extraordinarios',
+            'Resultado',
+            'Margen',
+          ],
+          rows: bars.map((b) => [b.title, ...b.tip.map(([, v]) => v)]),
+        }}
+      >
+        <BarChart bars={bars} axis={compact} />
+      </Panel>
+      <Panel
+        title="De cada $100 vendidos"
+        note="A dónde se fue lo que entró por ventas en el periodo."
+      >
+        {sales > 0 ? (
+          <Rows
+            scale={sales}
+            items={[
+              {
+                key: 'compras',
+                label: 'Compras a proveedores',
+                sub: `${plural(m.purchases.totals.tickets, 'ticket', 'tickets')}`,
+                value: bought,
+                text: `${percent(bought / sales)} · ${pesos(bought)}`,
+              },
+              {
+                key: 'gastos',
+                label: 'Gastos extraordinarios',
+                sub: plural(m.expenses.totals.entries, 'gasto', 'gastos'),
+                value: spent,
+                text: `${percent(spent / sales)} · ${pesos(spent)}`,
+              },
+              {
+                key: 'queda',
+                label: result >= 0 ? 'Queda' : 'Falta para cubrir las salidas',
+                value: Math.abs(result),
+                text: `${percent(Math.abs(result) / sales)} · ${pesos(Math.abs(result))}`,
+              },
+            ]}
+          />
+        ) : (
+          <Empty text="No hay cortes de ventas en el periodo para calcular la proporción." />
+        )}
+      </Panel>
+      <Panel
+        title="Gastos extraordinarios"
+        note="Salidas registradas en Caja general como gasto extraordinario."
+      >
+        {entries.length ? (
+          <Table
+            headers={['Fecha', 'Concepto', 'Registró', 'Importe']}
+            rows={entries.map((x) => ({
+              key: x.id,
+              cells: [shortDate(x.date), x.note, x.employee, pesos(num(x.amount_cents))],
+            }))}
+          />
+        ) : (
+          <Empty text="No hubo gastos extraordinarios en el periodo." />
         )}
       </Panel>
     </>

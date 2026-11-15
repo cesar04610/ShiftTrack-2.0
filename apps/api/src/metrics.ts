@@ -384,6 +384,32 @@ async function employees(db: pg.PoolClient, zone: string, from: string, to: stri
   };
 }
 
+// Extraordinary expenses registered in Caja general (cash out, stored as negative).
+async function expenses(db: pg.PoolClient, zone: string, from: string, to: string) {
+  const day = `(t.occurred_at AT TIME ZONE $3)::date`;
+  const entries = (
+    await db.query(
+      `SELECT t.id,${day}::text AS date,t.occurred_at,t.note,(-(t.cash_cents+t.bank_cents))::text AS amount_cents,
+         u.name AS employee
+       FROM treasury_entries t JOIN users u ON u.id=t.actor_user_id
+       WHERE t.kind='expense' AND ${day} BETWEEN $1 AND $2 ORDER BY t.occurred_at DESC`,
+      [from, to, zone],
+    )
+  ).rows;
+  const byDay = new Map<string, bigint>();
+  for (const e of entries) byDay.set(e.date, (byDay.get(e.date) ?? 0n) + BigInt(e.amount_cents));
+  return {
+    totals: {
+      entries: entries.length,
+      amount_cents: entries.reduce((s, e) => s + BigInt(e.amount_cents), 0n).toString(),
+    },
+    by_day: [...byDay]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, cents]) => ({ date, amount_cents: cents.toString() })),
+    entries,
+  };
+}
+
 export async function buildMetrics(db: pg.PoolClient, zone: string, from: string, to: string) {
   const previous = previousPeriod(from, to);
   const s = await sales(db, from, to),
@@ -392,7 +418,9 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
     pp = await purchases(db, zone, previous.from, previous.to),
     sp = await suppliers(db, zone, { from, to }, previous),
     e = await employees(db, zone, from, to),
-    pe = await employees(db, zone, previous.from, previous.to);
+    pe = await employees(db, zone, previous.from, previous.to),
+    x = await expenses(db, zone, from, to),
+    px = await expenses(db, zone, previous.from, previous.to);
   return {
     range: { from, to },
     previous,
@@ -400,6 +428,7 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
     purchases: { ...p, previous: { totals: pp.totals, by_day: pp.by_day } },
     suppliers: sp,
     employees: { ...e, previous: { totals: pe.totals } },
+    expenses: { ...x, previous: { totals: px.totals, by_day: px.by_day } },
   };
 }
 
