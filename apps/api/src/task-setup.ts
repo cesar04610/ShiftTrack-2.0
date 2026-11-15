@@ -5,12 +5,7 @@ import type pg from 'pg';
 import { admin, context, hasColumn, transaction } from './db.js';
 import { identity } from './security.js';
 import { writeAudit } from './audit-detail.js';
-import {
-  assert,
-  localTime,
-  shiftBusinessDate,
-  shiftLabel,
-} from '../../../packages/domain/index.js';
+import { assert, localTime, shiftBusinessDate } from '../../../packages/domain/index.js';
 
 // Tasks are no longer assigned person by person: every register and shift (full or half) has its
 // own list, and whoever works that shift at that register receives it automatically.
@@ -39,7 +34,25 @@ const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.
 export const setupReady = (db: Pick<pg.PoolClient, 'query'>) =>
   hasColumn(db, 'tasks', 'setup_item_id');
 
-// Which shift a person is working right now: their schedule decides; without one, their entry.
+// Minutes since the start of the work day's calendar date; after midnight it keeps counting past
+// 24:00 (1440) because the work day lasts until 05:00.
+function dayMinute(instant: string | Date, zone: string, day: string) {
+  const local = localTime(instant, zone);
+  return (
+    Math.round(
+      (Date.parse(`${local.date}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86400000,
+    ) *
+      1440 +
+    local.minutes
+  );
+}
+// Each shift spans part of the work day: morning 05:00–15:00, afternoon 15:00–05:00.
+const shiftWindow = { morning: [300, 900], afternoon: [900, 1740] } as const;
+const shiftAt = (minute: number): Config['shift'] => (minute < 900 ? 'morning' : 'afternoon');
+
+// Which shift a person is working right now. Their schedule decides: the turn in progress, or the
+// one about to start. A turn that already ended only counts as overtime when the person entered
+// during it; someone who arrives after it ended is working another shift, decided by their entry.
 async function currentShift(
   db: pg.PoolClient,
   branch: Branch,
@@ -47,9 +60,7 @@ async function currentShift(
   day: string,
   now: Date,
 ): Promise<{ shift: Config['shift']; half: boolean }> {
-  const local = localTime(now, branch.timezone);
-  // After midnight the work day continues, so the clock keeps counting past 24:00.
-  const minute = local.date === day ? local.minutes : local.minutes + 1440;
+  const minute = dayMinute(now, branch.timezone, day);
   const turns = (
     await db.query(
       'SELECT start_time::text AS start,end_time::text AS end FROM schedules WHERE user_id=$1 AND business_date=$2',
@@ -57,26 +68,20 @@ async function currentShift(
     )
   ).rows
     .map((r) => ({ start: minutesOf(r.start), end: minutesOf(r.end) }))
-    .filter((t) => t.start - EARLY_MINUTES <= minute)
     .sort((a, b) => a.start - b.start);
-  // The turn in progress wins; otherwise the latest one that already counts (early or overtime).
-  const turn = turns.find((t) => t.start <= minute && minute < t.end) ?? turns.at(-1);
-  if (turn)
-    return {
-      shift: turn.start < 900 ? 'morning' : 'afternoon',
-      half: turn.end - turn.start <= HALF_MAX_MINUTES,
-    };
   const entry = (
     await db.query(
       'SELECT clock_in FROM clock_records WHERE user_id=$1 AND clock_out IS NULL AND business_date=$2 ORDER BY clock_in DESC LIMIT 1',
       [userId, day],
     )
   ).rows[0];
-  return {
-    shift:
-      shiftLabel(entry?.clock_in ?? now, branch.timezone) === 'Mañana' ? 'morning' : 'afternoon',
-    half: false,
-  };
+  const arrived = entry ? dayMinute(entry.clock_in, branch.timezone, day) : minute;
+  const turn =
+    turns.find((t) => t.start <= minute && minute < t.end) ??
+    turns.find((t) => t.start - EARLY_MINUTES <= minute && minute < t.start) ??
+    turns.find((t) => t.start - EARLY_MINUTES <= arrived && arrived < t.end);
+  if (turn) return { shift: shiftAt(turn.start), half: turn.end - turn.start <= HALF_MAX_MINUTES };
+  return { shift: shiftAt(arrived), half: false };
 }
 
 // Gives a person the tasks of the register and shift they are working. Safe to repeat: it only
@@ -92,6 +97,26 @@ export async function assignSetupTasks(
   if (!(await setupReady(db))) return 0;
   const day = shiftBusinessDate(now, branch.timezone);
   const { shift, half } = await currentShift(db, branch, userId, day, now);
+  // Pending tasks of the other shift stay only if the person was really there during that shift
+  // (a double shift); otherwise they were given by mistake and are taken away.
+  const other: Config['shift'] = shift === 'morning' ? 'afternoon' : 'morning';
+  const [from, to] = shiftWindow[other];
+  const worked = (
+    await db.query(
+      'SELECT clock_in,clock_out FROM clock_records WHERE user_id=$1 AND business_date=$2',
+      [userId, day],
+    )
+  ).rows.some(
+    (c) =>
+      dayMinute(c.clock_in, branch.timezone, day) < to &&
+      dayMinute(c.clock_out ?? now, branch.timezone, day) > from,
+  );
+  if (!worked)
+    await db.query(
+      `DELETE FROM tasks t WHERE t.user_id=$1 AND t.due_date=$2 AND t.setup_item_id IS NOT NULL AND t.shift=$3
+       AND t.completed_at IS NULL AND NOT EXISTS(SELECT 1 FROM media_objects m WHERE m.task_id=t.id)`,
+      [userId, day, other],
+    );
   await db.query(
     `DELETE FROM tasks t WHERE t.user_id=$1 AND t.due_date=$2 AND t.setup_item_id IS NOT NULL AND t.shift=$3
      AND t.completed_at IS NULL AND (t.half<>$4 OR t.register_number<>$5)

@@ -1109,6 +1109,81 @@ test('las tareas de caja y turno se asignan solas, fotografías privadas y Excel
   );
   a.equal((await call(`/analytics?branch_id=${branch}`, undefined, employeeToken)).status, 403);
 });
+test('quien llega después de que terminó su turno de mañana recibe las tareas de la tarde', async () => {
+  // Saturday 14 Nov 2026 in Chihuahua (UTC-6): scheduled 07:30–15:00, but entered at 15:30.
+  const { assignSetupTasks } = await import('../apps/api/src/task-setup.js');
+  const zone = { id: branch, timezone: 'America/Chihuahua' };
+  const day = '2026-11-14',
+    at = (time: string) => new Date(`${day}T${time}:00-06:00`);
+  const person = (
+    await sql.query(
+      "INSERT INTO users(id,username,name,role,branch_id) VALUES($1,$2,'Orlando prueba','employee',$3) RETURNING id",
+      [randomUUID(), `orlando-${randomUUID()}`, branch],
+    )
+  ).rows[0].id;
+  for (const [shift, titles] of [
+    [
+      'morning',
+      ['Rellenar puerta 1', 'Rellenar croquetas', 'Rellenar puerta 2', 'Trapear', 'Bajar mandado'],
+    ],
+    ['afternoon', ['Rellenar puerta 1', 'Rellenar croquetas']],
+  ] as const)
+    for (const title of titles)
+      await sql.query(
+        'INSERT INTO task_setup_items(branch_id,id,shift,half,register_number,title,weekdays) VALUES($1,$2,$3,false,3,$4,$5)',
+        [branch, randomUUID(), shift, title, [6]],
+      );
+  await sql.query(
+    "INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,'07:30','15:00')",
+    [branch, randomUUID(), person, day],
+  );
+  const entry = randomUUID();
+  await sql.query(
+    'INSERT INTO clock_records(branch_id,id,user_id,business_date,clock_in) VALUES($1,$2,$3,$4,$5)',
+    [branch, entry, person, day, at('15:30')],
+  );
+  const given = async () =>
+    (
+      await sql.query(
+        'SELECT shift,count(*)::int AS n FROM tasks WHERE user_id=$1 AND due_date=$2 GROUP BY shift ORDER BY shift',
+        [person, day],
+      )
+    ).rows;
+  // A wrong assignment made before the fix: the five morning tasks.
+  await sql.query(
+    `INSERT INTO tasks(branch_id,id,user_id,title,due_date,setup_item_id,shift,half,register_number)
+     SELECT branch_id,gen_random_uuid(),$2,title,$3,id,shift,half,register_number FROM task_setup_items
+     WHERE branch_id=$1 AND register_number=3 AND shift='morning' AND weekdays='{6}'`,
+    [branch, person, day],
+  );
+  await transaction(branch, (db) => assignSetupTasks(db, zone, person, 3, at('15:30')));
+  // The morning tasks he could not do are taken away; he gets the two of the afternoon.
+  a.deepEqual(await given(), [{ shift: 'afternoon', n: 2 }]);
+  await transaction(branch, (db) => assignSetupTasks(db, zone, person, 3, at('18:29')));
+  a.deepEqual(await given(), [{ shift: 'afternoon', n: 2 }]);
+
+  // Someone who entered during the morning and stays past 15:00 is doing overtime of the morning,
+  // and a double shift that worked the morning keeps its morning tasks.
+  await sql.query('DELETE FROM tasks WHERE user_id=$1', [person]);
+  await sql.query('UPDATE clock_records SET clock_in=$2 WHERE id=$1', [entry, at('07:25')]);
+  await transaction(branch, (db) => assignSetupTasks(db, zone, person, 3, at('09:00')));
+  await transaction(branch, (db) => assignSetupTasks(db, zone, person, 3, at('15:20')));
+  a.deepEqual(await given(), [{ shift: 'morning', n: 5 }]);
+  await sql.query(
+    "INSERT INTO schedules(branch_id,id,user_id,business_date,start_time,end_time) VALUES($1,$2,$3,$4,'15:00','21:30')",
+    [branch, randomUUID(), person, day],
+  );
+  await transaction(branch, (db) => assignSetupTasks(db, zone, person, 3, at('15:20')));
+  a.deepEqual(await given(), [
+    { shift: 'afternoon', n: 2 },
+    { shift: 'morning', n: 5 },
+  ]);
+  await sql.query('DELETE FROM tasks WHERE user_id=$1', [person]);
+  await sql.query('DELETE FROM task_setup_items WHERE branch_id=$1 AND register_number=3', [
+    branch,
+  ]);
+  await sql.query('UPDATE clock_records SET clock_out=clock_in WHERE id=$1', [entry]);
+});
 test('una tarea solo se completa en su día de trabajo; después queda como no realizada', async () => {
   const today = shiftBusinessDate(new Date(), 'America/Chihuahua');
   const shift = (days: number) =>
