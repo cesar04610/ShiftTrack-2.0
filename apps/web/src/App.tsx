@@ -21,6 +21,9 @@ import {
   Menu,
   ShoppingCart,
   Package,
+  Bell,
+  CheckCheck,
+  UserX,
 } from 'lucide-react';
 import {
   money,
@@ -288,40 +291,152 @@ const alertKinds: Record<string, string> = {
   task_incomplete: 'Tarea sin terminar',
   supplier_difference: 'Diferencia proveedores',
 };
-function AlertsPanel({ alerts, zone }: { alerts: any[]; zone: string }) {
-  const [group, setGroup] = useState('all');
+const alertIcons: Record<string, typeof Bell> = {
+  late: Timer,
+  absent: UserX,
+  early_exit: LogOut,
+  cut_difference: Receipt,
+  missing_cut: Receipt,
+  task_incomplete: ClipboardCheck,
+  supplier_difference: Wallet,
+};
+function AlertsPanel({
+  alerts,
+  users,
+  today,
+  zone,
+  onRead,
+}: {
+  alerts: any[];
+  users: any[];
+  today: string;
+  zone: string;
+  onRead: (ids: string[]) => Promise<void>;
+}) {
+  const [group, setGroup] = useState('all'),
+    [busy, setBusy] = useState(false);
   const kinds = alertGroups.find((g) => g.key === group)!.kinds;
   const shown = alerts.filter((a) => !kinds.length || kinds.includes(a.kind));
+  const unread = alerts.filter((a) => !a.read_at);
+  // The list arrives newest first, so each day keeps that order.
+  const days: { date: string; items: any[] }[] = [];
+  for (const a of shown) {
+    const date = localTime(a.occurred_at, zone).date;
+    if (days.at(-1)?.date === date) days.at(-1)!.items.push(a);
+    else days.push({ date, items: [a] });
+  }
+  const dayLabel = (date: string) =>
+    date === today
+      ? 'Hoy'
+      : date === addDays(today, -1)
+        ? 'Ayer'
+        : new Intl.DateTimeFormat('es-MX', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: 'UTC',
+          }).format(new Date(`${date}T12:00:00Z`));
+  async function read(ids: string[]) {
+    setBusy(true);
+    try {
+      await onRead(ids);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <Card
       title="Estado de la tienda"
-      subtitle="Registro de lo que requiere tu atención, del más reciente al más antiguo"
+      subtitle={
+        unread.length
+          ? `${unread.length} sin leer. Lo más reciente aparece primero.`
+          : 'Todo leído. Lo más reciente aparece primero.'
+      }
     >
-      <div className="alert-filters" role="group" aria-label="Filtrar notificaciones">
-        {alertGroups.map((g) => (
-          <button
-            key={g.key}
-            className={group === g.key ? 'primary' : 'secondary'}
-            aria-pressed={group === g.key}
-            onClick={() => setGroup(g.key)}
-          >
-            {g.label}
-            <span className="count">
-              {alerts.filter((a) => !g.kinds.length || g.kinds.includes(a.kind)).length}
-            </span>
-          </button>
-        ))}
+      <div className="alert-toolbar">
+        <div className="alert-filters" role="group" aria-label="Filtrar notificaciones">
+          {alertGroups.map((g) => (
+            <button
+              key={g.key}
+              className={group === g.key ? 'primary' : 'secondary'}
+              aria-pressed={group === g.key}
+              onClick={() => setGroup(g.key)}
+            >
+              {g.label}
+              <span className="count">
+                {alerts.filter((a) => !g.kinds.length || g.kinds.includes(a.kind)).length}
+              </span>
+            </button>
+          ))}
+        </div>
+        <button
+          className="secondary"
+          disabled={busy || !unread.length}
+          onClick={() => read(unread.map((a) => a.id))}
+        >
+          <CheckCheck size={16} /> Marcar todo como leído
+        </button>
       </div>
-      <Table
-        headers={['Fecha', 'Tipo', 'Detalle']}
-        rows={shown.map((a) => [
-          time(a.occurred_at, zone),
-          <span key={a.id} className={`badge alert-${a.kind}`}>
-            {alertKinds[a.kind] || a.kind}
-          </span>,
-          a.message,
-        ])}
-      />
+      {!days.length && <Empty text="No hay notificaciones." />}
+      {days.map((d) => (
+        <section key={d.date} className="alert-day" aria-label={dayLabel(d.date)}>
+          <h3>{dayLabel(d.date)}</h3>
+          <ul>
+            {d.items.map((a) => {
+              const Icon = alertIcons[a.kind] || Bell;
+              const name = users.find((u) => u.id === a.user_id)?.name;
+              const named = name && a.message.startsWith(name);
+              const amount = a.amount_cents == null ? null : BigInt(a.amount_cents);
+              return (
+                <li
+                  key={a.id}
+                  className={`alert-card alert-${a.kind}${a.read_at ? '' : ' unread'}`}
+                >
+                  <span className="alert-icon" aria-hidden="true">
+                    <Icon size={18} />
+                  </span>
+                  <div className="alert-body">
+                    <span className="alert-kind">
+                      {alertKinds[a.kind] || a.kind}
+                      {!a.read_at && <em>Nueva</em>}
+                    </span>
+                    <p>
+                      {named ? (
+                        <>
+                          <strong>{name}</strong>
+                          {a.message.slice(name.length)}
+                        </>
+                      ) : (
+                        a.message
+                      )}
+                    </p>
+                  </div>
+                  <div className="alert-side">
+                    {amount != null && (
+                      <strong className="alert-amount">
+                        {amount < 0n ? '−' : '+'}
+                        {money(amount < 0n ? -amount : amount)}
+                      </strong>
+                    )}
+                    <time dateTime={a.occurred_at}>{clockHour(a.occurred_at, zone)}</time>
+                  </div>
+                  {!a.read_at && (
+                    <button
+                      className="secondary alert-read"
+                      disabled={busy}
+                      aria-label={`Marcar como leída: ${a.message}`}
+                      title="Marcar como leída"
+                      onClick={() => read([a.id])}
+                    >
+                      <Check size={16} />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
     </Card>
   );
 }
@@ -537,7 +652,7 @@ const adminNav = [
   ['Horarios', CalendarDays],
   ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
-  ['Notificaciones', BarChart3],
+  ['Notificaciones', Bell],
   ['Productos', Package],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
@@ -876,6 +991,7 @@ export default function App() {
   const managementNav = adminNav.filter(
     ([label]) => label !== 'Notificaciones' || user.role === 'superadmin',
   );
+  const unreadAlerts = (data?.alerts || []).filter((a: any) => !a.read_at).length;
   const isManagementPage =
     page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
   const b = data?.branch,
@@ -978,6 +1094,14 @@ export default function App() {
                 {user.role === 'superadmin'
                   ? 'Menú de súper administrador'
                   : 'Menú de administrador'}
+                {!adminMenuOpen && unreadAlerts > 0 && (
+                  <span
+                    className="nav-count"
+                    aria-label={`${unreadAlerts} notificaciones sin leer`}
+                  >
+                    {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                  </span>
+                )}
               </button>
               {adminMenuOpen && (
                 <nav aria-label="Administración">
@@ -997,6 +1121,11 @@ export default function App() {
                     >
                       <Icon size={18} />
                       {label}
+                      {label === 'Notificaciones' && unreadAlerts > 0 && (
+                        <span className="nav-count" aria-label={`${unreadAlerts} sin leer`}>
+                          {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </nav>
@@ -2419,7 +2548,20 @@ export default function App() {
                 />
               )}
               {page === 'Notificaciones' && (
-                <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />
+                <AlertsPanel
+                  alerts={data.alerts || []}
+                  users={data.users || []}
+                  today={date}
+                  zone={b.timezone}
+                  onRead={async (ids) => {
+                    try {
+                      await request('/alerts/read', { ids, branch_id: branchId });
+                      await refresh();
+                    } catch (e) {
+                      notify(e);
+                    }
+                  }}
+                />
               )}
               {page === 'Configuración' && (
                 <>

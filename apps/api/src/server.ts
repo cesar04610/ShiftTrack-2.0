@@ -943,6 +943,24 @@ app.post('/api/v1/clock/:action', async (req, res) => {
   });
   res.json({ ok: true });
 });
+// The owner marks store notifications as read; unread ones are counted in the menu.
+app.post('/api/v1/alerts/read', async (req, res) => {
+  const u = await identity(req.headers.authorization);
+  owner(u);
+  const b = await context(u, req.body.branch_id);
+  const p = z.object({ ids: z.array(z.uuid()).min(1).max(300) }).parse(req.body);
+  const marked = await transaction(
+    b.id,
+    async (db) =>
+      (
+        await db.query(
+          'UPDATE alert_log SET read_at=now() WHERE id=ANY($1::uuid[]) AND read_at IS NULL',
+          [p.ids],
+        )
+      ).rowCount || 0,
+  );
+  res.json({ ok: true, marked });
+});
 app.use('/api/v1/schedules', schedules);
 app.use('/api/v1/tasks', taskSetup);
 app.post('/api/v1/treasury/opening', async (req, res) => {

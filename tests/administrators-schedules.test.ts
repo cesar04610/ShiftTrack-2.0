@@ -395,6 +395,46 @@ test('Notificaciones corresponde al súper administrador y el administrador no l
   });
   a.equal(removed.status, 404);
 });
+test('Notificaciones: solo el súper administrador las marca como leídas, dentro de su sucursal', async () => {
+  const mine = randomUUID(),
+    second = randomUUID(),
+    foreign = randomUUID();
+  for (const [branchId, id] of [
+    [branch, mine],
+    [branch, second],
+    [other, foreign],
+  ])
+    await sql.query(
+      "INSERT INTO alert_log(branch_id,id,kind,message,source_key) VALUES($1,$2,'absent','Aviso de prueba',$3)",
+      [branchId, id, `prueba:${id}`],
+    );
+  const read = async (id: string) =>
+    (await sql.query('SELECT read_at FROM alert_log WHERE id=$1', [id])).rows[0].read_at;
+  a.equal((await call('/alerts/read', { branch_id: branch, ids: [mine] })).status, 403);
+  a.equal(await read(mine), null);
+  const marked = await call(
+    '/alerts/read',
+    { branch_id: branch, ids: [mine, foreign] },
+    'superadmin',
+  );
+  a.equal(marked.status, 200);
+  a.equal(marked.body.marked, 1);
+  a.ok(await read(mine));
+  a.equal(await read(second), null);
+  a.equal(await read(foreign), null);
+  const snapshot = (await call(`/snapshot?branch_id=${branch}`, undefined, 'superadmin')).body;
+  const seen = (id: string) => snapshot.alerts.find((x: any) => x.id === id);
+  a.ok(seen(mine).read_at);
+  a.equal(seen(second).read_at, null);
+  a.equal(seen(foreign), undefined);
+  // Marking again keeps the first date.
+  const first = await read(mine);
+  a.equal(
+    (await call('/alerts/read', { branch_id: branch, ids: [mine] }, 'superadmin')).body.marked,
+    0,
+  );
+  a.deepEqual(await read(mine), first);
+});
 test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async () => {
   const date = '2026-11-09';
   const place = (role: string, index?: number, id?: string) =>
