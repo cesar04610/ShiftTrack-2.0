@@ -25,6 +25,7 @@ import {
   CheckCheck,
   UserX,
   ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import {
   money,
@@ -317,8 +318,22 @@ const alertSources: Record<string, [string, string]> = {
   task_incomplete: ['Gestionar tareas', 'Ver tareas del día'],
   supplier_difference: ['Actividad caja proveedores', 'Ver caja de proveedores'],
 };
+// The screen opens with the 10 newest and each "Mostrar más" brings the next 100.
+const FIRST_ALERTS = 10,
+  MORE_ALERTS = 100;
+type AlertPage = {
+  items: any[];
+  next: string | null;
+  total: number;
+  unread: number;
+  unread_filtered: number;
+  people: string[];
+  summary: Record<string, number | string>;
+};
 function AlertsPanel({
-  alerts,
+  branchId,
+  saved,
+  latest,
   users,
   today,
   zone,
@@ -326,22 +341,29 @@ function AlertsPanel({
   onRead,
   onOpen,
 }: {
-  alerts: any[];
+  branchId: string;
+  // The newest notifications kept on this device, shown when there is no connection.
+  saved: any[];
+  // Newest notification in the last snapshot: when it changes, the list starts again.
+  latest?: string;
   users: any[];
   today: string;
   zone: string;
   // First date the other screens keep; older notifications have no link.
   since?: string;
-  onRead: (ids: string[]) => Promise<void>;
+  onRead: () => Promise<void>;
   onOpen: (page: string, date: string) => void;
 }) {
   const [group, setGroup] = useState(''),
     [person, setPerson] = useState(''),
-    [period, setPeriod] = useState('week'),
+    [period, setPeriod] = useState('all'),
     [from, setFrom] = useState(''),
     [to, setTo] = useState(''),
+    [result, setResult] = useState<AlertPage | null>(null),
+    [offline, setOffline] = useState(false),
+    [loading, setLoading] = useState(false),
+    [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
-  const dateOf = (a: any) => localTime(a.occurred_at, zone).date;
   const start =
       period === 'today'
         ? today
@@ -352,33 +374,107 @@ function AlertsPanel({
               ? to
               : from
             : '',
-    end = period === 'range' ? (from && to && to < from ? from : to) : '';
-  // Person and dates narrow the summary; the tiles then choose the type.
-  const scoped = alerts.filter((a) => {
-    const date = dateOf(a);
-    return (!person || a.user_id === person) && (!start || date >= start) && (!end || date <= end);
-  });
-  const kinds = alertGroups.find((g) => g.key === group)?.kinds;
-  const shown = scoped.filter((a) => !kinds || kinds.includes(a.kind));
-  const unread = alerts.filter((a) => !a.read_at),
-    unreadShown = shown.filter((a) => !a.read_at),
-    hiddenUnread = unread.length - unreadShown.length;
+    end =
+      period === 'today' || period === 'week'
+        ? today
+        : period === 'range'
+          ? from && to && to < from
+            ? from
+            : to
+          : '';
+  const filter: Record<string, string> = {};
+  if (person) filter.user_id = person;
+  if (start) filter.from = start;
+  if (end) filter.to = end;
+  if (group) filter.group = group;
+  const filterKey = JSON.stringify(filter);
+  const query = (extra: Record<string, string>) =>
+    `/alerts?${new URLSearchParams({ branch_id: branchId, ...filter, ...extra })}`;
+  function failed(e: unknown) {
+    if (e instanceof ApiError && e.code === 'NETWORK') setOffline(true);
+    else setError(e instanceof Error ? e.message : String(e));
+  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    request(query({ limit: String(FIRST_ALERTS) }))
+      .then((r) => {
+        if (cancelled) return;
+        setResult(r);
+        setOffline(false);
+      })
+      .catch((e) => !cancelled && failed(e))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, filterKey, latest]);
+  async function more() {
+    if (!result?.next) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r: AlertPage = await request(
+        query({ limit: String(MORE_ALERTS), before: result.next }),
+      );
+      // A page that arrives after the filter changed belongs to another list.
+      setResult((current) =>
+        current && current.next === result.next
+          ? { ...r, items: [...current.items, ...r.items] }
+          : current,
+      );
+    } catch (e) {
+      failed(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function read(ids?: string[]) {
+    setBusy(true);
+    setError('');
+    try {
+      const { marked } = await request(
+        '/alerts/read',
+        ids ? { ids, branch_id: branchId } : { ...filter, all: true, branch_id: branchId },
+      );
+      const at = new Date().toISOString();
+      setResult(
+        (current) =>
+          current && {
+            ...current,
+            items: current.items.map((a) =>
+              !a.read_at && (!ids || ids.includes(a.id)) ? { ...a, read_at: at } : a,
+            ),
+            unread: Math.max(0, current.unread - marked),
+            unread_filtered: Math.max(0, current.unread_filtered - marked),
+          },
+      );
+      await onRead();
+    } catch (e) {
+      failed(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const items = offline ? saved : result?.items || [];
   const filtered = !!group || !!person || period !== 'all';
+  const hiddenUnread = offline || !result ? 0 : result.unread - result.unread_filtered;
   const people = users
-    .filter((u) => alerts.some((a) => a.user_id === u.id))
+    .filter((u) => result?.people.includes(u.id))
     .sort((x, y) => x.name.localeCompare(y.name, 'es'));
-  const oldest = alerts.length ? dateOf(alerts.at(-1)) : today;
   const days: { date: string; items: any[] }[] = [];
-  for (const a of shown) {
-    const date = dateOf(a);
+  for (const a of items) {
+    const date = localTime(a.occurred_at, zone).date;
     if (days.at(-1)?.date === date) days.at(-1)!.items.push(a);
     else days.push({ date, items: [a] });
   }
   // The list arrives newest first; within a day the important ones go first, keeping that order.
   for (const d of days)
-    d.items.sort(
-      (x, y) => Number(importantAlerts.includes(y.kind)) - Number(importantAlerts.includes(x.kind)),
-    );
+    d.items = [
+      ...d.items.filter((a) => importantAlerts.includes(a.kind)),
+      ...d.items.filter((a) => !importantAlerts.includes(a.kind)),
+    ];
   const dayLabel = (date: string) =>
     date === today
       ? 'Hoy'
@@ -395,115 +491,125 @@ function AlertsPanel({
     setPerson('');
     setPeriod('all');
   };
-  async function read(ids: string[]) {
-    setBusy(true);
-    try {
-      await onRead(ids);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const unread = offline ? saved.filter((a) => !a.read_at).length : result?.unread || 0;
+  const remaining = result ? result.total - result.items.length : 0;
   return (
     <Card
       title="Estado de la tienda"
       subtitle={
-        unread.length
-          ? `${unread.length} sin leer. Lo más reciente aparece primero.`
+        unread
+          ? `${unread} sin leer. Lo más reciente aparece primero.`
           : 'Todo leído. Lo más reciente aparece primero.'
       }
     >
-      <div className="alert-summary" role="group" aria-label="Resumen y filtro por tipo">
-        {alertGroups.map((g) => {
-          const items = scoped.filter((a) => g.kinds.includes(a.kind));
-          const total = items.reduce((sum, a) => {
-            const amount = BigInt(a.amount_cents || 0);
-            return sum + (amount < 0n ? -amount : amount);
-          }, 0n);
-          return (
-            <button
-              key={g.key}
-              className={`alert-tile alert-tile-${g.key}`}
-              aria-pressed={group === g.key}
-              onClick={() => setGroup(group === g.key ? '' : g.key)}
-            >
-              <strong>{items.length}</strong>
-              <span>{g.label}</span>
-              {g.key === 'money' && items.length > 0 && <small>{money(total)} en total</small>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="alert-toolbar">
-        <div className="cuts-range alert-range">
-          <label>
-            Persona
-            <select value={person} onChange={(e) => setPerson(e.target.value)}>
-              <option value="">Todo el personal</option>
-              {people.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Periodo
-            <select value={period} onChange={(e) => setPeriod(e.target.value)}>
-              <option value="today">Hoy</option>
-              <option value="week">Últimos 7 días</option>
-              <option value="all">Todas las fechas</option>
-              <option value="range">Elegir fechas</option>
-            </select>
-          </label>
-          {period === 'range' && (
-            <>
-              <label>
-                Desde
-                <input
-                  type="date"
-                  value={from}
-                  min={oldest}
-                  max={today}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-              </label>
-              <label>
-                Hasta
-                <input
-                  type="date"
-                  value={to}
-                  min={oldest}
-                  max={today}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              </label>
-            </>
-          )}
-        </div>
-        <button
-          className="secondary"
-          disabled={busy || !unreadShown.length}
-          onClick={() => read(unreadShown.map((a) => a.id))}
-        >
-          <CheckCheck size={16} />{' '}
-          {filtered ? 'Marcar como leído lo que se muestra' : 'Marcar todo como leído'}
-        </button>
-      </div>
-      {hiddenUnread > 0 && (
+      {offline && (
         <p className="alert-hidden">
-          {hiddenUnread === 1
-            ? 'Hay 1 notificación sin leer fuera de este filtro.'
-            : `Hay ${hiddenUnread} notificaciones sin leer fuera de este filtro.`}{' '}
-          <button className="link" onClick={clear}>
-            Ver todas
-          </button>
+          Sin conexión: se muestran las {saved.length} notificaciones más recientes guardadas en
+          este equipo. Conéctate para filtrar, ver más o marcarlas como leídas.
         </p>
       )}
-      {!days.length && (
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {!offline && (
+        <>
+          <div className="alert-summary" role="group" aria-label="Resumen y filtro por tipo">
+            {alertGroups.map((g) => {
+              const count = Number(result?.summary[g.key] || 0);
+              return (
+                <button
+                  key={g.key}
+                  className={`alert-tile alert-tile-${g.key}`}
+                  aria-pressed={group === g.key}
+                  onClick={() => setGroup(group === g.key ? '' : g.key)}
+                >
+                  <strong>{count}</strong>
+                  <span>{g.label}</span>
+                  {g.key === 'money' && count > 0 && (
+                    <small>{money(String(result!.summary.money_cents))} en total</small>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="alert-toolbar">
+            <div className="cuts-range alert-range">
+              <label>
+                Persona
+                <select value={person} onChange={(e) => setPerson(e.target.value)}>
+                  <option value="">Todo el personal</option>
+                  {people.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Periodo
+                <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+                  <option value="all">Todas las fechas</option>
+                  <option value="today">Hoy</option>
+                  <option value="week">Últimos 7 días</option>
+                  <option value="range">Elegir fechas</option>
+                </select>
+              </label>
+              {period === 'range' && (
+                <>
+                  <label>
+                    Desde
+                    <input
+                      type="date"
+                      value={from}
+                      max={today}
+                      onChange={(e) => setFrom(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Hasta
+                    <input
+                      type="date"
+                      value={to}
+                      max={today}
+                      onChange={(e) => setTo(e.target.value)}
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+            <button
+              className="secondary"
+              disabled={busy || !result?.unread_filtered}
+              onClick={() => read()}
+            >
+              <CheckCheck size={16} />{' '}
+              {filtered ? 'Marcar como leído todo lo filtrado' : 'Marcar todo como leído'}
+            </button>
+          </div>
+          {hiddenUnread > 0 && (
+            <p className="alert-hidden">
+              {hiddenUnread === 1
+                ? 'Hay 1 notificación sin leer fuera de este filtro.'
+                : `Hay ${hiddenUnread} notificaciones sin leer fuera de este filtro.`}{' '}
+              <button className="link" onClick={clear}>
+                Ver todas
+              </button>
+            </p>
+          )}
+        </>
+      )}
+      {!days.length && !loading && !error && (
         <Empty
-          text={alerts.length ? 'No hay notificaciones con este filtro.' : 'No hay notificaciones.'}
+          text={
+            filtered && !offline
+              ? 'No hay notificaciones con este filtro.'
+              : 'No hay notificaciones.'
+          }
         />
       )}
+      {!days.length && loading && <p className="muted">Cargando notificaciones…</p>}
       {days.map((d) => (
         <section key={d.date} className="alert-day" aria-label={dayLabel(d.date)}>
           <h3>{dayLabel(d.date)}</h3>
@@ -555,7 +661,7 @@ function AlertsPanel({
                     )}
                     <time dateTime={a.occurred_at}>{clockHour(a.occurred_at, zone)}</time>
                   </div>
-                  {!a.read_at && (
+                  {!a.read_at && !offline && (
                     <button
                       className="secondary alert-read"
                       disabled={busy}
@@ -572,6 +678,19 @@ function AlertsPanel({
           </ul>
         </section>
       ))}
+      {!offline && result && result.items.length > 0 && (
+        <div className="alert-more">
+          <span className="muted">
+            Mostrando {result.items.length} de {result.total}
+          </span>
+          {result.next && (
+            <button className="secondary" disabled={loading} onClick={more}>
+              <ChevronDown size={16} />
+              {loading ? 'Cargando…' : `Mostrar ${Math.min(MORE_ALERTS, remaining)} más`}
+            </button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -1135,7 +1254,8 @@ export default function App() {
   );
   // A notification opened its source page on a date; leaving that page forgets it.
   const jumpDate = (target: string) => (jump?.page === target ? jump.date : undefined);
-  const unreadAlerts = (data?.alerts || []).filter((a: any) => !a.read_at).length;
+  const unreadAlerts: number =
+    data?.alerts_unread ?? (data?.alerts || []).filter((a: any) => !a.read_at).length;
   const isManagementPage =
     page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
   const b = data?.branch,
@@ -2699,7 +2819,9 @@ export default function App() {
               )}
               {page === 'Notificaciones' && (
                 <AlertsPanel
-                  alerts={data.alerts || []}
+                  branchId={branchId}
+                  saved={data.alerts || []}
+                  latest={data.alerts?.[0]?.id}
                   users={data.users || []}
                   today={date}
                   zone={b.timezone}
@@ -2709,14 +2831,7 @@ export default function App() {
                     setPage(target);
                     setMessage('');
                   }}
-                  onRead={async (ids) => {
-                    try {
-                      await request('/alerts/read', { ids, branch_id: branchId });
-                      await refresh();
-                    } catch (e) {
-                      notify(e);
-                    }
-                  }}
+                  onRead={() => refresh().catch(notify)}
                 />
               )}
               {page === 'Configuración' && (

@@ -435,6 +435,113 @@ test('Notificaciones: solo el súper administrador las marca como leídas, dentr
   );
   a.deepEqual(await read(mine), first);
 });
+test('Notificaciones: 10 primero, luego de 100 en 100, con filtros y leído por filtro', async () => {
+  const person = people.employee.id;
+  const kinds = ['late', 'absent', 'cut_difference', 'task_incomplete', 'supplier_difference'];
+  const ids: string[] = [];
+  // 125 notifications for one person, one minute apart; the last 25 happened 10 days ago.
+  for (let i = 0; i < 125; i++) {
+    const id = randomUUID();
+    ids.push(id);
+    const kind = kinds[i % kinds.length];
+    await sql.query(
+      `INSERT INTO alert_log(branch_id,id,kind,user_id,message,amount_cents,source_key,occurred_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,now()-make_interval(mins=>$8)-make_interval(days=>$9))`,
+      [
+        branch,
+        id,
+        kind,
+        person,
+        `Aviso ${i}`,
+        kind.endsWith('difference') ? (i % 2 ? -3000 : 4000) : null,
+        `pagina:${id}`,
+        i,
+        i >= 100 ? 10 : 0,
+      ],
+    );
+  }
+  const list = (query: string, role = 'superadmin') =>
+    call(`/alerts?branch_id=${branch}&user_id=${person}${query}`, undefined, role);
+  a.equal((await list('', 'admin')).status, 403);
+  const first = await list('');
+  a.equal(first.status, 200);
+  a.deepEqual(
+    first.body.items.map((x: any) => x.id),
+    ids.slice(0, 10),
+  );
+  a.equal(first.body.total, 125);
+  a.equal(first.body.unread_filtered, 125);
+  a.ok(first.body.next);
+  a.deepEqual(first.body.people, [person]);
+  a.deepEqual(first.body.summary, {
+    absent: 25,
+    time: 25,
+    money: 50,
+    money_cents: '176000',
+    pending: 25,
+  });
+  const second = await list(`&limit=100&before=${encodeURIComponent(first.body.next)}`);
+  a.deepEqual(
+    second.body.items.map((x: any) => x.id),
+    ids.slice(10, 110),
+  );
+  const third = await list(`&limit=100&before=${encodeURIComponent(second.body.next)}`);
+  a.deepEqual(
+    third.body.items.map((x: any) => x.id),
+    ids.slice(110),
+  );
+  a.equal(third.body.next, null);
+  // The type narrows the list; person and dates narrow the summary as well.
+  const money = await list('&group=money&limit=100');
+  a.equal(money.body.total, 50);
+  a.ok(money.body.items.every((x: any) => x.kind.endsWith('difference')));
+  a.equal(money.body.summary.absent, 25);
+  const zone = (await sql.query('SELECT timezone FROM branches WHERE id=$1', [branch])).rows[0]
+    .timezone;
+  const old = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(
+    new Date(Date.now() - 10 * 86_400_000),
+  );
+  const dated = await list(`&from=${old}&to=${old}&limit=100`);
+  a.equal(dated.body.total, 25);
+  a.deepEqual(
+    dated.body.items.map((x: any) => x.id),
+    ids.slice(100),
+  );
+  a.equal(dated.body.summary.absent, 5);
+  a.equal((await list('&before=nada')).status, 400);
+  a.equal((await list('&limit=101')).status, 400);
+  // Another branch sees none of them.
+  const foreign = await call(
+    `/alerts?branch_id=${other}&user_id=${person}`,
+    undefined,
+    'superadmin',
+  );
+  a.equal(foreign.body.total, 0);
+  // Marking everything filtered reaches the notifications not loaded yet, and nothing else.
+  const marked = await call(
+    '/alerts/read',
+    { branch_id: branch, all: true, user_id: person, group: 'money' },
+    'superadmin',
+  );
+  a.equal(marked.body.marked, 50);
+  const after = await list('');
+  a.equal(after.body.unread_filtered, 75);
+  a.equal((await list('&group=money')).body.unread_filtered, 0);
+  a.equal((await call('/alerts/read', { branch_id: branch, all: true }, 'admin')).status, 403);
+  // The snapshot only carries the 10 newest and the unread count for the menu.
+  const snapshot = (await call(`/snapshot?branch_id=${branch}`, undefined, 'superadmin')).body;
+  a.equal(snapshot.alerts.length, 10);
+  a.equal(
+    snapshot.alerts_unread,
+    (
+      await sql.query(
+        'SELECT count(*)::int n FROM alert_log WHERE branch_id=$1 AND read_at IS NULL',
+        [branch],
+      )
+    ).rows[0].n,
+  );
+  a.equal((await call(`/snapshot?branch_id=${branch}`)).body.alerts_unread, undefined);
+});
 test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async () => {
   const date = '2026-11-09';
   const place = (role: string, index?: number, id?: string) =>

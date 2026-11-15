@@ -725,10 +725,20 @@ app.get('/api/v1/snapshot', async (req, res) => {
         result.occupied_registers = (
           await db.query('SELECT register_number,user_id FROM register_leases')
         ).rows;
-        result.alerts =
-          user.role === 'superadmin' && (await alertsReady(db))
-            ? (await db.query('SELECT * FROM alert_log ORDER BY occurred_at DESC LIMIT 300')).rows
-            : [];
+        // The screen asks for its pages online; the snapshot keeps the 10 newest for offline use
+        // and the unread count for the menu.
+        const ownerAlerts = user.role === 'superadmin' && (await alertsReady(db));
+        result.alerts = ownerAlerts
+          ? (
+              await db.query(
+                'SELECT *,amount_cents::text AS amount_cents FROM alert_log ORDER BY occurred_at DESC,id DESC LIMIT 10',
+              )
+            ).rows
+          : [];
+        if (ownerAlerts)
+          result.alerts_unread = (
+            await db.query('SELECT count(*)::int AS n FROM alert_log WHERE read_at IS NULL')
+          ).rows[0].n;
       }
       return result;
     }),
@@ -943,22 +953,154 @@ app.post('/api/v1/clock/:action', async (req, res) => {
   });
   res.json({ ok: true });
 });
-// The owner marks store notifications as read; unread ones are counted in the menu.
+// Store notifications for the owner, newest first and a page at a time. The summary tiles count
+// the person and dates chosen; the type ("group") then narrows the list.
+const alertGroupKinds: Record<string, string[]> = {
+  absent: ['absent'],
+  time: ['late', 'early_exit'],
+  money: ['cut_difference', 'supplier_difference'],
+  pending: ['missing_cut', 'task_incomplete'],
+};
+const alertFilter = z.object({
+  user_id: z.uuid().optional(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+  group: z.enum(['absent', 'time', 'money', 'pending']).optional(),
+});
+// WHERE clause for a filter; $1 is always the branch's time zone.
+function alertWhere(f: z.infer<typeof alertFilter>, withGroup = true) {
+  const terms: string[] = [],
+    params: unknown[] = [];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    terms.push(sql.replace('?', `$${params.length + 1}`));
+  };
+  if (f.user_id) add('user_id=?::uuid', f.user_id);
+  if (f.from) add('(occurred_at AT TIME ZONE $1)::date>=?::date', f.from);
+  if (f.to) add('(occurred_at AT TIME ZONE $1)::date<=?::date', f.to);
+  if (withGroup && f.group) add('kind=ANY(?::text[])', alertGroupKinds[f.group]);
+  // The zone is typed here so queries without dates still accept it.
+  return { where: ['$1::text IS NOT NULL', ...terms].join(' AND '), params };
+}
+app.get('/api/v1/alerts', async (req, res) => {
+  const u = await identity(req.headers.authorization);
+  owner(u);
+  const q = alertFilter
+    .extend({
+      branch_id: z.string().optional(),
+      // Where the previous page ended: "<occurred_at>|<id>".
+      before: z.string().max(120).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(10),
+    })
+    .parse(req.query);
+  const b = await context(u, q.branch_id, true);
+  res.json(
+    await transaction(b.id, async (db) => {
+      if (!(await alertsReady(db)))
+        return {
+          items: [],
+          next: null,
+          total: 0,
+          unread: 0,
+          unread_filtered: 0,
+          people: [],
+          summary: { absent: 0, time: 0, money: 0, money_cents: '0', pending: 0 },
+        };
+      const full = alertWhere(q),
+        scope = alertWhere(q, false);
+      let page = full.where;
+      const pageParams: unknown[] = [b.timezone, ...full.params];
+      if (q.before) {
+        const [at, id] = q.before.split('|');
+        assert(
+          !!at && z.uuid().safeParse(id).success && !Number.isNaN(Date.parse(at)),
+          'INVALID_CURSOR',
+          'Página inválida.',
+          400,
+        );
+        pageParams.push(at, id);
+        page += ` AND (occurred_at,id)<($${pageParams.length - 1}::timestamptz,$${pageParams.length}::uuid)`;
+      }
+      pageParams.push(q.limit + 1);
+      const rows = (
+        await db.query(
+          `SELECT *,amount_cents::text AS amount_cents,
+                  to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
+           FROM alert_log WHERE ${page} ORDER BY occurred_at DESC,id DESC LIMIT $${pageParams.length}`,
+          pageParams,
+        )
+      ).rows;
+      const items = rows.slice(0, q.limit),
+        last = items.at(-1);
+      const counts = (
+        await db.query(
+          `SELECT count(*) FILTER (WHERE ${full.where})::int AS total,
+                  count(*) FILTER (WHERE ${full.where} AND read_at IS NULL)::int AS unread_filtered,
+                  count(*) FILTER (WHERE kind='absent')::int AS absent,
+                  count(*) FILTER (WHERE kind IN ('late','early_exit'))::int AS time,
+                  count(*) FILTER (WHERE kind IN ('cut_difference','supplier_difference'))::int AS money,
+                  coalesce(sum(abs(amount_cents)) FILTER (WHERE kind IN ('cut_difference','supplier_difference')),0)::text AS money_cents,
+                  count(*) FILTER (WHERE kind IN ('missing_cut','task_incomplete'))::int AS pending
+           FROM alert_log WHERE ${scope.where}`,
+          [b.timezone, ...full.params],
+        )
+      ).rows[0];
+      const totals = (
+        await db.query(
+          `SELECT count(*) FILTER (WHERE read_at IS NULL)::int AS unread,
+                  coalesce(array_agg(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL),'{}') AS people
+           FROM alert_log`,
+        )
+      ).rows[0];
+      return {
+        items: items.map(({ cursor_at: _cursor, ...a }) => a),
+        next: rows.length > q.limit ? `${last.cursor_at}|${last.id}` : null,
+        total: counts.total,
+        unread: totals.unread,
+        unread_filtered: counts.unread_filtered,
+        people: totals.people,
+        summary: {
+          absent: counts.absent,
+          time: counts.time,
+          money: counts.money,
+          money_cents: counts.money_cents,
+          pending: counts.pending,
+        },
+      };
+    }),
+  );
+});
+// The owner marks notifications as read: some by id, or every unread one matching a filter.
 app.post('/api/v1/alerts/read', async (req, res) => {
   const u = await identity(req.headers.authorization);
   owner(u);
   const b = await context(u, req.body.branch_id);
-  const p = z.object({ ids: z.array(z.uuid()).min(1).max(300) }).parse(req.body);
-  const marked = await transaction(
-    b.id,
-    async (db) =>
+  const p = z
+    .union([
+      z.object({ ids: z.array(z.uuid()).min(1).max(300) }),
+      alertFilter.extend({ all: z.literal(true) }),
+    ])
+    .parse(req.body);
+  const marked = await transaction(b.id, async (db) => {
+    if ('ids' in p)
+      return (
+        (
+          await db.query(
+            'UPDATE alert_log SET read_at=now() WHERE id=ANY($1::uuid[]) AND read_at IS NULL',
+            [p.ids],
+          )
+        ).rowCount || 0
+      );
+    const f = alertWhere(p);
+    return (
       (
-        await db.query(
-          'UPDATE alert_log SET read_at=now() WHERE id=ANY($1::uuid[]) AND read_at IS NULL',
-          [p.ids],
-        )
-      ).rowCount || 0,
-  );
+        await db.query(`UPDATE alert_log SET read_at=now() WHERE read_at IS NULL AND ${f.where}`, [
+          b.timezone,
+          ...f.params,
+        ])
+      ).rowCount || 0
+    );
+  });
   res.json({ ok: true, marked });
 });
 app.use('/api/v1/schedules', schedules);
