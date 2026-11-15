@@ -3621,3 +3621,6 @@ main > * {
     grid-row: 2;
   }
 }
+.mt-inline {
+  margin-left: 8px;
+}

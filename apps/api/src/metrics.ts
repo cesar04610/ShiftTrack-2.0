@@ -180,17 +180,51 @@ async function purchases(db: pg.PoolClient, zone: string, from: string, to: stri
   };
 }
 
+// One line per supplier with live tickets in the period or the one before, with its last
+// visit ever (up to the end of the period) to spot those who stopped coming.
+async function suppliers(
+  db: pg.PoolClient,
+  zone: string,
+  range: { from: string; to: string },
+  previous: { from: string; to: string },
+) {
+  const day = `(t.occurred_at AT TIME ZONE $5)::date`;
+  return (
+    await db.query(
+      `WITH live AS (
+         SELECT t.supplier_id,${day} AS date,
+           t.amount_cents-coalesce((SELECT sum(c.amount_cents) FROM supplier_corrections c WHERE c.ticket_id=t.id),0) AS net
+         FROM tickets t WHERE NOT t.voided AND ${day} BETWEEN $3 AND $2)
+       SELECT s.id,s.company,s.product_type,s.active,
+         count(*) FILTER (WHERE l.date>=$1)::int AS tickets,
+         count(DISTINCT l.date) FILTER (WHERE l.date>=$1)::int AS days,
+         coalesce(sum(l.net) FILTER (WHERE l.date>=$1),0)::text AS net_cents,
+         count(*) FILTER (WHERE l.date<=$4)::int AS previous_tickets,
+         count(DISTINCT l.date) FILTER (WHERE l.date<=$4)::int AS previous_days,
+         coalesce(sum(l.net) FILTER (WHERE l.date<=$4),0)::text AS previous_net_cents,
+         (SELECT max(${day})::text FROM tickets t
+          WHERE t.supplier_id=s.id AND NOT t.voided AND ${day}<=$2) AS last_visit
+       FROM suppliers s JOIN live l ON l.supplier_id=s.id
+       GROUP BY s.id,s.company,s.product_type,s.active
+       ORDER BY sum(l.net) FILTER (WHERE l.date>=$1) DESC NULLS LAST,s.company`,
+      [range.from, range.to, previous.from, previous.to, zone],
+    )
+  ).rows;
+}
+
 export async function buildMetrics(db: pg.PoolClient, zone: string, from: string, to: string) {
   const previous = previousPeriod(from, to);
   const s = await sales(db, from, to),
     p = await purchases(db, zone, from, to),
     ps = await sales(db, previous.from, previous.to),
-    pp = await purchases(db, zone, previous.from, previous.to);
+    pp = await purchases(db, zone, previous.from, previous.to),
+    sp = await suppliers(db, zone, { from, to }, previous);
   return {
     range: { from, to },
     previous,
     sales: { ...s, previous: { totals: ps.totals, by_day: ps.by_day } },
     purchases: { ...p, previous: { totals: pp.totals, by_day: pp.by_day } },
+    suppliers: sp,
   };
 }
 

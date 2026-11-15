@@ -6,10 +6,11 @@ import { addDays } from './ScheduleBoard';
 
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
-type Tab = 'ventas' | 'compras';
+type Tab = 'ventas' | 'compras' | 'proveedores';
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
+  ['proveedores', 'Proveedores'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -529,20 +530,22 @@ export default function Metrics({
             </button>
           ))}
         </div>
-        <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
-          {grains.map(([key, text]) => (
-            <button
-              key={key}
-              className={grain === key ? 'selected' : ''}
-              aria-pressed={grain === key}
-              disabled={key === 'day' && days > MAX_DAILY}
-              title={key === 'day' && days > MAX_DAILY ? 'Disponible hasta 92 días' : undefined}
-              onClick={() => setGrain(key)}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
+        {tab !== 'proveedores' && (
+          <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
+            {grains.map(([key, text]) => (
+              <button
+                key={key}
+                className={grain === key ? 'selected' : ''}
+                aria-pressed={grain === key}
+                disabled={key === 'day' && days > MAX_DAILY}
+                title={key === 'day' && days > MAX_DAILY ? 'Disponible hasta 92 días' : undefined}
+                onClick={() => setGrain(key)}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <p className="rp-context">
         {branchName} ·{' '}
@@ -566,6 +569,8 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : tab === 'proveedores' ? (
+        <SupplierMetrics m={ready} days={days} />
       ) : (
         <PurchaseMetrics m={ready} grain={grain} days={days} />
       )}
@@ -761,6 +766,252 @@ function SalesMetrics({ m, grain, days }: { m: any; grain: Grain; days: number }
           días.
         </p>
       )}
+    </>
+  );
+}
+
+// A plain table that stacks into cards on a phone.
+function Table({
+  headers,
+  rows,
+}: {
+  headers: string[];
+  rows: { key: string; cells: ReactNode[] }[];
+}) {
+  return (
+    <div className="table-wrap">
+      <table className="rp-table mt-table">
+        <thead>
+          <tr>
+            {headers.map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key}>
+              {r.cells.map((c, i) => (
+                <td key={i} data-label={headers[i]}>
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const RANKED = 10;
+// A rise in the average ticket this large is worth a look.
+const RISE = 0.1;
+const STOPPED_TIMES = 3,
+  STOPPED_DAYS = 7;
+// Proveedores: who takes the money, how often they come and who stopped coming.
+function SupplierMetrics({ m, days }: { m: any; days: number }) {
+  const [all, setAll] = useState(false);
+  const list = (m.suppliers as any[]).map((x) => ({
+    ...x,
+    net: num(x.net_cents),
+    before: num(x.previous_net_cents),
+    avg: x.tickets ? num(x.net_cents) / x.tickets : 0,
+    avgBefore: x.previous_tickets ? num(x.previous_net_cents) / x.previous_tickets : 0,
+  }));
+  const current = list.filter((x) => x.tickets > 0);
+  const previousCount = list.filter((x) => x.previous_tickets > 0).length;
+  const total = current.reduce((sum, x) => sum + x.net, 0);
+  const share = (cents: number) => (total > 0 ? cents / total : 0);
+  const top5 = share(current.slice(0, 5).reduce((sum, x) => sum + x.net, 0));
+  // How often a supplier comes: the days of the period over the days it came.
+  const frequency = (x: any) =>
+    x.days >= 2
+      ? `cada ${(days / x.days).toLocaleString('es-MX', { maximumFractionDigits: 1 })} días`
+      : x.days === 1
+        ? '1 visita'
+        : 'sin visitas';
+  // Comparable: at least two tickets in each period, so one big order doesn't decide it.
+  const comparable = current.filter((x) => x.tickets >= 2 && x.previous_tickets >= 2);
+  const rising = comparable
+    .map((x) => ({ ...x, change: x.avg / x.avgBefore - 1 }))
+    .filter((x) => x.change >= RISE)
+    .sort((a, b) => b.change - a.change);
+  // A supplier stopped coming when it has been away at least three times its usual gap
+  // (and a week): a weekly supplier missing from a 7-day period is not news.
+  const stopped = list
+    .map((x) => {
+      const visits = x.days + x.previous_days;
+      const usual = (days * 2) / visits;
+      const away = dayCount(x.last_visit, m.range.to) - 1;
+      return { ...x, usual, away, total: x.net + x.before };
+    })
+    .filter((x) => x.away >= Math.max(STOPPED_DAYS, x.usual * STOPPED_TIMES))
+    .sort((a, b) => b.total - a.total);
+  const types = new Map<string, { label: string; net: number; suppliers: number }>();
+  for (const x of current) {
+    const label = x.product_type.trim() || 'Sin tipo';
+    const key = label.toLocaleLowerCase('es-MX');
+    const t = types.get(key) || { label, net: 0, suppliers: 0 };
+    t.net += x.net;
+    t.suppliers++;
+    types.set(key, t);
+  }
+  const byType = [...types.values()].sort((a, b) => b.net - a.net);
+  if (!current.length && !stopped.length)
+    return (
+      <section className="card mt-panel">
+        <Empty text="No hay tickets de proveedores en este periodo ni en el anterior." />
+      </section>
+    );
+  const ranked = all ? current : current.slice(0, RANKED);
+  return (
+    <>
+      <div className="mt-stats">
+        <Stat label="Proveedores con compras" value={String(current.length)}>
+          <Change now={current.length} before={previousCount} upIs="neutral" />
+        </Stat>
+        <Stat label="Los 5 principales" value={total > 0 ? percent(top5) : '—'}>
+          <small>
+            {current.length <= 5
+              ? `Solo ${plural(current.length, 'proveedor tuvo', 'proveedores tuvieron')} compras`
+              : 'del gasto neto del periodo'}
+          </small>
+        </Stat>
+        <Stat label="Ticket promedio al alza" value={String(rising.length)}>
+          <small>
+            {comparable.length
+              ? `de ${plural(comparable.length, 'proveedor comparable', 'proveedores comparables')}`
+              : 'Sin proveedores comparables'}
+          </small>
+        </Stat>
+        <Stat label="Dejaron de venir" value={String(stopped.length)}>
+          <small>Sin venir mucho más de lo habitual</small>
+        </Stat>
+      </div>
+      <Panel
+        title="Ranking por gasto"
+        note="Compras netas de cada proveedor, su parte del gasto y cada cuántos días vino en promedio."
+        table={{
+          headers: [
+            'Proveedor',
+            'Compras netas',
+            'Parte del gasto',
+            'Tickets',
+            'Ticket promedio',
+            'Días con visita',
+            'Periodo anterior',
+          ],
+          rows: current.map((x) => [
+            x.company,
+            pesos(x.net),
+            percent(share(x.net)),
+            String(x.tickets),
+            pesos(x.avg),
+            String(x.days),
+            pesos(x.before),
+          ]),
+        }}
+      >
+        {current.length ? (
+          <>
+            <Rows
+              items={ranked.map((x) => ({
+                key: x.id,
+                label: x.company,
+                sub: `${percent(share(x.net))} del gasto · ${plural(x.tickets, 'ticket', 'tickets')} de ${pesos(x.avg)} · ${frequency(x)}`,
+                value: x.net,
+                text: pesos(x.net),
+              }))}
+            />
+            {current.length > RANKED && (
+              <button className="secondary rp-more" onClick={() => setAll(!all)}>
+                {all ? `Ver los ${RANKED} principales` : `Ver todos (${current.length})`}
+              </button>
+            )}
+          </>
+        ) : (
+          <Empty text="Ningún proveedor tuvo compras en este periodo." />
+        )}
+      </Panel>
+      <Panel
+        title="Por tipo de producto"
+        note="Gasto neto agrupado por el tipo de producto del directorio de proveedores."
+      >
+        {byType.length ? (
+          <Rows
+            items={byType.map((t) => ({
+              key: t.label,
+              label: t.label,
+              sub: `${percent(share(t.net))} del gasto · ${plural(t.suppliers, 'proveedor', 'proveedores')}`,
+              value: t.net,
+              text: pesos(t.net),
+            }))}
+          />
+        ) : (
+          <Empty text="Sin compras en el periodo." />
+        )}
+        {types.has('sin tipo') && (
+          <p className="rp-note">
+            Para separar «Sin tipo», completa el tipo de producto en el directorio de Caja
+            proveedores.
+          </p>
+        )}
+      </Panel>
+      <Panel
+        title="Ticket promedio al alza"
+        note={`Proveedores cuyo ticket promedio subió ${percent(RISE, 0)} o más contra el periodo anterior. Puede ser aumento de precios o pedidos más grandes: revisa sus tickets en Reportes.`}
+      >
+        {rising.length ? (
+          <Table
+            headers={['Proveedor', 'Ticket promedio', 'Antes', 'Cambio', 'Tickets (antes)']}
+            rows={rising.map((x) => ({
+              key: x.id,
+              cells: [
+                x.company,
+                pesos(x.avg),
+                pesos(x.avgBefore),
+                <span className="badge amber-badge">Sube {percent(x.change)}</span>,
+                `${x.tickets} (${x.previous_tickets})`,
+              ],
+            }))}
+          />
+        ) : (
+          <Empty
+            text={
+              comparable.length
+                ? 'Ningún ticket promedio subió 10% o más.'
+                : 'Hace falta que un proveedor tenga al menos dos tickets en cada periodo para compararlo.'
+            }
+          />
+        )}
+      </Panel>
+      <Panel
+        title="Dejaron de venir"
+        note="Proveedores que llevan sin venir al menos tres veces lo que solían tardar entre visitas (y como mínimo una semana), contando este periodo y el anterior."
+      >
+        {stopped.length ? (
+          <Table
+            headers={['Proveedor', 'Última visita', 'Venía', 'Compras en ambos periodos']}
+            rows={stopped.map((x) => ({
+              key: x.id,
+              cells: [
+                <>
+                  {x.company}
+                  {!x.active && <span className="badge muted-badge mt-inline">Inactivo</span>}
+                </>,
+                `${shortDate(x.last_visit)} · hace ${plural(x.away, 'día', 'días')}`,
+                x.usual <= 1.05
+                  ? 'Diario'
+                  : `Cada ${x.usual.toLocaleString('es-MX', { maximumFractionDigits: 1 })} días`,
+                pesos(x.total),
+              ],
+            }))}
+          />
+        ) : (
+          <Empty text="Todos los proveedores siguen viniendo con su frecuencia habitual." />
+        )}
+      </Panel>
     </>
   );
 }

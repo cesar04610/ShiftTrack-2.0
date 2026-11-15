@@ -60,13 +60,15 @@ async function cut(
   );
 }
 const supplier = randomUUID(),
+  dairy = randomUUID(),
+  old = randomUUID(),
   shift = randomUUID();
-async function ticket(user: string, at: string, amount: number, voided = false) {
+async function ticket(user: string, at: string, amount: number, voided = false, from = supplier) {
   const id = randomUUID();
   await db.query(
     `INSERT INTO tickets(branch_id,id,supplier_id,shift_id,actor_user_id,amount_cents,occurred_at,voided,void_reason)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [branch, id, supplier, shift, user, amount, at, voided, voided ? 'Error de captura' : null],
+    [branch, id, from, shift, user, amount, at, voided, voided ? 'Error de captura' : null],
   );
   return id;
 }
@@ -125,6 +127,17 @@ before(async () => {
   await ticket(employeeId, '2026-03-04T18:00:00Z', 10_000);
   await ticket(employeeId, '2026-03-04T18:02:00Z', 7_000, true);
   await ticket(employeeId, '2026-02-25T18:00:00Z', 30_000);
+  // Lácteos compró solo en el periodo anterior: dejó de venir. Su ticket del 10 de marzo es
+  // posterior al periodo y no cuenta como su última visita.
+  await db.query(
+    `INSERT INTO suppliers(branch_id,id,company,product_type,active) VALUES($1,$2,'Lácteos Sierra','Lácteos',false),
+       ($1,$3,'Proveedor antiguo','',true)`,
+    [branch, dairy, old],
+  );
+  await ticket(employeeId, '2026-02-26T18:00:00Z', 8_000, false, dairy);
+  await ticket(employeeId, '2026-03-10T18:00:00Z', 9_000, false, dairy);
+  // Fuera de ambos periodos: no aparece.
+  await ticket(employeeId, '2026-01-10T18:00:00Z', 4_000, false, old);
   await db.query(
     `INSERT INTO supplier_corrections(branch_id,id,ticket_id,type,amount_cents,treasury_effect_cents,
        supplier_cash_effect_cents,reason,actor_user_id,occurred_at)
@@ -224,7 +237,8 @@ test('métricas de compras: neto, fecha local, anulados y correcciones por perso
       [3, 1, '10000'],
     ],
   );
-  a.equal(p.previous.totals.net_cents, '30000');
+  // Abarrotes $300 y Lácteos $80.
+  a.equal(p.previous.totals.net_cents, '38000');
   // Empatados en cantidad, se ordenan por nombre.
   a.deepEqual(
     p.by_person.map((x: any) => [
@@ -237,6 +251,28 @@ test('métricas de compras: neto, fecha local, anulados y correcciones por perso
     [
       [adminId, 0, '0', 1, '5000'],
       [employeeId, 1, '7000', 0, '0'],
+    ],
+  );
+});
+
+test('métricas de proveedores: actual, anterior y última visita', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  a.deepEqual(
+    r.body.suppliers.map((x: any) => [
+      x.company,
+      x.product_type,
+      x.active,
+      x.tickets,
+      x.days,
+      x.net_cents,
+      x.previous_tickets,
+      x.previous_days,
+      x.previous_net_cents,
+      x.last_visit,
+    ]),
+    [
+      ['Abarrotes del Norte', '', true, 2, 2, '25000', 1, 1, '30000', '2026-03-04'],
+      ['Lácteos Sierra', 'Lácteos', false, 0, 0, '0', 1, 1, '8000', '2026-02-26'],
     ],
   );
 });
