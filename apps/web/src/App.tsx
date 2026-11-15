@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   BarChart3,
+  TrendingUp,
   ShoppingBag,
   Receipt,
   Wallet,
@@ -36,6 +37,7 @@ import { request, ApiError, download, imageUrl, hasOnlineSession } from './api';
 import SupplierImport from './SupplierImport';
 import SearchSelect from './SearchSelect';
 import Reports from './Reports';
+import Metrics from './Metrics';
 import SalesScreen, { ProductsAdmin, TurnSales, turnSales } from './Sales';
 import UserBoard from './UserBoard';
 import TaskBoard, { setupLabel } from './TaskBoard';
@@ -537,6 +539,7 @@ const adminNav = [
   ['Horarios', CalendarDays],
   ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
+  ['Métricas', TrendingUp],
   ['Alertas', BarChart3],
   ['Productos', Package],
   ['Cortes', Receipt],
@@ -916,6 +919,7 @@ export default function App() {
     Faltantes: 'Productos que hacen falta en la sucursal.',
     Configuración: 'Sucursales, cajas y accesos preparados.',
     Reportes: 'Elige un periodo y entra al tema que quieras revisar.',
+    Métricas: 'Tendencias de la sucursal comparadas con el periodo anterior.',
   };
   const supplierForm = (
     <Form
@@ -2417,6 +2421,9 @@ export default function App() {
                   today={date}
                   onError={notify}
                 />
+              )}
+              {page === 'Métricas' && (
+                <Metrics key={branchId} branchId={branchId} branchName={b.name} today={date} />
               )}
               {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}
               {page === 'Configuración' && (

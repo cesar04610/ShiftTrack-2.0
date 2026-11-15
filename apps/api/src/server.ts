@@ -29,6 +29,7 @@ import {
   type User,
 } from '../../../packages/domain/index.js';
 import { reports } from './reports.js';
+import { metrics } from './metrics.js';
 import { modules } from './modules.js';
 import { supplierImport } from './supplier-import.js';
 import { sales, salesSnapshot } from './sales.js';
@@ -1102,6 +1103,7 @@ async function employee(db: any, branch: string, id: string) {
 app.use('/api/v1/suppliers/import', supplierImport);
 app.use('/api/v1', sales);
 app.use('/api/v1', reports);
+app.use('/api/v1', metrics);
 app.use('/api/v1', modules);
 if (process.env.WEB_DIST_DIR) {
   const webDir = resolve(process.env.WEB_DIST_DIR);
