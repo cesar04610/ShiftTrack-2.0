@@ -68,7 +68,7 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
   await expect(
     page.getByRole('button', { name: 'Menú de administrador', exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Alertas', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Notificaciones', exact: true })).toHaveCount(0);
   // Without a register the administrator only sees management; the work menu comes with a register.
   const workMenu = ['Horario', 'Tareas', 'Faltantes', 'Mi corte', 'Caja proveedores'];
   for (const name of workMenu)
@@ -244,7 +244,7 @@ test('Mostrador: administrador organiza turnos y trabaja en caja; súper adminis
   await expect(
     page.getByRole('button', { name: 'Menú de súper administrador', exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Alertas', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Notificaciones', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Horario', exact: true }).click();
   // "Mi horario" shows the owner's Friday shift as "Viernes <day>".
   await expect(

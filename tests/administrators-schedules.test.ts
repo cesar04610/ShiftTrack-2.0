@@ -384,7 +384,7 @@ test('administradores pueden registrar entrada, corte y pagos; caja normal no au
     2,
   );
 });
-test('Alertas corresponde al súper administrador y el administrador no las recibe', async () => {
+test('Notificaciones corresponde al súper administrador y el administrador no las recibe', async () => {
   const snapshot = (await call(`/snapshot?branch_id=${branch}`)).body;
   a.deepEqual(snapshot.alerts, []);
   a.equal(snapshot.alert_settings, undefined);

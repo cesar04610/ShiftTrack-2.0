@@ -297,7 +297,7 @@ function AlertsPanel({ alerts, zone }: { alerts: any[]; zone: string }) {
       title="Estado de la tienda"
       subtitle="Registro de lo que requiere tu atención, del más reciente al más antiguo"
     >
-      <div className="alert-filters" role="group" aria-label="Filtrar alertas">
+      <div className="alert-filters" role="group" aria-label="Filtrar notificaciones">
         {alertGroups.map((g) => (
           <button
             key={g.key}
@@ -537,7 +537,7 @@ const adminNav = [
   ['Horarios', CalendarDays],
   ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
-  ['Alertas', BarChart3],
+  ['Notificaciones', BarChart3],
   ['Productos', Package],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
@@ -874,7 +874,7 @@ export default function App() {
         (prepared && registerNumber === data?.branch.supplier_register)),
   );
   const managementNav = adminNav.filter(
-    ([label]) => label !== 'Alertas' || user.role === 'superadmin',
+    ([label]) => label !== 'Notificaciones' || user.role === 'superadmin',
   );
   const isManagementPage =
     page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
@@ -2418,7 +2418,9 @@ export default function App() {
                   onError={notify}
                 />
               )}
-              {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}
+              {page === 'Notificaciones' && (
+                <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />
+              )}
               {page === 'Configuración' && (
                 <>
                   {user.role === 'superadmin' ? (
