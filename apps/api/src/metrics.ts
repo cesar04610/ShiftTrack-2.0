@@ -2,7 +2,7 @@ import express from 'express';
 import { z } from 'zod';
 import type pg from 'pg';
 import { identity } from './security.js';
-import { admin, context, transaction } from './db.js';
+import { admin, context, owner, pool, transaction } from './db.js';
 import { alertsReady } from './alerts.js';
 import { assert, shiftBusinessDate } from '../../../packages/domain/index.js';
 
@@ -26,9 +26,7 @@ export function previousPeriod(from: string, to: string) {
   return { from: shift(from, -days), to: shift(from, -1) };
 }
 
-async function load(req: express.Request) {
-  const user = await identity(req.headers.authorization);
-  admin(user);
+function period(req: express.Request) {
   const q = range.parse(req.query);
   assert(q.from <= q.to, 'INVALID_RANGE', 'La fecha inicial debe ser anterior a la final.', 400);
   assert(
@@ -37,6 +35,12 @@ async function load(req: express.Request) {
     'El rango máximo es de 400 días.',
     400,
   );
+  return q;
+}
+async function load(req: express.Request) {
+  const user = await identity(req.headers.authorization);
+  admin(user);
+  const q = period(req);
   const b = await context(user, q.branch_id, true);
   return { b, from: q.from, to: q.to };
 }
@@ -527,4 +531,55 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
 metrics.get('/metrics', async (req, res) => {
   const { b, from, to } = await load(req);
   res.json(await transaction(b.id, (db) => buildMetrics(db, b.timezone, from, to)));
+});
+
+// The few figures that compare one branch with another, for one period.
+async function branchSummary(db: pg.PoolClient, zone: string, from: string, to: string) {
+  const s = (await sales(db, from, to)).totals,
+    p = (await purchases(db, zone, from, to)).totals,
+    x = (await expenses(db, zone, from, to)).totals,
+    c = (await cash(db, zone, from, to)).totals,
+    e = (await employees(db, zone, from, to)).totals;
+  return {
+    sales_cents: s.sales_cents,
+    card_cents: s.card_cents,
+    cuts: s.cuts,
+    sale_days: s.days,
+    purchases_cents: p.net_cents,
+    tickets: p.tickets,
+    expenses_cents: x.amount_cents,
+    counts: c.cut.counts + c.supplier.counts,
+    short_counts: c.cut.short + c.supplier.short,
+    short_cents: (BigInt(c.cut.short_cents) + BigInt(c.supplier.short_cents)).toString(),
+    over_cents: (BigInt(c.cut.over_cents) + BigInt(c.supplier.over_cents)).toString(),
+    scheduled: e.scheduled,
+    absences: e.absences,
+    late: e.late,
+    tasks_done: e.tasks_done,
+    tasks_missed: e.tasks_missed,
+    hours: e.hours,
+  };
+}
+
+// Comparación entre sucursales: only the owner sees every branch. Each branch is read in its own
+// transaction, so row-level isolation still applies to every query.
+metrics.get('/metrics/branches', async (req, res) => {
+  const user = await identity(req.headers.authorization);
+  owner(user);
+  const { from, to } = period(req);
+  const previous = previousPeriod(from, to);
+  const branches = (
+    await pool.query('SELECT id,name,timezone FROM branches WHERE active ORDER BY name')
+  ).rows;
+  const out = [];
+  for (const b of branches)
+    out.push(
+      await transaction(b.id, async (db) => ({
+        id: b.id,
+        name: b.name,
+        current: await branchSummary(db, b.timezone, from, to),
+        previous: await branchSummary(db, b.timezone, previous.from, previous.to),
+      })),
+    );
+  res.json({ range: { from, to }, previous, branches: out });
 });

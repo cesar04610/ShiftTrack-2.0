@@ -503,6 +503,40 @@ test('métricas de control de efectivo: faltantes y sobrantes por separado', asy
   a.deepEqual(m(c.previous.totals.cut), [1, 0, '0', 0, '0']);
 });
 
+test('comparación entre sucursales: solo el dueño, cada sucursal con sus cifras', async () => {
+  const path = '/metrics/branches?from=2026-03-01&to=2026-03-07';
+  a.equal((await get(path)).status, 403);
+  a.equal((await get(path, employeeToken)).status, 403);
+  const r = await get(path, superToken);
+  a.equal(r.status, 200);
+  a.deepEqual(r.body.previous, { from: '2026-02-22', to: '2026-02-28' });
+  const mine = r.body.branches.find((b: any) => b.id === branch);
+  const theirs = r.body.branches.find((b: any) => b.id === other);
+  a.deepEqual(mine.current, {
+    sales_cents: '210000',
+    card_cents: '90000',
+    cuts: 3,
+    sale_days: 2,
+    purchases_cents: '25000',
+    tickets: 2,
+    expenses_cents: '12000',
+    counts: 5,
+    short_counts: 2,
+    short_cents: '7000',
+    over_cents: '1000',
+    scheduled: 3,
+    absences: 1,
+    late: 1,
+    tasks_done: 2,
+    tasks_missed: 1,
+    hours: 18,
+  });
+  a.equal(mine.previous.sales_cents, '100000');
+  // La otra sucursal solo trae su propio corte.
+  a.equal(theirs.current.sales_cents, '777700');
+  a.equal(theirs.current.purchases_cents, '0');
+});
+
 test('métricas: un día sin movimientos, permisos y rango', async () => {
   const empty = await get(`/metrics?branch_id=${branch}&from=2026-03-05&to=2026-03-05`);
   a.equal(empty.status, 200);

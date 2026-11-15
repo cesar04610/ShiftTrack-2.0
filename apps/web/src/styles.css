@@ -3865,3 +3865,18 @@ main > * {
 .mt-rows.danger .mt-track i {
   background: #d03b3b;
 }
+.mt-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mt-table .mt-change.good {
+  color: #006300;
+}
+.mt-table .mt-change.bad {
+  color: #b42318;
+}
+.mt-table .mt-change {
+  font-size: 11px;
+  color: var(--muted);
+}

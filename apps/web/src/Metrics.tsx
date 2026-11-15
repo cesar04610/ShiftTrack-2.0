@@ -6,7 +6,8 @@ import { addDays } from './ScheduleBoard';
 
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
-type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad' | 'efectivo';
+type Tab =
+  'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad' | 'efectivo' | 'sucursales';
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
@@ -14,6 +15,8 @@ const tabs: [Tab, string][] = [
   ['empleados', 'Empleados'],
   ['rentabilidad', 'Rentabilidad'],
   ['efectivo', 'Control de efectivo'],
+  // Only the owner sees every branch.
+  ['sucursales', 'Sucursales'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -129,14 +132,21 @@ function Change({
   before,
   upIs = 'good',
   points,
+  brief,
 }: {
   now: number;
   before: number;
   upIs?: Tone;
   points?: boolean;
+  // Without «que el periodo anterior», for a table cell.
+  brief?: boolean;
 }) {
   if (!points && !before)
-    return <small className="mt-change">Sin datos del periodo anterior</small>;
+    return (
+      <small className="mt-change">
+        {brief ? 'Sin datos antes' : 'Sin datos del periodo anterior'}
+      </small>
+    );
   const delta = points ? now - before : (now - before) / Math.abs(before);
   const flat = Math.abs(delta) < 0.0005;
   const up = delta > 0;
@@ -149,7 +159,8 @@ function Change({
   return (
     <small className={`mt-change ${tone}`}>
       <Icon size={13} aria-hidden />
-      {flat ? 'Igual' : `${up ? 'Sube' : 'Baja'} ${amount}`} que el periodo anterior
+      {flat ? 'Igual' : `${up ? 'Sube' : 'Baja'} ${amount}`}
+      {!brief && ' que el periodo anterior'}
     </small>
   );
 }
@@ -480,10 +491,12 @@ export default function Metrics({
   branchId,
   branchName,
   today,
+  owner = false,
 }: {
   branchId: string;
   branchName: string;
   today: string;
+  owner?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>('ventas'),
     [preset, setPreset] = useState<Preset>('30'),
@@ -491,7 +504,8 @@ export default function Metrics({
     [chosenGrain, setGrain] = useState<Grain | null>(null),
     [data, setData] = useState<any>(null),
     [loading, setLoading] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [branches, setBranches] = useState<any>(null);
   const [from, to] = preset === 'custom' ? custom : period(preset, today);
   const days = dayCount(from, to);
   const grain =
@@ -509,6 +523,20 @@ export default function Metrics({
       current = false;
     };
   }, [branchId, from, to]);
+  // The comparison reads every branch, so it loads only when its tab is open.
+  const comparing = owner && tab === 'sucursales';
+  useEffect(() => {
+    if (!comparing || !from || !to || from > to) return;
+    let current = true;
+    request(`/metrics/branches?from=${from}&to=${to}`)
+      .then((r) => current && setBranches(r))
+      .catch((e) => current && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      current = false;
+    };
+  }, [comparing, from, to]);
+  const compared =
+    branches && branches.range.from === from && branches.range.to === to ? branches : null;
   // Only the answer for the dates on screen is drawn.
   const ready = data && data.range.from === from && data.range.to === to ? data : null;
   return (
@@ -555,16 +583,18 @@ export default function Metrics({
       )}
       <div className="mt-head">
         <div className="rp-choice" role="group" aria-label="Tema">
-          {tabs.map(([key, text]) => (
-            <button
-              key={key}
-              className={tab === key ? 'selected' : ''}
-              aria-pressed={tab === key}
-              onClick={() => setTab(key)}
-            >
-              {text}
-            </button>
-          ))}
+          {tabs
+            .filter(([key]) => key !== 'sucursales' || owner)
+            .map(([key, text]) => (
+              <button
+                key={key}
+                className={tab === key ? 'selected' : ''}
+                aria-pressed={tab === key}
+                onClick={() => setTab(key)}
+              >
+                {text}
+              </button>
+            ))}
         </div>
         {['ventas', 'compras', 'rentabilidad', 'efectivo'].includes(tab) && (
           <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
@@ -584,7 +614,7 @@ export default function Metrics({
         )}
       </div>
       <p className="rp-context">
-        {branchName} ·{' '}
+        {comparing ? 'Todas las sucursales activas' : branchName} ·{' '}
         <strong>
           {shortDate(from)} – {shortDate(to)}
         </strong>
@@ -605,6 +635,12 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : comparing ? (
+        compared ? (
+          <BranchMetrics c={compared} current={branchId} />
+        ) : (
+          <p className="rp-note">Cargando sucursales…</p>
+        )
       ) : tab === 'efectivo' ? (
         <CashMetrics m={ready} grain={grain} />
       ) : tab === 'rentabilidad' ? (
@@ -1665,6 +1701,182 @@ function CashMetrics({ m, grain }: { m: any; grain: Grain }) {
         ) : (
           <Empty text="No hubo ajustes manuales en el periodo." />
         )}
+      </Panel>
+    </>
+  );
+}
+
+// One indicator of the comparison: how to read it from a branch summary and which way is good.
+type Indicator = {
+  label: string;
+  value: (x: any) => number | null;
+  format: (v: number) => string;
+  upIs: Tone;
+  points?: boolean;
+};
+const share = (part: number, whole: number) => (whole > 0 ? part / whole : null);
+const indicators: Indicator[] = [
+  { label: 'Ventas', value: (x) => num(x.sales_cents), format: pesos, upIs: 'good' },
+  {
+    label: 'Promedio por día con cortes',
+    value: (x) => (x.sale_days ? num(x.sales_cents) / x.sale_days : null),
+    format: pesos,
+    upIs: 'good',
+  },
+  {
+    label: 'Pagado con tarjeta',
+    value: (x) => share(num(x.card_cents), num(x.sales_cents)),
+    format: (v) => percent(v),
+    upIs: 'neutral',
+    points: true,
+  },
+  { label: 'Compras netas', value: (x) => num(x.purchases_cents), format: pesos, upIs: 'neutral' },
+  {
+    label: 'Compras sobre ventas',
+    value: (x) => share(num(x.purchases_cents), num(x.sales_cents)),
+    format: (v) => percent(v),
+    upIs: 'bad',
+    points: true,
+  },
+  {
+    label: 'Gastos extraordinarios',
+    value: (x) => num(x.expenses_cents),
+    format: pesos,
+    upIs: 'bad',
+  },
+  {
+    label: 'Resultado de caja',
+    value: (x) => num(x.sales_cents) - num(x.purchases_cents) - num(x.expenses_cents),
+    format: pesos,
+    upIs: 'good',
+  },
+  {
+    label: 'Margen sobre ventas',
+    value: (x) =>
+      share(
+        num(x.sales_cents) - num(x.purchases_cents) - num(x.expenses_cents),
+        num(x.sales_cents),
+      ),
+    format: (v) => percent(v),
+    upIs: 'good',
+    points: true,
+  },
+  { label: 'Faltantes en conteos', value: (x) => num(x.short_cents), format: pesos, upIs: 'bad' },
+  {
+    label: 'Conteos con faltante',
+    value: (x) => share(x.short_counts, x.counts),
+    format: (v) => percent(v),
+    upIs: 'bad',
+    points: true,
+  },
+  {
+    label: 'Turnos a tiempo',
+    value: (x) => share(Math.max(0, x.scheduled - x.absences - x.late), x.scheduled),
+    format: (v) => percent(v),
+    upIs: 'good',
+    points: true,
+  },
+  {
+    label: 'Tareas cumplidas',
+    value: (x) => share(x.tasks_done, x.tasks_done + x.tasks_missed),
+    format: (v) => percent(v),
+    upIs: 'good',
+    points: true,
+  },
+];
+
+// Comparación entre sucursales: the same figures side by side, each against its own past.
+function BranchMetrics({ c, current }: { c: any; current: string }) {
+  const list: any[] = c.branches;
+  if (list.length < 2)
+    return (
+      <section className="card mt-panel">
+        <Empty text="Hace falta más de una sucursal activa para comparar." />
+      </section>
+    );
+  const result = (x: any) => num(x.sales_cents) - num(x.purchases_cents) - num(x.expenses_cents);
+  return (
+    <>
+      <p className="rp-note mt-caveat">
+        Todas las sucursales activas en el mismo periodo, cada una contra su propio periodo
+        anterior. En cada indicador se resalta la mejor.
+      </p>
+      <Panel
+        title="Lado a lado"
+        note="Las mismas reglas de las demás pestañas, aplicadas a cada sucursal."
+      >
+        <Table
+          headers={['Indicador', ...list.map((b) => b.name)]}
+          rows={indicators.map((ind) => {
+            const values = list.map((b) => ind.value(b.current));
+            const known = values.filter((v): v is number => v != null);
+            const best =
+              ind.upIs === 'neutral' || known.length < 2 || new Set(known).size < 2
+                ? null
+                : ind.upIs === 'good'
+                  ? Math.max(...known)
+                  : Math.min(...known);
+            return {
+              key: ind.label,
+              cells: [
+                ind.label,
+                ...list.map((b, i) => {
+                  const v = values[i],
+                    before = ind.value(b.previous);
+                  if (v == null) return '—';
+                  return (
+                    <span className="mt-cell">
+                      {v === best ? <strong>{ind.format(v)}</strong> : ind.format(v)}
+                      {before != null && (
+                        <Change now={v} before={before} upIs={ind.upIs} points={ind.points} brief />
+                      )}
+                    </span>
+                  );
+                }),
+              ],
+            };
+          })}
+        />
+      </Panel>
+      <div className="mt-pair">
+        <Panel title="Ventas" note="Lo vendido en el periodo por sucursal.">
+          <Rows
+            items={list.map((b) => ({
+              key: b.id,
+              label: b.name,
+              sub: `${plural(b.current.cuts, 'corte', 'cortes')}${b.id === current ? ' · sucursal actual' : ''}`,
+              value: num(b.current.sales_cents),
+              text: pesos(num(b.current.sales_cents)),
+            }))}
+          />
+        </Panel>
+        <Panel title="Resultado de caja" note="Ventas menos compras y gastos extraordinarios.">
+          <Rows
+            items={list.map((b) => ({
+              key: b.id,
+              label: b.name,
+              sub: num(b.current.sales_cents)
+                ? `Margen ${percent(result(b.current) / num(b.current.sales_cents))}`
+                : 'Sin ventas',
+              value: Math.max(0, result(b.current)),
+              text: pesos(result(b.current)),
+            }))}
+          />
+        </Panel>
+      </div>
+      <Panel title="Faltantes" note="Faltantes acumulados en cortes y cierres de proveedores.">
+        <Rows
+          danger
+          items={list.map((b) => ({
+            key: b.id,
+            label: b.name,
+            sub: `${b.current.short_counts} de ${plural(b.current.counts, 'conteo', 'conteos')} con faltante`,
+            value: num(b.current.short_cents),
+            text: num(b.current.short_cents)
+              ? `Faltan ${pesos(num(b.current.short_cents))}`
+              : 'Sin faltantes',
+          }))}
+        />
       </Panel>
     </>
   );

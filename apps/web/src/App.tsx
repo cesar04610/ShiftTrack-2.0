@@ -2822,7 +2822,13 @@ export default function App() {
                 />
               )}
               {page === 'Métricas' && isAdmin && (
-                <Metrics key={branchId} branchId={branchId} branchName={b.name} today={date} />
+                <Metrics
+                  key={branchId}
+                  branchId={branchId}
+                  branchName={b.name}
+                  today={date}
+                  owner={user.role === 'superadmin'}
+                />
               )}
               {page === 'Notificaciones' && (
                 <AlertsPanel
