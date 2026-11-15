@@ -51,6 +51,7 @@ export default function ScheduleBoard({
   schedules,
   since,
   date,
+  initialDate,
   online,
   onSave,
   onRemove,
@@ -60,6 +61,8 @@ export default function ScheduleBoard({
   // First business date the screen has schedules for; earlier weeks are only in Reportes.
   since?: string;
   date: string;
+  // Opened from a notification: the board starts on this date's week.
+  initialDate?: string;
   online: boolean;
   onSave: (values: {
     id?: string;
@@ -74,7 +77,7 @@ export default function ScheduleBoard({
   const [expanded, setExpanded] = useState(false);
   const board = useRef<HTMLElement>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
-  const [week, setWeek] = useState(() => monday(date));
+  const [week, setWeek] = useState(() => monday(initialDate || date));
   const [selection, setSelection] = useState<Selection | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);

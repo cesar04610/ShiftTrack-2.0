@@ -88,6 +88,7 @@ export default function TaskBoard({
   occupied,
   workDay,
   since,
+  initialDay,
   online,
   onSave,
   onPhoto,
@@ -102,15 +103,17 @@ export default function TaskBoard({
   workDay: string;
   // First day the screen has tasks for; earlier ones are only in Reportes.
   since?: string;
+  // Opened from a notification: starts on that day's tasks.
+  initialDay?: string;
   online: boolean;
   onSave: (path: string, values: Record<string, unknown>) => Promise<void>;
   onPhoto: (mediaId: string) => void;
 }) {
-  const [tab, setTab] = useState<'lists' | 'day'>('lists'),
+  const [tab, setTab] = useState<'lists' | 'day'>(initialDay ? 'day' : 'lists'),
     [register, setRegister] = useState(1),
     // The lists open on today's weekday.
     [weekday, setWeekday] = useState(() => new Date(`${workDay}T12:00:00Z`).getUTCDay()),
-    [day, setDay] = useState(workDay),
+    [day, setDay] = useState(initialDay || workDay),
     [extra, setExtra] = useState(false),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);

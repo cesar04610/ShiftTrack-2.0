@@ -24,6 +24,7 @@ import {
   Bell,
   CheckCheck,
   UserX,
+  ChevronRight,
 } from 'lucide-react';
 import {
   money,
@@ -275,12 +276,16 @@ function greetingFor(name: string, zone: string) {
   }).format(new Date());
   return `${shortGreeting(name, zone)}. Hoy es ${today}.`;
 }
+// The summary tiles are also the type filter.
 const alertGroups = [
-  { key: 'all', label: 'Todas', kinds: [] as string[] },
-  { key: 'schedule', label: 'Horarios', kinds: ['late', 'absent', 'early_exit'] },
-  { key: 'cuts', label: 'Cortes', kinds: ['cut_difference', 'missing_cut'] },
-  { key: 'tasks', label: 'Tareas', kinds: ['task_incomplete'] },
-  { key: 'suppliers', label: 'Proveedores', kinds: ['supplier_difference'] },
+  { key: 'absent', label: 'Faltas', kinds: ['absent'] },
+  { key: 'time', label: 'Retardos y salidas', kinds: ['late', 'early_exit'] },
+  {
+    key: 'money',
+    label: 'Diferencias de dinero',
+    kinds: ['cut_difference', 'supplier_difference'],
+  },
+  { key: 'pending', label: 'Sin corte o tarea', kinds: ['missing_cut', 'task_incomplete'] },
 ];
 const alertKinds: Record<string, string> = {
   late: 'Llegó tarde',
@@ -291,6 +296,8 @@ const alertKinds: Record<string, string> = {
   task_incomplete: 'Tarea sin terminar',
   supplier_difference: 'Diferencia proveedores',
 };
+// Money and absences come first within each day; the rest is informative.
+const importantAlerts = ['absent', 'cut_difference', 'supplier_difference', 'missing_cut'];
 const alertIcons: Record<string, typeof Bell> = {
   late: Timer,
   absent: UserX,
@@ -300,31 +307,78 @@ const alertIcons: Record<string, typeof Bell> = {
   task_incomplete: ClipboardCheck,
   supplier_difference: Wallet,
 };
+// Where each notification comes from: the page that shows it and the link's text.
+const alertSources: Record<string, [string, string]> = {
+  late: ['Horarios', 'Ver horario'],
+  absent: ['Horarios', 'Ver horario'],
+  early_exit: ['Horarios', 'Ver horario'],
+  cut_difference: ['Cortes', 'Ver corte'],
+  missing_cut: ['Cortes', 'Ver cortes del día'],
+  task_incomplete: ['Gestionar tareas', 'Ver tareas del día'],
+  supplier_difference: ['Actividad caja proveedores', 'Ver caja de proveedores'],
+};
 function AlertsPanel({
   alerts,
   users,
   today,
   zone,
+  since,
   onRead,
+  onOpen,
 }: {
   alerts: any[];
   users: any[];
   today: string;
   zone: string;
+  // First date the other screens keep; older notifications have no link.
+  since?: string;
   onRead: (ids: string[]) => Promise<void>;
+  onOpen: (page: string, date: string) => void;
 }) {
-  const [group, setGroup] = useState('all'),
+  const [group, setGroup] = useState(''),
+    [person, setPerson] = useState(''),
+    [period, setPeriod] = useState('week'),
+    [from, setFrom] = useState(''),
+    [to, setTo] = useState(''),
     [busy, setBusy] = useState(false);
-  const kinds = alertGroups.find((g) => g.key === group)!.kinds;
-  const shown = alerts.filter((a) => !kinds.length || kinds.includes(a.kind));
-  const unread = alerts.filter((a) => !a.read_at);
-  // The list arrives newest first, so each day keeps that order.
+  const dateOf = (a: any) => localTime(a.occurred_at, zone).date;
+  const start =
+      period === 'today'
+        ? today
+        : period === 'week'
+          ? addDays(today, -6)
+          : period === 'range'
+            ? from && to && to < from
+              ? to
+              : from
+            : '',
+    end = period === 'range' ? (from && to && to < from ? from : to) : '';
+  // Person and dates narrow the summary; the tiles then choose the type.
+  const scoped = alerts.filter((a) => {
+    const date = dateOf(a);
+    return (!person || a.user_id === person) && (!start || date >= start) && (!end || date <= end);
+  });
+  const kinds = alertGroups.find((g) => g.key === group)?.kinds;
+  const shown = scoped.filter((a) => !kinds || kinds.includes(a.kind));
+  const unread = alerts.filter((a) => !a.read_at),
+    unreadShown = shown.filter((a) => !a.read_at),
+    hiddenUnread = unread.length - unreadShown.length;
+  const filtered = !!group || !!person || period !== 'all';
+  const people = users
+    .filter((u) => alerts.some((a) => a.user_id === u.id))
+    .sort((x, y) => x.name.localeCompare(y.name, 'es'));
+  const oldest = alerts.length ? dateOf(alerts.at(-1)) : today;
   const days: { date: string; items: any[] }[] = [];
   for (const a of shown) {
-    const date = localTime(a.occurred_at, zone).date;
+    const date = dateOf(a);
     if (days.at(-1)?.date === date) days.at(-1)!.items.push(a);
     else days.push({ date, items: [a] });
   }
+  // The list arrives newest first; within a day the important ones go first, keeping that order.
+  for (const d of days)
+    d.items.sort(
+      (x, y) => Number(importantAlerts.includes(y.kind)) - Number(importantAlerts.includes(x.kind)),
+    );
   const dayLabel = (date: string) =>
     date === today
       ? 'Hoy'
@@ -336,6 +390,11 @@ function AlertsPanel({
             month: 'long',
             timeZone: 'UTC',
           }).format(new Date(`${date}T12:00:00Z`));
+  const clear = () => {
+    setGroup('');
+    setPerson('');
+    setPeriod('all');
+  };
   async function read(ids: string[]) {
     setBusy(true);
     try {
@@ -353,31 +412,98 @@ function AlertsPanel({
           : 'Todo leído. Lo más reciente aparece primero.'
       }
     >
-      <div className="alert-toolbar">
-        <div className="alert-filters" role="group" aria-label="Filtrar notificaciones">
-          {alertGroups.map((g) => (
+      <div className="alert-summary" role="group" aria-label="Resumen y filtro por tipo">
+        {alertGroups.map((g) => {
+          const items = scoped.filter((a) => g.kinds.includes(a.kind));
+          const total = items.reduce((sum, a) => {
+            const amount = BigInt(a.amount_cents || 0);
+            return sum + (amount < 0n ? -amount : amount);
+          }, 0n);
+          return (
             <button
               key={g.key}
-              className={group === g.key ? 'primary' : 'secondary'}
+              className={`alert-tile alert-tile-${g.key}`}
               aria-pressed={group === g.key}
-              onClick={() => setGroup(g.key)}
+              onClick={() => setGroup(group === g.key ? '' : g.key)}
             >
-              {g.label}
-              <span className="count">
-                {alerts.filter((a) => !g.kinds.length || g.kinds.includes(a.kind)).length}
-              </span>
+              <strong>{items.length}</strong>
+              <span>{g.label}</span>
+              {g.key === 'money' && items.length > 0 && <small>{money(total)} en total</small>}
             </button>
-          ))}
+          );
+        })}
+      </div>
+      <div className="alert-toolbar">
+        <div className="cuts-range alert-range">
+          <label>
+            Persona
+            <select value={person} onChange={(e) => setPerson(e.target.value)}>
+              <option value="">Todo el personal</option>
+              {people.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Periodo
+            <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+              <option value="today">Hoy</option>
+              <option value="week">Últimos 7 días</option>
+              <option value="all">Todas las fechas</option>
+              <option value="range">Elegir fechas</option>
+            </select>
+          </label>
+          {period === 'range' && (
+            <>
+              <label>
+                Desde
+                <input
+                  type="date"
+                  value={from}
+                  min={oldest}
+                  max={today}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </label>
+              <label>
+                Hasta
+                <input
+                  type="date"
+                  value={to}
+                  min={oldest}
+                  max={today}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </label>
+            </>
+          )}
         </div>
         <button
           className="secondary"
-          disabled={busy || !unread.length}
-          onClick={() => read(unread.map((a) => a.id))}
+          disabled={busy || !unreadShown.length}
+          onClick={() => read(unreadShown.map((a) => a.id))}
         >
-          <CheckCheck size={16} /> Marcar todo como leído
+          <CheckCheck size={16} />{' '}
+          {filtered ? 'Marcar como leído lo que se muestra' : 'Marcar todo como leído'}
         </button>
       </div>
-      {!days.length && <Empty text="No hay notificaciones." />}
+      {hiddenUnread > 0 && (
+        <p className="alert-hidden">
+          {hiddenUnread === 1
+            ? 'Hay 1 notificación sin leer fuera de este filtro.'
+            : `Hay ${hiddenUnread} notificaciones sin leer fuera de este filtro.`}{' '}
+          <button className="link" onClick={clear}>
+            Ver todas
+          </button>
+        </p>
+      )}
+      {!days.length && (
+        <Empty
+          text={alerts.length ? 'No hay notificaciones con este filtro.' : 'No hay notificaciones.'}
+        />
+      )}
       {days.map((d) => (
         <section key={d.date} className="alert-day" aria-label={dayLabel(d.date)}>
           <h3>{dayLabel(d.date)}</h3>
@@ -387,10 +513,13 @@ function AlertsPanel({
               const name = users.find((u) => u.id === a.user_id)?.name;
               const named = name && a.message.startsWith(name);
               const amount = a.amount_cents == null ? null : BigInt(a.amount_cents);
+              const important = importantAlerts.includes(a.kind);
+              const source = alertSources[a.kind],
+                sourceDate = (a.business_date || '').slice(0, 10);
               return (
                 <li
                   key={a.id}
-                  className={`alert-card alert-${a.kind}${a.read_at ? '' : ' unread'}`}
+                  className={`alert-card alert-${a.kind}${a.read_at ? '' : ' unread'}${important ? ' important' : ''}`}
                 >
                   <span className="alert-icon" aria-hidden="true">
                     <Icon size={18} />
@@ -398,6 +527,7 @@ function AlertsPanel({
                   <div className="alert-body">
                     <span className="alert-kind">
                       {alertKinds[a.kind] || a.kind}
+                      {important && <b>Importante</b>}
                       {!a.read_at && <em>Nueva</em>}
                     </span>
                     <p>
@@ -410,6 +540,11 @@ function AlertsPanel({
                         a.message
                       )}
                     </p>
+                    {source && sourceDate && (!since || sourceDate >= since) && (
+                      <button className="link" onClick={() => onOpen(source[0], sourceDate)}>
+                        {source[1]} <ChevronRight size={14} />
+                      </button>
+                    )}
                   </div>
                   <div className="alert-side">
                     {amount != null && (
@@ -447,10 +582,13 @@ function CutsPanel({
   today,
   zone,
   registerCount,
+  initialDate,
   onManual,
 }: {
   cuts: any[];
   since?: string;
+  // Opened from a notification: starts on that day instead of yesterday.
+  initialDate?: string;
   users: any[];
   today: string;
   zone: string;
@@ -462,8 +600,8 @@ function CutsPanel({
   const people = users
     .filter((u) => u.active && !u.deleted_at && u.role !== 'superadmin')
     .sort((x, y) => x.name.localeCompare(y.name, 'es'));
-  const [from, setFrom] = useState(''),
-    [to, setTo] = useState('');
+  const [from, setFrom] = useState(initialDate || ''),
+    [to, setTo] = useState(initialDate || '');
   const ranged = !!from && !!to;
   const start = ranged ? (from <= to ? from : to) : yesterday,
     end = ranged ? (from <= to ? to : from) : yesterday;
@@ -699,7 +837,11 @@ export default function App() {
     [sessionEnd, setSessionEnd] = useState<number | null>(null),
     [openStaff, setOpenStaff] = useState<string | null>(null),
     [showTasks, setShowTasks] = useState(false),
-    [now, setNow] = useState(Date.now());
+    [now, setNow] = useState(Date.now()),
+    [jump, setJump] = useState<{ page: string; date: string } | null>(null);
+  useEffect(() => {
+    if (jump && jump.page !== page) setJump(null);
+  }, [page]);
   const currentScope = useRef({ user: user?.id, branch: branchId }),
     refreshGeneration = useRef(0);
   currentScope.current = { user: user?.id, branch: branchId };
@@ -991,6 +1133,8 @@ export default function App() {
   const managementNav = adminNav.filter(
     ([label]) => label !== 'Notificaciones' || user.role === 'superadmin',
   );
+  // A notification opened its source page on a date; leaving that page forgets it.
+  const jumpDate = (target: string) => (jump?.page === target ? jump.date : undefined);
   const unreadAlerts = (data?.alerts || []).filter((a: any) => !a.read_at).length;
   const isManagementPage =
     page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
@@ -1721,9 +1865,11 @@ export default function App() {
               {page === 'Actividad caja proveedores' && isAdmin && (
                 <SupplierDayActivity
                   data={data}
-                  date={date}
+                  date={jumpDate('Actividad caja proveedores') || date}
                   money={money}
-                  onBack={() => setPage('Inicio')}
+                  onBack={() =>
+                    setPage(jumpDate('Actividad caja proveedores') ? 'Notificaciones' : 'Inicio')
+                  }
                 />
               )}
               {page === 'Usuarios' && (
@@ -1842,7 +1988,8 @@ export default function App() {
                 <>
                   {isAdmin && page === 'Horarios' && (
                     <ScheduleBoard
-                      key={branchId}
+                      key={branchId + (jumpDate('Horarios') || '')}
+                      initialDate={jumpDate('Horarios')}
                       users={data.users}
                       schedules={data.schedules}
                       since={data.history_since}
@@ -1906,7 +2053,8 @@ export default function App() {
               )}
               {isAdmin && page === 'Gestionar tareas' && (
                 <TaskBoard
-                  key={branchId}
+                  key={branchId + (jumpDate('Gestionar tareas') || '')}
+                  initialDay={jumpDate('Gestionar tareas')}
                   items={data.task_setup || []}
                   tasks={data.tasks || []}
                   users={data.users || []}
@@ -2349,6 +2497,8 @@ export default function App() {
               )}
               {page === 'Cortes' && (
                 <CutsPanel
+                  key={jumpDate('Cortes') || 'cuts'}
+                  initialDate={jumpDate('Cortes')}
                   cuts={data.cuts}
                   since={data.history_since}
                   users={data.users}
@@ -2553,6 +2703,12 @@ export default function App() {
                   users={data.users || []}
                   today={date}
                   zone={b.timezone}
+                  since={data.history_since}
+                  onOpen={(target, day) => {
+                    setJump({ page: target, date: day });
+                    setPage(target);
+                    setMessage('');
+                  }}
                   onRead={async (ids) => {
                     try {
                       await request('/alerts/read', { ids, branch_id: branchId });
