@@ -253,20 +253,24 @@ function rememberedStore() {
     return '';
   }
 }
-function greetingFor(name: string, zone: string) {
+// "Buenas tardes, César": the home page shows only this, with the date on the right.
+function shortGreeting(name: string, zone: string) {
   const hour = Number(
     new Intl.DateTimeFormat('es-MX', { hour: 'numeric', hourCycle: 'h23', timeZone: zone }).format(
       new Date(),
     ),
   );
   const hello = hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  return `${hello}, ${name.trim().split(/\s+/)[0]}`;
+}
+function greetingFor(name: string, zone: string) {
   const today = new Intl.DateTimeFormat('es-MX', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     timeZone: zone,
   }).format(new Date());
-  return `${hello}, ${name.trim().split(/\s+/)[0]}. Hoy es ${today}.`;
+  return `${shortGreeting(name, zone)}. Hoy es ${today}.`;
 }
 const alertGroups = [
   { key: 'all', label: 'Todas', kinds: [] as string[] },
@@ -1134,25 +1138,40 @@ export default function App() {
           </div>
         </header>
         <main>
-          <div className="page-heading">
-            <div>
-              <span className="eyebrow">
-                {isManagementPage ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}
+          {registerChosen && b && page === 'Inicio' ? (
+            <div className="page-heading home-heading">
+              {/* The page name stays for screen readers; on screen only the greeting and date. */}
+              <h1 className="visually-hidden">Inicio</h1>
+              <p className="greeting">{shortGreeting(user.name, b.timezone)}</p>
+              <span className="today-label">
+                {new Intl.DateTimeFormat('es-MX', {
+                  day: 'numeric',
+                  month: 'long',
+                  timeZone: b.timezone,
+                }).format(new Date(now))}
               </span>
-              <h1>{!registerChosen ? 'Selecciona la caja en la que estás' : page}</h1>
-              {registerChosen && b && (page === 'Horario' || page === 'Inicio') ? (
-                <p className="greeting">{greetingFor(user.name, b.timezone)}</p>
-              ) : (
-                <p>{meta[page]}</p>
-              )}
             </div>
-            <span className="date-label">
-              {new Intl.DateTimeFormat('es-MX', {
-                dateStyle: 'medium',
-                timeZone: b?.timezone || 'America/Chihuahua',
-              }).format(new Date())}
-            </span>
-          </div>
+          ) : (
+            <div className="page-heading">
+              <div>
+                <span className="eyebrow">
+                  {isManagementPage ? 'ADMINISTRACIÓN' : 'OPERACIÓN DIARIA'}
+                </span>
+                <h1>{!registerChosen ? 'Selecciona la caja en la que estás' : page}</h1>
+                {registerChosen && b && (page === 'Horario' || page === 'Inicio') ? (
+                  <p className="greeting">{greetingFor(user.name, b.timezone)}</p>
+                ) : (
+                  <p>{meta[page]}</p>
+                )}
+              </div>
+              <span className="date-label">
+                {new Intl.DateTimeFormat('es-MX', {
+                  dateStyle: 'medium',
+                  timeZone: b?.timezone || 'America/Chihuahua',
+                }).format(new Date())}
+              </span>
+            </div>
+          )}
           {message && (
             <div className="notice" role="status">
               {message}

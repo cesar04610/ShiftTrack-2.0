@@ -360,6 +360,26 @@ main {
   font-size: 12px;
   margin: 0;
 }
+.home-heading {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.home-heading .today-label {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .date-label {
   font-size: 11px;
   color: #8c97a7;
