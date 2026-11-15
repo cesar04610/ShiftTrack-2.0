@@ -384,7 +384,7 @@ test('administradores pueden registrar entrada, corte y pagos; caja normal no au
     2,
   );
 });
-test('Alertas corresponde al súper administrador y el administrador no las recibe', async () => {
+test('Notificaciones corresponde al súper administrador y el administrador no las recibe', async () => {
   const snapshot = (await call(`/snapshot?branch_id=${branch}`)).body;
   a.deepEqual(snapshot.alerts, []);
   a.equal(snapshot.alert_settings, undefined);
@@ -394,6 +394,153 @@ test('Alertas corresponde al súper administrador y el administrador no las reci
     body: JSON.stringify({ branch_id: branch }),
   });
   a.equal(removed.status, 404);
+});
+test('Notificaciones: solo el súper administrador las marca como leídas, dentro de su sucursal', async () => {
+  const mine = randomUUID(),
+    second = randomUUID(),
+    foreign = randomUUID();
+  for (const [branchId, id] of [
+    [branch, mine],
+    [branch, second],
+    [other, foreign],
+  ])
+    await sql.query(
+      "INSERT INTO alert_log(branch_id,id,kind,message,source_key) VALUES($1,$2,'absent','Aviso de prueba',$3)",
+      [branchId, id, `prueba:${id}`],
+    );
+  const read = async (id: string) =>
+    (await sql.query('SELECT read_at FROM alert_log WHERE id=$1', [id])).rows[0].read_at;
+  a.equal((await call('/alerts/read', { branch_id: branch, ids: [mine] })).status, 403);
+  a.equal(await read(mine), null);
+  const marked = await call(
+    '/alerts/read',
+    { branch_id: branch, ids: [mine, foreign] },
+    'superadmin',
+  );
+  a.equal(marked.status, 200);
+  a.equal(marked.body.marked, 1);
+  a.ok(await read(mine));
+  a.equal(await read(second), null);
+  a.equal(await read(foreign), null);
+  const snapshot = (await call(`/snapshot?branch_id=${branch}`, undefined, 'superadmin')).body;
+  const seen = (id: string) => snapshot.alerts.find((x: any) => x.id === id);
+  a.ok(seen(mine).read_at);
+  a.equal(seen(second).read_at, null);
+  a.equal(seen(foreign), undefined);
+  // Marking again keeps the first date.
+  const first = await read(mine);
+  a.equal(
+    (await call('/alerts/read', { branch_id: branch, ids: [mine] }, 'superadmin')).body.marked,
+    0,
+  );
+  a.deepEqual(await read(mine), first);
+});
+test('Notificaciones: 10 primero, luego de 100 en 100, con filtros y leído por filtro', async () => {
+  const person = people.employee.id;
+  const kinds = ['late', 'absent', 'cut_difference', 'task_incomplete', 'supplier_difference'];
+  const ids: string[] = [];
+  // 125 notifications for one person, one minute apart; the last 25 happened 10 days ago.
+  for (let i = 0; i < 125; i++) {
+    const id = randomUUID();
+    ids.push(id);
+    const kind = kinds[i % kinds.length];
+    await sql.query(
+      `INSERT INTO alert_log(branch_id,id,kind,user_id,message,amount_cents,source_key,occurred_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,now()-make_interval(mins=>$8)-make_interval(days=>$9))`,
+      [
+        branch,
+        id,
+        kind,
+        person,
+        `Aviso ${i}`,
+        kind.endsWith('difference') ? (i % 2 ? -3000 : 4000) : null,
+        `pagina:${id}`,
+        i,
+        i >= 100 ? 10 : 0,
+      ],
+    );
+  }
+  const list = (query: string, role = 'superadmin') =>
+    call(`/alerts?branch_id=${branch}&user_id=${person}${query}`, undefined, role);
+  a.equal((await list('', 'admin')).status, 403);
+  const first = await list('');
+  a.equal(first.status, 200);
+  a.deepEqual(
+    first.body.items.map((x: any) => x.id),
+    ids.slice(0, 10),
+  );
+  a.equal(first.body.total, 125);
+  a.equal(first.body.unread_filtered, 125);
+  a.ok(first.body.next);
+  a.deepEqual(first.body.people, [person]);
+  a.deepEqual(first.body.summary, {
+    absent: 25,
+    time: 25,
+    money: 50,
+    money_cents: '176000',
+    pending: 25,
+  });
+  const second = await list(`&limit=100&before=${encodeURIComponent(first.body.next)}`);
+  a.deepEqual(
+    second.body.items.map((x: any) => x.id),
+    ids.slice(10, 110),
+  );
+  const third = await list(`&limit=100&before=${encodeURIComponent(second.body.next)}`);
+  a.deepEqual(
+    third.body.items.map((x: any) => x.id),
+    ids.slice(110),
+  );
+  a.equal(third.body.next, null);
+  // The type narrows the list; person and dates narrow the summary as well.
+  const money = await list('&group=money&limit=100');
+  a.equal(money.body.total, 50);
+  a.ok(money.body.items.every((x: any) => x.kind.endsWith('difference')));
+  a.equal(money.body.summary.absent, 25);
+  const zone = (await sql.query('SELECT timezone FROM branches WHERE id=$1', [branch])).rows[0]
+    .timezone;
+  const old = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(
+    new Date(Date.now() - 10 * 86_400_000),
+  );
+  const dated = await list(`&from=${old}&to=${old}&limit=100`);
+  a.equal(dated.body.total, 25);
+  a.deepEqual(
+    dated.body.items.map((x: any) => x.id),
+    ids.slice(100),
+  );
+  a.equal(dated.body.summary.absent, 5);
+  a.equal((await list('&before=nada')).status, 400);
+  a.equal((await list('&limit=101')).status, 400);
+  // Another branch sees none of them.
+  const foreign = await call(
+    `/alerts?branch_id=${other}&user_id=${person}`,
+    undefined,
+    'superadmin',
+  );
+  a.equal(foreign.body.total, 0);
+  // Marking everything filtered reaches the notifications not loaded yet, and nothing else.
+  const marked = await call(
+    '/alerts/read',
+    { branch_id: branch, all: true, user_id: person, group: 'money' },
+    'superadmin',
+  );
+  a.equal(marked.body.marked, 50);
+  const after = await list('');
+  a.equal(after.body.unread_filtered, 75);
+  a.equal((await list('&group=money')).body.unread_filtered, 0);
+  a.equal((await call('/alerts/read', { branch_id: branch, all: true }, 'admin')).status, 403);
+  // The snapshot only carries the 10 newest and the unread count for the menu.
+  const snapshot = (await call(`/snapshot?branch_id=${branch}`, undefined, 'superadmin')).body;
+  a.equal(snapshot.alerts.length, 10);
+  a.equal(
+    snapshot.alerts_unread,
+    (
+      await sql.query(
+        'SELECT count(*)::int n FROM alert_log WHERE branch_id=$1 AND read_at IS NULL',
+        [branch],
+      )
+    ).rows[0].n,
+  );
+  a.equal((await call(`/snapshot?branch_id=${branch}`)).body.alerts_unread, undefined);
 });
 test('pizarra conserva el lugar exacto de cada ficha dentro del turno', async () => {
   const date = '2026-11-09';

@@ -21,6 +21,11 @@ import {
   Menu,
   ShoppingCart,
   Package,
+  Bell,
+  CheckCheck,
+  UserX,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import {
   money,
@@ -272,12 +277,16 @@ function greetingFor(name: string, zone: string) {
   }).format(new Date());
   return `${shortGreeting(name, zone)}. Hoy es ${today}.`;
 }
+// The summary tiles are also the type filter.
 const alertGroups = [
-  { key: 'all', label: 'Todas', kinds: [] as string[] },
-  { key: 'schedule', label: 'Horarios', kinds: ['late', 'absent', 'early_exit'] },
-  { key: 'cuts', label: 'Cortes', kinds: ['cut_difference', 'missing_cut'] },
-  { key: 'tasks', label: 'Tareas', kinds: ['task_incomplete'] },
-  { key: 'suppliers', label: 'Proveedores', kinds: ['supplier_difference'] },
+  { key: 'absent', label: 'Faltas', kinds: ['absent'] },
+  { key: 'time', label: 'Retardos y salidas', kinds: ['late', 'early_exit'] },
+  {
+    key: 'money',
+    label: 'Diferencias de dinero',
+    kinds: ['cut_difference', 'supplier_difference'],
+  },
+  { key: 'pending', label: 'Sin corte o tarea', kinds: ['missing_cut', 'task_incomplete'] },
 ];
 const alertKinds: Record<string, string> = {
   late: 'Llegó tarde',
@@ -288,40 +297,400 @@ const alertKinds: Record<string, string> = {
   task_incomplete: 'Tarea sin terminar',
   supplier_difference: 'Diferencia proveedores',
 };
-function AlertsPanel({ alerts, zone }: { alerts: any[]; zone: string }) {
-  const [group, setGroup] = useState('all');
-  const kinds = alertGroups.find((g) => g.key === group)!.kinds;
-  const shown = alerts.filter((a) => !kinds.length || kinds.includes(a.kind));
+// Money and absences come first within each day; the rest is informative.
+const importantAlerts = ['absent', 'cut_difference', 'supplier_difference', 'missing_cut'];
+const alertIcons: Record<string, typeof Bell> = {
+  late: Timer,
+  absent: UserX,
+  early_exit: LogOut,
+  cut_difference: Receipt,
+  missing_cut: Receipt,
+  task_incomplete: ClipboardCheck,
+  supplier_difference: Wallet,
+};
+// Where each notification comes from: the page that shows it and the link's text.
+const alertSources: Record<string, [string, string]> = {
+  late: ['Horarios', 'Ver horario'],
+  absent: ['Horarios', 'Ver horario'],
+  early_exit: ['Horarios', 'Ver horario'],
+  cut_difference: ['Cortes', 'Ver corte'],
+  missing_cut: ['Cortes', 'Ver cortes del día'],
+  task_incomplete: ['Gestionar tareas', 'Ver tareas del día'],
+  supplier_difference: ['Actividad caja proveedores', 'Ver caja de proveedores'],
+};
+// The screen opens with the 10 newest and each "Mostrar más" brings the next 100.
+const FIRST_ALERTS = 10,
+  MORE_ALERTS = 100;
+type AlertPage = {
+  items: any[];
+  next: string | null;
+  total: number;
+  unread: number;
+  unread_filtered: number;
+  people: string[];
+  summary: Record<string, number | string>;
+};
+function AlertsPanel({
+  branchId,
+  saved,
+  latest,
+  users,
+  today,
+  zone,
+  since,
+  onRead,
+  onOpen,
+}: {
+  branchId: string;
+  // The newest notifications kept on this device, shown when there is no connection.
+  saved: any[];
+  // Newest notification in the last snapshot: when it changes, the list starts again.
+  latest?: string;
+  users: any[];
+  today: string;
+  zone: string;
+  // First date the other screens keep; older notifications have no link.
+  since?: string;
+  onRead: () => Promise<void>;
+  onOpen: (page: string, date: string) => void;
+}) {
+  const [group, setGroup] = useState(''),
+    [person, setPerson] = useState(''),
+    [period, setPeriod] = useState('all'),
+    [from, setFrom] = useState(''),
+    [to, setTo] = useState(''),
+    [result, setResult] = useState<AlertPage | null>(null),
+    [offline, setOffline] = useState(false),
+    [loading, setLoading] = useState(false),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  const start =
+      period === 'today'
+        ? today
+        : period === 'week'
+          ? addDays(today, -6)
+          : period === 'range'
+            ? from && to && to < from
+              ? to
+              : from
+            : '',
+    end =
+      period === 'today' || period === 'week'
+        ? today
+        : period === 'range'
+          ? from && to && to < from
+            ? from
+            : to
+          : '';
+  const filter: Record<string, string> = {};
+  if (person) filter.user_id = person;
+  if (start) filter.from = start;
+  if (end) filter.to = end;
+  if (group) filter.group = group;
+  const filterKey = JSON.stringify(filter);
+  const query = (extra: Record<string, string>) =>
+    `/alerts?${new URLSearchParams({ branch_id: branchId, ...filter, ...extra })}`;
+  function failed(e: unknown) {
+    if (e instanceof ApiError && e.code === 'NETWORK') setOffline(true);
+    else setError(e instanceof Error ? e.message : String(e));
+  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    request(query({ limit: String(FIRST_ALERTS) }))
+      .then((r) => {
+        if (cancelled) return;
+        setResult(r);
+        setOffline(false);
+      })
+      .catch((e) => !cancelled && failed(e))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, filterKey, latest]);
+  async function more() {
+    if (!result?.next) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r: AlertPage = await request(
+        query({ limit: String(MORE_ALERTS), before: result.next }),
+      );
+      // A page that arrives after the filter changed belongs to another list.
+      setResult((current) =>
+        current && current.next === result.next
+          ? { ...r, items: [...current.items, ...r.items] }
+          : current,
+      );
+    } catch (e) {
+      failed(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function read(ids?: string[]) {
+    setBusy(true);
+    setError('');
+    try {
+      const { marked } = await request(
+        '/alerts/read',
+        ids ? { ids, branch_id: branchId } : { ...filter, all: true, branch_id: branchId },
+      );
+      const at = new Date().toISOString();
+      setResult(
+        (current) =>
+          current && {
+            ...current,
+            items: current.items.map((a) =>
+              !a.read_at && (!ids || ids.includes(a.id)) ? { ...a, read_at: at } : a,
+            ),
+            unread: Math.max(0, current.unread - marked),
+            unread_filtered: Math.max(0, current.unread_filtered - marked),
+          },
+      );
+      await onRead();
+    } catch (e) {
+      failed(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const items = offline ? saved : result?.items || [];
+  const filtered = !!group || !!person || period !== 'all';
+  const hiddenUnread = offline || !result ? 0 : result.unread - result.unread_filtered;
+  const people = users
+    .filter((u) => result?.people.includes(u.id))
+    .sort((x, y) => x.name.localeCompare(y.name, 'es'));
+  const days: { date: string; items: any[] }[] = [];
+  for (const a of items) {
+    const date = localTime(a.occurred_at, zone).date;
+    if (days.at(-1)?.date === date) days.at(-1)!.items.push(a);
+    else days.push({ date, items: [a] });
+  }
+  // The list arrives newest first; within a day the important ones go first, keeping that order.
+  for (const d of days)
+    d.items = [
+      ...d.items.filter((a) => importantAlerts.includes(a.kind)),
+      ...d.items.filter((a) => !importantAlerts.includes(a.kind)),
+    ];
+  const dayLabel = (date: string) =>
+    date === today
+      ? 'Hoy'
+      : date === addDays(today, -1)
+        ? 'Ayer'
+        : new Intl.DateTimeFormat('es-MX', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: 'UTC',
+          }).format(new Date(`${date}T12:00:00Z`));
+  const clear = () => {
+    setGroup('');
+    setPerson('');
+    setPeriod('all');
+  };
+  const unread = offline ? saved.filter((a) => !a.read_at).length : result?.unread || 0;
+  const remaining = result ? result.total - result.items.length : 0;
   return (
     <Card
       title="Estado de la tienda"
-      subtitle="Registro de lo que requiere tu atención, del más reciente al más antiguo"
+      subtitle={
+        unread
+          ? `${unread} sin leer. Lo más reciente aparece primero.`
+          : 'Todo leído. Lo más reciente aparece primero.'
+      }
     >
-      <div className="alert-filters" role="group" aria-label="Filtrar alertas">
-        {alertGroups.map((g) => (
-          <button
-            key={g.key}
-            className={group === g.key ? 'primary' : 'secondary'}
-            aria-pressed={group === g.key}
-            onClick={() => setGroup(g.key)}
-          >
-            {g.label}
-            <span className="count">
-              {alerts.filter((a) => !g.kinds.length || g.kinds.includes(a.kind)).length}
-            </span>
-          </button>
-        ))}
-      </div>
-      <Table
-        headers={['Fecha', 'Tipo', 'Detalle']}
-        rows={shown.map((a) => [
-          time(a.occurred_at, zone),
-          <span key={a.id} className={`badge alert-${a.kind}`}>
-            {alertKinds[a.kind] || a.kind}
-          </span>,
-          a.message,
-        ])}
-      />
+      {offline && (
+        <p className="alert-hidden">
+          Sin conexión: se muestran las {saved.length} notificaciones más recientes guardadas en
+          este equipo. Conéctate para filtrar, ver más o marcarlas como leídas.
+        </p>
+      )}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {!offline && (
+        <>
+          <div className="alert-summary" role="group" aria-label="Resumen y filtro por tipo">
+            {alertGroups.map((g) => {
+              const count = Number(result?.summary[g.key] || 0);
+              return (
+                <button
+                  key={g.key}
+                  className={`alert-tile alert-tile-${g.key}`}
+                  aria-pressed={group === g.key}
+                  onClick={() => setGroup(group === g.key ? '' : g.key)}
+                >
+                  <strong>{count}</strong>
+                  <span>{g.label}</span>
+                  {g.key === 'money' && count > 0 && (
+                    <small>{money(String(result!.summary.money_cents))} en total</small>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="alert-toolbar">
+            <div className="cuts-range alert-range">
+              <label>
+                Persona
+                <select value={person} onChange={(e) => setPerson(e.target.value)}>
+                  <option value="">Todo el personal</option>
+                  {people.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Periodo
+                <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+                  <option value="all">Todas las fechas</option>
+                  <option value="today">Hoy</option>
+                  <option value="week">Últimos 7 días</option>
+                  <option value="range">Elegir fechas</option>
+                </select>
+              </label>
+              {period === 'range' && (
+                <>
+                  <label>
+                    Desde
+                    <input
+                      type="date"
+                      value={from}
+                      max={today}
+                      onChange={(e) => setFrom(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Hasta
+                    <input
+                      type="date"
+                      value={to}
+                      max={today}
+                      onChange={(e) => setTo(e.target.value)}
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+            <button
+              className="secondary"
+              disabled={busy || !result?.unread_filtered}
+              onClick={() => read()}
+            >
+              <CheckCheck size={16} />{' '}
+              {filtered ? 'Marcar como leído todo lo filtrado' : 'Marcar todo como leído'}
+            </button>
+          </div>
+          {hiddenUnread > 0 && (
+            <p className="alert-hidden">
+              {hiddenUnread === 1
+                ? 'Hay 1 notificación sin leer fuera de este filtro.'
+                : `Hay ${hiddenUnread} notificaciones sin leer fuera de este filtro.`}{' '}
+              <button className="link" onClick={clear}>
+                Ver todas
+              </button>
+            </p>
+          )}
+        </>
+      )}
+      {!days.length && !loading && !error && (
+        <Empty
+          text={
+            filtered && !offline
+              ? 'No hay notificaciones con este filtro.'
+              : 'No hay notificaciones.'
+          }
+        />
+      )}
+      {!days.length && loading && <p className="muted">Cargando notificaciones…</p>}
+      {days.map((d) => (
+        <section key={d.date} className="alert-day" aria-label={dayLabel(d.date)}>
+          <h3>{dayLabel(d.date)}</h3>
+          <ul>
+            {d.items.map((a) => {
+              const Icon = alertIcons[a.kind] || Bell;
+              const name = users.find((u) => u.id === a.user_id)?.name;
+              const named = name && a.message.startsWith(name);
+              const amount = a.amount_cents == null ? null : BigInt(a.amount_cents);
+              const important = importantAlerts.includes(a.kind);
+              const source = alertSources[a.kind],
+                sourceDate = (a.business_date || '').slice(0, 10);
+              return (
+                <li
+                  key={a.id}
+                  className={`alert-card alert-${a.kind}${a.read_at ? '' : ' unread'}${important ? ' important' : ''}`}
+                >
+                  <span className="alert-icon" aria-hidden="true">
+                    <Icon size={18} />
+                  </span>
+                  <div className="alert-body">
+                    <span className="alert-kind">
+                      {alertKinds[a.kind] || a.kind}
+                      {important && <b>Importante</b>}
+                      {!a.read_at && <em>Nueva</em>}
+                    </span>
+                    <p>
+                      {named ? (
+                        <>
+                          <strong>{name}</strong>
+                          {a.message.slice(name.length)}
+                        </>
+                      ) : (
+                        a.message
+                      )}
+                    </p>
+                    {source && sourceDate && (!since || sourceDate >= since) && (
+                      <button className="link" onClick={() => onOpen(source[0], sourceDate)}>
+                        {source[1]} <ChevronRight size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="alert-side">
+                    {amount != null && (
+                      <strong className="alert-amount">
+                        {amount < 0n ? '−' : '+'}
+                        {money(amount < 0n ? -amount : amount)}
+                      </strong>
+                    )}
+                    <time dateTime={a.occurred_at}>{clockHour(a.occurred_at, zone)}</time>
+                  </div>
+                  {!a.read_at && !offline && (
+                    <button
+                      className="secondary alert-read"
+                      disabled={busy}
+                      aria-label={`Marcar como leída: ${a.message}`}
+                      title="Marcar como leída"
+                      onClick={() => read([a.id])}
+                    >
+                      <Check size={16} />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+      {!offline && result && result.items.length > 0 && (
+        <div className="alert-more">
+          <span className="muted">
+            Mostrando {result.items.length} de {result.total}
+          </span>
+          {result.next && (
+            <button className="secondary" disabled={loading} onClick={more}>
+              <ChevronDown size={16} />
+              {loading ? 'Cargando…' : `Mostrar ${Math.min(MORE_ALERTS, remaining)} más`}
+            </button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -332,10 +701,13 @@ function CutsPanel({
   today,
   zone,
   registerCount,
+  initialDate,
   onManual,
 }: {
   cuts: any[];
   since?: string;
+  // Opened from a notification: starts on that day instead of yesterday.
+  initialDate?: string;
   users: any[];
   today: string;
   zone: string;
@@ -347,8 +719,8 @@ function CutsPanel({
   const people = users
     .filter((u) => u.active && !u.deleted_at && u.role !== 'superadmin')
     .sort((x, y) => x.name.localeCompare(y.name, 'es'));
-  const [from, setFrom] = useState(''),
-    [to, setTo] = useState('');
+  const [from, setFrom] = useState(initialDate || ''),
+    [to, setTo] = useState(initialDate || '');
   const ranged = !!from && !!to;
   const start = ranged ? (from <= to ? from : to) : yesterday,
     end = ranged ? (from <= to ? to : from) : yesterday;
@@ -537,7 +909,7 @@ const adminNav = [
   ['Horarios', CalendarDays],
   ['Gestionar tareas', ClipboardCheck],
   ['Reportes', BarChart3],
-  ['Alertas', BarChart3],
+  ['Notificaciones', Bell],
   ['Productos', Package],
   ['Cortes', Receipt],
   ['Caja general', Wallet],
@@ -584,7 +956,11 @@ export default function App() {
     [sessionEnd, setSessionEnd] = useState<number | null>(null),
     [openStaff, setOpenStaff] = useState<string | null>(null),
     [showTasks, setShowTasks] = useState(false),
-    [now, setNow] = useState(Date.now());
+    [now, setNow] = useState(Date.now()),
+    [jump, setJump] = useState<{ page: string; date: string } | null>(null);
+  useEffect(() => {
+    if (jump && jump.page !== page) setJump(null);
+  }, [page]);
   const currentScope = useRef({ user: user?.id, branch: branchId }),
     refreshGeneration = useRef(0);
   currentScope.current = { user: user?.id, branch: branchId };
@@ -874,8 +1250,12 @@ export default function App() {
         (prepared && registerNumber === data?.branch.supplier_register)),
   );
   const managementNav = adminNav.filter(
-    ([label]) => label !== 'Alertas' || user.role === 'superadmin',
+    ([label]) => label !== 'Notificaciones' || user.role === 'superadmin',
   );
+  // A notification opened its source page on a date; leaving that page forgets it.
+  const jumpDate = (target: string) => (jump?.page === target ? jump.date : undefined);
+  const unreadAlerts: number =
+    data?.alerts_unread ?? (data?.alerts || []).filter((a: any) => !a.read_at).length;
   const isManagementPage =
     page === 'Nuevo usuario' || managementNav.some(([label]) => label === page);
   const b = data?.branch,
@@ -978,6 +1358,14 @@ export default function App() {
                 {user.role === 'superadmin'
                   ? 'Menú de súper administrador'
                   : 'Menú de administrador'}
+                {!adminMenuOpen && unreadAlerts > 0 && (
+                  <span
+                    className="nav-count"
+                    aria-label={`${unreadAlerts} notificaciones sin leer`}
+                  >
+                    {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                  </span>
+                )}
               </button>
               {adminMenuOpen && (
                 <nav aria-label="Administración">
@@ -997,6 +1385,11 @@ export default function App() {
                     >
                       <Icon size={18} />
                       {label}
+                      {label === 'Notificaciones' && unreadAlerts > 0 && (
+                        <span className="nav-count" aria-label={`${unreadAlerts} sin leer`}>
+                          {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </nav>
@@ -1592,9 +1985,11 @@ export default function App() {
               {page === 'Actividad caja proveedores' && isAdmin && (
                 <SupplierDayActivity
                   data={data}
-                  date={date}
+                  date={jumpDate('Actividad caja proveedores') || date}
                   money={money}
-                  onBack={() => setPage('Inicio')}
+                  onBack={() =>
+                    setPage(jumpDate('Actividad caja proveedores') ? 'Notificaciones' : 'Inicio')
+                  }
                 />
               )}
               {page === 'Usuarios' && (
@@ -1713,7 +2108,8 @@ export default function App() {
                 <>
                   {isAdmin && page === 'Horarios' && (
                     <ScheduleBoard
-                      key={branchId}
+                      key={branchId + (jumpDate('Horarios') || '')}
+                      initialDate={jumpDate('Horarios')}
                       users={data.users}
                       schedules={data.schedules}
                       since={data.history_since}
@@ -1777,7 +2173,8 @@ export default function App() {
               )}
               {isAdmin && page === 'Gestionar tareas' && (
                 <TaskBoard
-                  key={branchId}
+                  key={branchId + (jumpDate('Gestionar tareas') || '')}
+                  initialDay={jumpDate('Gestionar tareas')}
                   items={data.task_setup || []}
                   tasks={data.tasks || []}
                   users={data.users || []}
@@ -2220,6 +2617,8 @@ export default function App() {
               )}
               {page === 'Cortes' && (
                 <CutsPanel
+                  key={jumpDate('Cortes') || 'cuts'}
+                  initialDate={jumpDate('Cortes')}
                   cuts={data.cuts}
                   since={data.history_since}
                   users={data.users}
@@ -2418,7 +2817,23 @@ export default function App() {
                   onError={notify}
                 />
               )}
-              {page === 'Alertas' && <AlertsPanel alerts={data.alerts || []} zone={b.timezone} />}
+              {page === 'Notificaciones' && (
+                <AlertsPanel
+                  branchId={branchId}
+                  saved={data.alerts || []}
+                  latest={data.alerts?.[0]?.id}
+                  users={data.users || []}
+                  today={date}
+                  zone={b.timezone}
+                  since={data.history_since}
+                  onOpen={(target, day) => {
+                    setJump({ page: target, date: day });
+                    setPage(target);
+                    setMessage('');
+                  }}
+                  onRead={() => refresh().catch(notify)}
+                />
+              )}
               {page === 'Configuración' && (
                 <>
                   {user.role === 'superadmin' ? (
