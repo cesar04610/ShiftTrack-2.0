@@ -1,12 +1,12 @@
 # Estado y limitaciones
 
-Mostrador 2.0 incluye usuarios por sucursal, cajas, cortes, proveedores, importación de proveedores desde Excel, ventas de respaldo con catálogo importado de SICAR, asistencia, horarios, tareas, reportes, métricas de ventas, compras, proveedores, empleados y rentabilidad, alertas y operación offline. Consulta las reglas en el [README](../README.md).
+Mostrador 2.0 incluye usuarios por sucursal, cajas, cortes, proveedores, importación de proveedores desde Excel, ventas de respaldo con catálogo importado de SICAR, asistencia, horarios, tareas, reportes, métricas de ventas, compras, proveedores, empleados, rentabilidad y control de efectivo, alertas y operación offline. Consulta las reglas en el [README](../README.md).
 
 Las sesiones online vencen a las nueve horas. Las concesiones offline nuevas no vencen por tiempo. La exclusividad de caja solo puede comprobarse con conexión. Los pendientes y conflictos se conservan para revisión; la descarga de pendientes no incluye fotografías.
 
 Las ventas de respaldo (migración 018) cubren la venta en caja cuando SICAR falla: no llevan inventario, no imprimen ticket, no permiten cancelar una venta cobrada y no aparecen todavía en Reportes ni en su Excel; se consultan por día en Productos. La lectura del `.xls` se verificó contra una exportación real de SICAR de 3,996 artículos; si SICAR cambia el formato de su exportación, la importación lo rechaza con un mensaje y hay que ajustar `apps/api/src/sales.ts`. Las tasas de IVA (16%) e IEPS (8%) son fijas: un artículo con otra tasa de IEPS queda con el precio que da el 8% y aparece en la vista previa si no cierra en .00 o .50.
 
-Métricas cubre por ahora ventas, compras, proveedores, empleados y rentabilidad (`GET /api/v1/metrics`, sin migraciones). No hay métricas de productos ni de hora pico: el detalle por producto y hora solo existe en las ventas de respaldo, y SICAR no envía costos. No tiene descarga de Excel. Faltan control de efectivo, comparación entre sucursales y tendencia de alertas.
+Métricas cubre por ahora ventas, compras, proveedores, empleados, rentabilidad y control de efectivo (`GET /api/v1/metrics`, sin migraciones). No hay métricas de productos ni de hora pico: el detalle por producto y hora solo existe en las ventas de respaldo, y SICAR no envía costos. No tiene descarga de Excel. Faltan comparación entre sucursales y tendencia de alertas.
 
 Las fotografías confirmadas se eliminan automáticamente después de 30 días. Deben verificarse los respaldos de PostgreSQL y del volumen y ensayarse su restauración antes de depender de ellos. La pérdida del dispositivo o del perfil del navegador puede hacer perder datos offline pendientes.
 

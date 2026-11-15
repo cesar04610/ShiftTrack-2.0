@@ -195,6 +195,15 @@ before(async () => {
      VALUES($1,$2,$3,'refund',5000,0,5000,'Devolución',$4,'2026-03-03T19:00:00Z')`,
     [branch, randomUUID(), corrected, adminId],
   );
+  // Cierres de la caja de proveedores: faltan $20 el 3 y sobran $10 el 4. El turno abierto del
+  // 25 de febrero no cuenta.
+  await db.query(
+    `INSERT INTO supplier_shifts(branch_id,id,actor_user_id,business_date,opened_at,closed_at,opening_cents,
+       expected_cents,counted_cents,difference_cents) VALUES
+       ($1,gen_random_uuid(),$2,'2026-03-03','2026-03-03T14:00:00Z','2026-03-03T22:00:00Z',0,10000,8000,-2000),
+       ($1,gen_random_uuid(),$3,'2026-03-04','2026-03-04T14:00:00Z','2026-03-04T22:00:00Z',0,10000,11000,1000)`,
+    [branch, employeeId, adminId],
+  );
   // Caja general: un gasto extraordinario en el periodo, uno en el anterior y un ajuste que no
   // es gasto.
   await db.query(
@@ -438,6 +447,60 @@ test('métricas de rentabilidad: gastos extraordinarios de Caja general', async 
     Number(r.body.purchases.totals.net_cents) -
     Number(x.totals.amount_cents);
   a.equal(result, 173_000);
+});
+
+test('métricas de control de efectivo: faltantes y sobrantes por separado', async () => {
+  const r = await get(`/metrics?branch_id=${branch}&from=2026-03-01&to=2026-03-07`);
+  const c = r.body.cash;
+  const m = (x: any) => [x.counts, x.short, x.short_cents, x.over, x.over_cents];
+  a.deepEqual(m(c.totals.cut), [3, 1, '5000', 0, '0']);
+  a.deepEqual(m(c.totals.supplier), [2, 1, '2000', 1, '1000']);
+  a.deepEqual(
+    c.by_day.map((d: any) => [d.date, ...m(d)]),
+    [
+      ['2026-03-02', 2, 1, '5000', 0, '0'],
+      ['2026-03-03', 1, 1, '2000', 0, '0'],
+      ['2026-03-04', 2, 0, '0', 1, '1000'],
+    ],
+  );
+  const person = (id: string) => c.by_person.find((p: any) => p.user_id === id);
+  a.deepEqual(
+    [m(person(employeeId).cut), m(person(employeeId).supplier)],
+    [
+      [2, 1, '5000', 0, '0'],
+      [1, 1, '2000', 0, '0'],
+    ],
+  );
+  a.deepEqual(
+    [m(person(adminId).cut), m(person(adminId).supplier)],
+    [
+      [1, 0, '0', 0, '0'],
+      [1, 0, '0', 1, '1000'],
+    ],
+  );
+  a.deepEqual(
+    c.by_register.map((x: any) => [x.register, ...m(x)]),
+    [
+      ['1', 2, 0, '0', 0, '0'],
+      ['2', 1, 1, '5000', 0, '0'],
+      ['supplier', 2, 1, '2000', 1, '1000'],
+    ],
+  );
+  a.deepEqual(
+    c.by_shift.map((x: any) => [x.label, ...m(x)]),
+    [
+      ['Mañana', 2, 0, '0', 0, '0'],
+      ['Tarde', 1, 1, '5000', 0, '0'],
+    ],
+  );
+  a.equal(c.totals.adjustments, 1);
+  a.equal(c.totals.adjustments_cash_cents, '-500');
+  a.deepEqual(
+    c.adjustments.map((x: any) => [x.date, x.kind, x.note, x.cash_cents]),
+    [['2026-03-03', 'cash_adjustment', 'Ajuste', '-500']],
+  );
+  // En el periodo anterior solo está el corte del 25 de febrero, sin diferencia.
+  a.deepEqual(m(c.previous.totals.cut), [1, 0, '0', 0, '0']);
 });
 
 test('métricas: un día sin movimientos, permisos y rango', async () => {

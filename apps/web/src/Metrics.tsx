@@ -6,13 +6,14 @@ import { addDays } from './ScheduleBoard';
 
 // Métricas compara la sucursal elegida al iniciar sesión con el periodo anterior de igual
 // duración. Reportes lista cada registro; aquí se ven tendencias.
-type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad';
+type Tab = 'ventas' | 'compras' | 'proveedores' | 'empleados' | 'rentabilidad' | 'efectivo';
 const tabs: [Tab, string][] = [
   ['ventas', 'Ventas'],
   ['compras', 'Compras'],
   ['proveedores', 'Proveedores'],
   ['empleados', 'Empleados'],
   ['rentabilidad', 'Rentabilidad'],
+  ['efectivo', 'Control de efectivo'],
 ];
 type Preset = '7' | '30' | 'month' | 'last-month' | '90' | 'year' | 'custom';
 const presets: [Preset, string][] = [
@@ -202,6 +203,8 @@ type Bar = {
   value: number | null;
   segments?: Segment[];
   previous?: number | null;
+  // A second amount drawn below zero in red, such as the shortages under the overages.
+  below?: number;
   tip: [string, string][];
 };
 // Vertical bars from a zero baseline, with an optional dashed line for the previous period.
@@ -218,7 +221,7 @@ function BarChart({
 }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
-  const values = bars.flatMap((b) => [b.value ?? 0, b.previous ?? 0]);
+  const values = bars.flatMap((b) => [b.value ?? 0, b.previous ?? 0, -(b.below ?? 0)]);
   // The axis always holds zero; a negative value (a loss) extends it below.
   const high = Math.max(0, ...values),
     low = Math.min(0, ...values);
@@ -277,7 +280,12 @@ function BarChart({
             let acc = 0;
             const segs = b.segments || (b.value ? [{ name: '', value: b.value, color: '' }] : []);
             const shown = segs.filter((s) => s.value > 0);
-            const loss = !b.segments && (b.value ?? 0) < 0;
+            const down = b.below
+              ? b.below
+              : !b.segments && (b.value ?? 0) < 0
+                ? -(b.value as number)
+                : 0;
+            const loss = down > 0;
             return (
               <g key={b.key} className={hover != null && hover !== i ? 'dim' : ''}>
                 {loss && (
@@ -285,7 +293,7 @@ function BarChart({
                   <path
                     d={(() => {
                       const y0 = base,
-                        y1 = y(b.value!),
+                        y1 = y(-down),
                         r = Math.min(radius, y1 - y0),
                         l = x(i) - barW / 2,
                         rr = l + barW;
@@ -358,14 +366,17 @@ function BarChart({
 function Rows({
   items,
   scale,
+  danger,
 }: {
   items: { key: string; label: string; sub?: string; value: number; text: string }[];
   // A fixed full bar, such as 1 for percentages; otherwise the largest value.
   scale?: number;
+  // Bars that measure something bad, such as shortages, are drawn in red.
+  danger?: boolean;
 }) {
   const max = scale ?? Math.max(0, ...items.map((i) => i.value));
   return (
-    <ul className="mt-rows">
+    <ul className={danger ? 'mt-rows danger' : 'mt-rows'}>
       {items.map((i) => (
         <li key={i.key}>
           <div>
@@ -555,7 +566,7 @@ export default function Metrics({
             </button>
           ))}
         </div>
-        {(tab === 'ventas' || tab === 'compras' || tab === 'rentabilidad') && (
+        {['ventas', 'compras', 'rentabilidad', 'efectivo'].includes(tab) && (
           <div className="rp-choice mt-grain" role="group" aria-label="Agrupar por">
             {grains.map(([key, text]) => (
               <button
@@ -594,6 +605,8 @@ export default function Metrics({
         !error && <p className="rp-note">Cargando métricas…</p>
       ) : tab === 'ventas' ? (
         <SalesMetrics m={ready} grain={grain} days={days} />
+      ) : tab === 'efectivo' ? (
+        <CashMetrics m={ready} grain={grain} />
       ) : tab === 'rentabilidad' ? (
         <ProfitMetrics m={ready} grain={grain} />
       ) : tab === 'empleados' ? (
@@ -1443,6 +1456,214 @@ function ProfitMetrics({ m, grain }: { m: any; grain: Grain }) {
           />
         ) : (
           <Empty text="No hubo gastos extraordinarios en el periodo." />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+// Counts against what was expected: sales cuts plus supplier cash closes.
+type Counts = {
+  counts: number;
+  short: number;
+  short_cents: string;
+  over: number;
+  over_cents: string;
+};
+const joinCounts = (...list: Counts[]) => ({
+  counts: list.reduce((s, c) => s + c.counts, 0),
+  short: list.reduce((s, c) => s + c.short, 0),
+  shortCents: list.reduce((s, c) => s + num(c.short_cents), 0),
+  over: list.reduce((s, c) => s + c.over, 0),
+  overCents: list.reduce((s, c) => s + num(c.over_cents), 0),
+});
+// Repeated shortages: at least three, in a quarter or more of a person's counts.
+const PATTERN_COUNT = 3,
+  PATTERN_SHARE = 0.25;
+const adjustmentKinds: Record<string, string> = {
+  cash_adjustment: 'Ajuste de efectivo',
+  bank_adjustment: 'Ajuste de banco',
+};
+
+// Control de efectivo: where the cash came up short or over, and whether it repeats.
+function CashMetrics({ m, grain }: { m: any; grain: Grain }) {
+  const c = m.cash;
+  const all = joinCounts(c.totals.cut, c.totals.supplier),
+    before = joinCounts(c.previous.totals.cut, c.previous.totals.supplier);
+  const share = all.counts ? all.short / all.counts : null,
+    shareBefore = before.counts ? before.short / before.counts : null;
+  const grainName = { day: 'día', week: 'semana', month: 'mes' }[grain];
+  const series = trend(m, c.by_day, [], grain, (r) => ({
+    short: num(r.short_cents),
+    over: num(r.over_cents),
+    shortN: r.short,
+    counts: r.counts,
+  }));
+  const bars: Bar[] = series.map(({ key, now }) => ({
+    key,
+    label: bucketLabel(key, grain),
+    title: bucketTitle(key, grain, m.range.from, m.range.to),
+    value: now?.over ?? 0,
+    below: now?.short ?? 0,
+    tip: [
+      ['Faltantes', pesos(now?.short ?? 0)],
+      ['Sobrantes', pesos(now?.over ?? 0)],
+      ['Conteos con faltante', `${now?.shortN ?? 0} de ${now?.counts ?? 0}`],
+    ],
+  }));
+  const people = (c.by_person as any[])
+    .map((p) => ({ ...p, all: joinCounts(p.cut, p.supplier) }))
+    .sort((a, b) => b.all.shortCents - a.all.shortCents || b.all.short - a.all.short);
+  const pattern = (x: ReturnType<typeof joinCounts>) =>
+    x.short >= PATTERN_COUNT && x.short / x.counts >= PATTERN_SHARE;
+  const flagged = people.filter((p) => pattern(p.all)).length;
+  const place = (r: any) =>
+    r.register === 'supplier' ? 'Caja de proveedores' : `Caja ${r.register}`;
+  const summary = (x: ReturnType<typeof joinCounts>) =>
+    `${plural(x.counts, 'conteo', 'conteos')} · ${x.short} con faltante · sobrantes ${pesos(x.overCents)}`;
+  const adjustments: any[] = c.adjustments;
+  if (!all.counts && !adjustments.length)
+    return (
+      <section className="card mt-panel">
+        <Empty text="No hay cortes, cierres de caja de proveedores ni ajustes en este periodo." />
+      </section>
+    );
+  return (
+    <>
+      <div className="mt-stats">
+        <Stat label="Faltantes" value={pesos(all.shortCents)}>
+          <Change now={all.shortCents} before={before.shortCents} upIs="bad" />
+        </Stat>
+        <Stat label="Sobrantes" value={pesos(all.overCents)}>
+          <small>{plural(all.over, 'conteo con sobrante', 'conteos con sobrante')}</small>
+        </Stat>
+        <Stat label="Conteos con faltante" value={share == null ? '—' : percent(share)}>
+          {share != null && shareBefore != null ? (
+            <Change now={share} before={shareBefore} upIs="bad" points />
+          ) : (
+            <small>
+              {all.short} de {plural(all.counts, 'conteo', 'conteos')}
+            </small>
+          )}
+        </Stat>
+        <Stat label="Faltantes repetidos" value={String(flagged)}>
+          <small>
+            {flagged === 1 ? 'persona' : 'personas'} con {PATTERN_COUNT} o más faltantes en al menos{' '}
+            {percent(PATTERN_SHARE, 0)} de sus conteos
+          </small>
+        </Stat>
+      </div>
+      <p className="rp-note mt-caveat">
+        Cuenta los cortes de ventas y los cierres de la caja de proveedores. Faltantes y sobrantes
+        se muestran por separado: un sobrante no compensa un faltante.
+      </p>
+      <Panel
+        title={`Faltantes y sobrantes por ${grainName}`}
+        note="Hacia arriba lo que sobró; hacia abajo, en rojo, lo que faltó."
+        legend={[{ label: 'Sobrantes' }, { label: 'Faltantes', negative: true }]}
+        table={{
+          headers: ['Periodo', 'Faltantes', 'Sobrantes', 'Conteos con faltante'],
+          rows: bars.map((b) => [b.title, ...b.tip.map(([, v]) => v)]),
+        }}
+      >
+        {all.shortCents || all.overCents ? (
+          <BarChart bars={bars} axis={compact} />
+        ) : (
+          <Empty text="Todos los conteos del periodo cuadraron: sin faltantes ni sobrantes." />
+        )}
+      </Panel>
+      <Panel
+        title="Por persona"
+        note="Cortes y cierres de caja de proveedores de cada persona. Primero quien acumula más faltantes."
+      >
+        {people.length ? (
+          <Table
+            headers={['Persona', 'Conteos', 'Con faltante', 'Faltantes', 'Sobrantes', 'Neto']}
+            rows={people.map((p) => {
+              const x = p.all,
+                net = x.overCents - x.shortCents;
+              return {
+                key: p.user_id,
+                cells: [
+                  <>
+                    {p.employee}
+                    {p.deleted && <span className="badge muted-badge mt-inline">Eliminado</span>}
+                    {pattern(x) && (
+                      <span className="badge danger-badge mt-inline">Faltantes repetidos</span>
+                    )}
+                  </>,
+                  p.supplier.counts
+                    ? `${x.counts} (${p.supplier.counts} de proveedores)`
+                    : String(x.counts),
+                  x.counts ? `${x.short} · ${percent(x.short / x.counts, 0)}` : '—',
+                  pesos(x.shortCents),
+                  pesos(x.overCents),
+                  gap(net),
+                ],
+              };
+            })}
+          />
+        ) : (
+          <Empty text="No hubo conteos en este periodo." />
+        )}
+      </Panel>
+      <div className="mt-pair">
+        <Panel title="Por caja" note="Faltantes acumulados en cada caja.">
+          <Rows
+            items={(c.by_register as any[]).map((r) => {
+              const x = joinCounts(r);
+              return {
+                key: r.register,
+                label: place(r),
+                sub: summary(x),
+                value: x.shortCents,
+                text: x.shortCents ? `Faltan ${pesos(x.shortCents)}` : 'Sin faltantes',
+              };
+            })}
+            danger
+          />
+        </Panel>
+        <Panel title="Por turno" note="Faltantes acumulados en los cortes de cada turno.">
+          {(c.by_shift as any[]).length ? (
+            <Rows
+              items={(c.by_shift as any[]).map((r) => {
+                const x = joinCounts(r);
+                return {
+                  key: r.label,
+                  label: `Turno ${r.label.toLowerCase()}`,
+                  sub: summary(x),
+                  value: x.shortCents,
+                  text: x.shortCents ? `Faltan ${pesos(x.shortCents)}` : 'Sin faltantes',
+                };
+              })}
+              danger
+            />
+          ) : (
+            <Empty text="No hubo cortes en este periodo." />
+          )}
+        </Panel>
+      </div>
+      <Panel
+        title="Ajustes manuales en Caja general"
+        note="Efectivo o banco que se agregó o quitó a mano, sin un conteo detrás. Revisa que cada uno tenga explicación."
+      >
+        {adjustments.length ? (
+          <Table
+            headers={['Fecha', 'Tipo', 'Concepto', 'Registró', 'Efectivo', 'Banco']}
+            rows={adjustments.map((a) => ({
+              key: a.id,
+              cells: [
+                shortDate(a.date),
+                adjustmentKinds[a.kind] ?? a.kind,
+                a.note,
+                a.employee,
+                num(a.cash_cents) ? pesos(num(a.cash_cents)) : '—',
+                num(a.bank_cents) ? pesos(num(a.bank_cents)) : '—',
+              ],
+            }))}
+          />
+        ) : (
+          <Empty text="No hubo ajustes manuales en el periodo." />
         )}
       </Panel>
     </>

@@ -410,6 +410,95 @@ async function expenses(db: pg.PoolClient, zone: string, from: string, to: strin
   };
 }
 
+// Control de efectivo: every count against what was expected, from the sales cuts and the
+// supplier cash closes. Shortages and overages stay apart, so one never hides the other.
+async function cash(db: pg.PoolClient, zone: string, from: string, to: string) {
+  const counts = `SELECT 'cut' AS source,user_id,register_number::text AS register,label,business_date AS date,
+      difference_cents AS diff FROM cuts WHERE business_date BETWEEN $1 AND $2
+    UNION ALL
+    SELECT 'supplier',actor_user_id,'supplier',NULL,business_date,difference_cents FROM supplier_shifts
+    WHERE closed_at IS NOT NULL AND difference_cents IS NOT NULL AND business_date BETWEEN $1 AND $2`;
+  const measures = `count(*)::int AS counts,
+      count(*) FILTER (WHERE diff<0)::int AS short,
+      coalesce(-sum(diff) FILTER (WHERE diff<0),0)::text AS short_cents,
+      count(*) FILTER (WHERE diff>0)::int AS over,
+      coalesce(sum(diff) FILTER (WHERE diff>0),0)::text AS over_cents`;
+  // Groups and sorts by the position of the chosen columns, which may carry an alias.
+  const group = (...columns: string[]) => {
+    const at = columns.map((_, i) => i + 1).join(',');
+    return db.query(
+      `SELECT ${columns.join(',')},${measures} FROM (${counts}) d GROUP BY ${at} ORDER BY ${at}`,
+      [from, to],
+    );
+  };
+  const [bySource, byDay, byPerson, byRegister, byShift, adjustments] = await serial([
+    () => group('source'),
+    () => group('date::text AS date'),
+    () => group('source', 'user_id'),
+    () => group('register'),
+    () =>
+      db.query(
+        `SELECT label,${measures} FROM (${counts}) d WHERE source='cut' GROUP BY label ORDER BY label`,
+        [from, to],
+      ),
+    // Manual adjustments to Caja general: money that appeared or vanished without a count.
+    () =>
+      db.query(
+        `SELECT t.id,(t.occurred_at AT TIME ZONE $3)::date::text AS date,t.kind,t.note,
+           t.cash_cents::text,t.bank_cents::text,u.name AS employee
+         FROM treasury_entries t JOIN users u ON u.id=t.actor_user_id
+         WHERE t.kind IN ('cash_adjustment','bank_adjustment')
+           AND (t.occurred_at AT TIME ZONE $3)::date BETWEEN $1 AND $2
+         ORDER BY t.occurred_at DESC`,
+        [from, to, zone],
+      ),
+  ]);
+  const empty = { counts: 0, short: 0, short_cents: '0', over: 0, over_cents: '0' };
+  const strip = ({ source, user_id, register, label, date, ...m }: any) => m;
+  const totals = {
+    cut: { ...empty, ...strip(bySource.rows.find((r) => r.source === 'cut') ?? {}) },
+    supplier: { ...empty, ...strip(bySource.rows.find((r) => r.source === 'supplier') ?? {}) },
+  };
+  const ids = [...new Set(byPerson.rows.map((r) => r.user_id))];
+  const names = new Map<string, any>(
+    (
+      await db.query(
+        'SELECT id,name,deleted_at IS NOT NULL AS deleted FROM users WHERE id=ANY($1)',
+        [ids],
+      )
+    ).rows.map((u) => [u.id, u]),
+  );
+  const by_person = ids
+    .map((id) => ({
+      user_id: id,
+      employee: names.get(id)?.name ?? '—',
+      deleted: names.get(id)?.deleted ?? false,
+      cut: {
+        ...empty,
+        ...strip(byPerson.rows.find((r) => r.user_id === id && r.source === 'cut') ?? {}),
+      },
+      supplier: {
+        ...empty,
+        ...strip(byPerson.rows.find((r) => r.user_id === id && r.source === 'supplier') ?? {}),
+      },
+    }))
+    .sort((a, b) => a.employee.localeCompare(b.employee, 'es'));
+  return {
+    totals: {
+      ...totals,
+      adjustments: adjustments.rows.length,
+      adjustments_cash_cents: adjustments.rows
+        .reduce((s, r) => s + BigInt(r.cash_cents), 0n)
+        .toString(),
+    },
+    by_day: byDay.rows,
+    by_person,
+    by_register: byRegister.rows,
+    by_shift: byShift.rows,
+    adjustments: adjustments.rows,
+  };
+}
+
 export async function buildMetrics(db: pg.PoolClient, zone: string, from: string, to: string) {
   const previous = previousPeriod(from, to);
   const s = await sales(db, from, to),
@@ -420,7 +509,9 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
     e = await employees(db, zone, from, to),
     pe = await employees(db, zone, previous.from, previous.to),
     x = await expenses(db, zone, from, to),
-    px = await expenses(db, zone, previous.from, previous.to);
+    px = await expenses(db, zone, previous.from, previous.to),
+    c = await cash(db, zone, from, to),
+    pc = await cash(db, zone, previous.from, previous.to);
   return {
     range: { from, to },
     previous,
@@ -429,6 +520,7 @@ export async function buildMetrics(db: pg.PoolClient, zone: string, from: string
     suppliers: sp,
     employees: { ...e, previous: { totals: pe.totals } },
     expenses: { ...x, previous: { totals: px.totals, by_day: px.by_day } },
+    cash: { ...c, previous: { totals: pc.totals, by_day: pc.by_day } },
   };
 }
 
