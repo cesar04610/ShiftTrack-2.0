@@ -9,7 +9,8 @@ La aplicación utiliza Railway y PostgreSQL.
 - Servicio: `a4b30cc3-4631-460b-b4cf-983cd536fd9c` (`ShiftTrack-2.0`).
 - Acceso mediante token de proyecto verificado: lectura de servicios, despliegues, nombres de variables y registros.
 - PostgreSQL 17 privado y dos volúmenes persistentes creados; API saludable en `https://shifttrack-20-production.up.railway.app`. Ambos volúmenes están en región `sfo`. La rama `main` de GitHub dispara el despliegue automáticamente.
-- El workspace está en Hobby. El propietario guardó un hard limit de Compute de 10 USD y una alerta de 8 USD; ambos se verificaron mediante API. No cambiar esos límites globales sin autorización del propietario.
+- El workspace está en Pro (noviembre 2026). El propietario guardó un hard limit de 10 USD y una alerta de 8 USD; ambos se verificaron mediante API. No cambiar esos límites globales sin autorización del propietario. El límite cubre todo el workspace, incluido el proyecto `Rutex` y el entorno `pruebas`.
+- `ShiftTrack-Worker` despliega desde `main` como la API. Hasta el 20 de noviembre de 2026 no tenía disparador y siguió ejecutando el código del 4 de octubre, que fallaba en cada corrida tras la migración 017. Al revisar Railway, confirmar que la API y el worker estén en el mismo commit.
 
 ## Imagen y variables
 
@@ -52,6 +53,16 @@ Objetivo inicial: una réplica API, PostgreSQL pequeño y dos volúmenes, sin im
 El servicio `ShiftTrack-Worker` usa la misma imagen con `node dist/apps/api/src/entrypoint.js dist/apps/worker/run.js`, cron `*/5 * * * *` y política de reinicio `NEVER`. Finaliza después de cada ejecución, usa el rol SQL restringido y no tiene dominio público, puerto HTTP ni SMTP. No crear un cron en cada réplica API.
 
 Después del despliegue: comprobar HTTPS, salud SQL, login/logout, roles, evidencia privada y recarga/relevo offline. Configurar respaldos de SQL y del volumen, verificar restauración y completar aceptación operativa antes de usar dinero real. Un volumen persistente no sustituye un respaldo.
+
+## Entorno de pruebas
+
+El proyecto tiene dos entornos: `production` (`c27e9244-2c82-4eb3-ae4f-b40226b00b0f`) y `pruebas` (`6b54739b-8b34-44d1-aa26-5d928bae8780`, creado el 20 de noviembre de 2026). `pruebas` tiene los mismos tres servicios (API, worker y PostgreSQL) con su propia base, sus propios volúmenes y su propia dirección: `https://shifttrack-20-pruebas-f32470a1.up.railway.app`. No comparte datos ni contraseñas con producción: la base y el rol `shifttrack_app` de `pruebas` tienen contraseñas distintas.
+
+- **Rama:** `pruebas` despliega desde la rama `pruebas` de GitHub; producción despliega desde `main`. Un push a `pruebas` no toca producción.
+- **Flujo:** subir el cambio a la rama `pruebas`, probarlo en su dirección y, cuando esté bien, llevar ese mismo commit a `main`. Para empezar una prueba nueva desde lo que está en producción, actualizar `pruebas` con `main`.
+- **Migraciones:** el pre-deploy de `pruebas` también es `node dist/scripts/migrate.js`, así que una migración nueva se aplica primero en `pruebas`. Eso permite comprobarla antes de producción.
+- **Datos:** la base de `pruebas` se preparó vacía con `provision` (rol restringido y dueño `cesar`) desde su pre-deploy, sin exponer PostgreSQL. La contraseña inicial del dueño está en la variable `BOOTSTRAP_OWNER_PASSWORD` del servicio `ShiftTrack-2.0` del entorno `pruebas`; después de cambiarla en la aplicación, borrar esa variable. Los datos de prueba se capturan desde la aplicación; no ejecutar el seed local ni copiar la base de producción.
+- **Costo:** `pruebas` consume como un segundo juego de servicios, incluido el worker cada 5 minutos, dentro del mismo límite de 10 USD. Si no se usa por un tiempo, se puede eliminar el entorno desde Railway y volver a crearlo.
 
 ## Acceso a la API de Railway
 
