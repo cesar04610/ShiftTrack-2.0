@@ -7,6 +7,7 @@ export type CustomerKind = 'normal' | 'cart' | 'rushed' | 'messy';
 export type SoundCue =
   | 'assign'
   | 'checkout'
+  | 'combo_up'
   | 'clean'
   | 'restock'
   | 'supplier_arrive'
@@ -936,9 +937,21 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
           // Combo upkeep: clean & well-stocked store builds combo faster!
           const storeHealthy = state.stock >= 60 && state.cleanliness >= 60;
           state.streak = storeHealthy ? state.streak + 1 : Math.max(1, state.streak);
+          const prevCombo = state.combo;
           const newCombo = clamp(1 + Math.floor(state.streak / 3), 1, 5);
           state.combo = newCombo;
           if (newCombo > state.maxCombo) state.maxCombo = newCombo;
+          if (newCombo > prevCombo) {
+            state.soundQueue.push('combo_up');
+            addFloatingText(
+              state,
+              REGISTER_XS[reg],
+              COUNTER_Y - 54,
+              newCombo === 5 ? '🔥 ¡RACHA x5 MÁXIMA!' : `✨ ¡RACHA x${newCombo}!`,
+              '#d97706',
+            );
+            spawnSparkles(state, REGISTER_XS[reg], COUNTER_Y - 26, '#f59e0b', 10, rng);
+          }
 
           // Endless comeback reward: every 18 happy customers with a healthy store restores 1 heart!
           if (state.mode === 'endless' && storeHealthy) {

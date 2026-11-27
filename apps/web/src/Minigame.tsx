@@ -22,18 +22,17 @@ import {
 import { money, type User } from '../../../packages/domain/index.js';
 import { hasOnlineSession, request } from './api';
 import {
-  CASHIER_Y,
   COUNTER_Y,
   ENTRANCE_POS,
   REGISTER_XS,
   SPECIALTY_LABELS,
-  SUPPLIER_SPOT,
   WORLD_H,
   WORLD_W,
   assignCashierTask,
   createInitialState,
   formatShiftClock,
   getCashierAtRegister,
+  getRegisterQueue,
   handleCanvasClick,
   stepGame,
   type CashierTaskKind,
@@ -143,6 +142,14 @@ const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
   employee: 'Empleado',
 };
+
+const SPECIALTY_EMOJI: Record<GameState['cashiers'][number]['specialty'], string> = {
+  checkout: '🏪',
+  restock: '📦',
+  clean: '🧹',
+};
+
+const HAIR_PALETTE = ['#292524', '#78350f', '#1e293b', '#92400e', '#451a03', '#a16207'];
 
 const QUEUE_KEY = 'shifttrack-minigame-pending-v1';
 
@@ -285,17 +292,21 @@ class SoundPlayer {
   play(cue: SoundCue) {
     try {
       if (cue === 'assign') {
-        this.tone(420, 0.06, 'triangle', 0.05);
+        this.tone(440, 0.055, 'triangle', 0.05);
       } else if (cue === 'checkout') {
         this.tone(660, 0.08, 'sine', 0.07, 0);
-        this.tone(990, 0.13, 'sine', 0.07, 0.065);
+        this.tone(990, 0.13, 'sine', 0.07, 0.06);
+      } else if (cue === 'combo_up') {
+        this.tone(587, 0.08, 'triangle', 0.075, 0);
+        this.tone(784, 0.09, 'triangle', 0.075, 0.07);
+        this.tone(1174, 0.18, 'sine', 0.08, 0.14);
       } else if (cue === 'clean') {
         this.tone(540, 0.07, 'sine', 0.06, 0);
         this.tone(720, 0.07, 'sine', 0.06, 0.055);
         this.tone(960, 0.1, 'sine', 0.055, 0.11);
       } else if (cue === 'restock') {
         this.tone(480, 0.07, 'triangle', 0.06, 0);
-        this.tone(620, 0.09, 'triangle', 0.06, 0.06);
+        this.tone(640, 0.09, 'triangle', 0.06, 0.06);
       } else if (cue === 'supplier_arrive') {
         this.tone(587, 0.12, 'triangle', 0.08, 0);
         this.tone(880, 0.18, 'triangle', 0.08, 0.12);
@@ -335,105 +346,156 @@ function roundRect(
   ctx.roundRect(x, y, w, h, r);
 }
 
+function clamp01(n: number) {
+  return Math.max(0, Math.min(1, n));
+}
+
+function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  // Terracotta pot + cozy leafy bush
+  ctx.beginPath();
+  ctx.arc(x + 2, y + 3, 14, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.1)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x, y, 13, 0, Math.PI * 2);
+  ctx.fillStyle = '#c2410c';
+  ctx.fill();
+
+  const leaves = [
+    [-5, -4, 7, '#15803d'],
+    [5, -4, 7, '#16a34a'],
+    [0, 5, 7, '#15803d'],
+    [-5, 3, 6, '#22c55e'],
+    [5, 3, 6, '#16a34a'],
+    [0, -1, 6, '#4ade80'],
+  ] as const;
+  for (const [lx, ly, r, col] of leaves) {
+    ctx.beginPath();
+    ctx.arc(x + lx, y + ly, r, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+  }
+}
+
 const SHELF_UNITS = [
   {
     x: 58,
     label: 'Abarrotes',
+    kind: 'boxes' as const,
+    frame: '#7c2d12',
+    inner: '#fef3c7',
     items: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#ec4899'],
   },
   {
     x: 204,
     label: 'Bebidas',
+    kind: 'bottles' as const,
+    frame: '#0f4c5c',
+    inner: '#ecfeff',
     items: ['#0ea5e9', '#10b981', '#dc2626', '#06b6d4', '#f59e0b', '#6366f1'],
   },
   {
     x: 350,
     label: 'Botanas',
+    kind: 'bags' as const,
+    frame: '#78350f',
+    inner: '#fffbeb',
     items: ['#f59e0b', '#ef4444', '#84cc16', '#a855f7', '#fb923c', '#14b8a6'],
   },
   {
     x: 496,
     label: 'Lácteos',
-    items: ['#38bdf8', '#f8fafc', '#fde047', '#60a5fa', '#cbd5e1', '#34d399'],
+    kind: 'fridge' as const,
+    frame: '#0369a1',
+    inner: '#e0f2fe',
+    items: ['#38bdf8', '#ffffff', '#fde047', '#60a5fa', '#e2e8f0', '#34d399'],
   },
 ];
 
 function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor: string) {
   const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 7);
 
-  // 1. Store floor tiles
-  ctx.fillStyle = '#f8f6f1';
-  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-
-  ctx.strokeStyle = '#eae5da';
-  ctx.lineWidth = 1;
-  for (let gx = 40; gx < WORLD_W; gx += 40) {
-    ctx.beginPath();
-    ctx.moveTo(gx, 0);
-    ctx.lineTo(gx, WORLD_H);
-    ctx.stroke();
-  }
-  for (let gy = 40; gy < WORLD_H; gy += 40) {
-    ctx.beginPath();
-    ctx.moveTo(0, gy);
-    ctx.lineTo(WORLD_W, gy);
-    ctx.stroke();
+  // 1. Warm cozy checkerboard store floor
+  const tile = 40;
+  for (let ty = 0; ty < WORLD_H; ty += tile) {
+    for (let tx = 0; tx < WORLD_W; tx += tile) {
+      const even = ((tx / tile + ty / tile) & 1) === 0;
+      ctx.fillStyle = even ? '#faf7f2' : '#f3eee4';
+      ctx.fillRect(tx, ty, tile, tile);
+    }
   }
 
-  // Outer store walls
-  ctx.strokeStyle = '#cbd5e1';
+  // Soft interior wall shadow & crisp store frame
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.045)';
+  ctx.fillRect(10, 10, WORLD_W - 20, 12);
+  ctx.fillRect(10, 10, 10, WORLD_H - 20);
+
+  ctx.strokeStyle = '#d6cfc2';
   ctx.lineWidth = 10;
   ctx.strokeRect(5, 5, WORLD_W - 10, WORLD_H - 10);
+
+  // Decorative potted plants in cozy store corners
+  drawPlant(ctx, 29, 36);
+  drawPlant(ctx, 766, 36);
+  drawPlant(ctx, 766, 462);
 
   // Subtle floor zone hint during opening seconds, or dirty-floor warning pill
   const dirtyFloor = state.cleanliness < 40 || state.messes.length >= 4;
   if (dirtyFloor) {
-    roundRect(ctx, 290, 166, 130, 21, 10);
-    ctx.fillStyle = `rgba(220, 38, 38, ${0.82 + pulse * 0.18})`;
+    roundRect(ctx, 284, 165, 142, 23, 11);
+    ctx.fillStyle = `rgba(220, 38, 38, ${0.84 + pulse * 0.16})`;
     ctx.fill();
     ctx.fillStyle = '#ffffff';
+    ctx.font = '800 11px "DM Sans", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🧹 ¡PISO MUY SUCIO!', 355, 180);
+  } else if (state.elapsed < 6) {
+    ctx.save();
+    ctx.globalAlpha = clamp01(1 - Math.max(0, state.elapsed - 3.5) / 2.5);
+    ctx.fillStyle = '#94a3b8';
     ctx.font = '700 10.5px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('¡PISO MUY SUCIO!', 355, 180);
-  } else if (state.elapsed < 7) {
-    ctx.save();
-    ctx.globalAlpha = clamp01(1 - Math.max(0, state.elapsed - 4.5) / 2.5);
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '600 10px "DM Sans", system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('PASILLO · TOCA PARA LIMPIAR', 355, 186);
+    ctx.fillText('TOCA UNA MANCHA PARA LIMPIAR', 355, 188);
     ctx.restore();
   }
 
-  // Left entrance mat
-  roundRect(ctx, 10, ENTRANCE_POS.y - 36, 46, 72, 8);
-  ctx.fillStyle = '#e2e8f0';
+  // Left entrance sliding glass door + welcoming mat
+  roundRect(ctx, 10, ENTRANCE_POS.y - 40, 48, 80, 9);
+  ctx.fillStyle = '#d1fae5';
   ctx.fill();
-  ctx.strokeStyle = '#94a3b8';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#34d399';
+  ctx.lineWidth = 2;
   ctx.stroke();
+  // Door threshold bar
+  ctx.fillStyle = '#059669';
+  ctx.fillRect(6, ENTRANCE_POS.y - 36, 5, 72);
   ctx.save();
-  ctx.translate(28, ENTRANCE_POS.y);
+  ctx.translate(32, ENTRANCE_POS.y);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillStyle = '#475569';
-  ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
+  ctx.fillStyle = '#065f46';
+  ctx.font = '800 10px "DM Sans", system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('ENTRADA', 0, 4);
+  ctx.fillText('ENTRADA ▸', 0, 4);
   ctx.restore();
 
-  // Bottom exit strips
+  // Bottom exit door mat
+  roundRect(ctx, 128, WORLD_H - 15, 514, 13, 5);
   ctx.fillStyle = '#e2e8f0';
-  roundRect(ctx, 130, WORLD_H - 14, 510, 12, 4);
   ctx.fill();
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '700 8.5px "DM Sans", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('SALIDA · ¡GRACIAS POR SU COMPRA!', 385, WORLD_H - 5.5);
 
-  // 2. Top Shelves Zone (Surtido)
+  // 2. Top Illustrated Shelves Zone (Surtido)
   const lowStock = state.stock < 35;
-  roundRect(ctx, 44, 24, 594, 114, 14);
+  roundRect(ctx, 44, 24, 594, 116, 15);
   ctx.fillStyle = lowStock
-    ? `rgba(254, 226, 226, ${0.45 + pulse * 0.35})`
-    : 'rgba(241, 245, 249, 0.8)';
+    ? `rgba(254, 226, 226, ${0.52 + pulse * 0.32})`
+    : 'rgba(255, 255, 255, 0.72)';
   ctx.fill();
-  ctx.strokeStyle = lowStock ? '#ef4444' : '#cbd5e1';
+  ctx.strokeStyle = lowStock ? '#ef4444' : '#e2dbd0';
   ctx.lineWidth = lowStock ? 2.5 : 1.5;
   ctx.stroke();
 
@@ -441,327 +503,482 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
   const filledSlots = Math.round((state.stock / 100) * totalSlots);
 
   SHELF_UNITS.forEach((unit, sIdx) => {
-    // Gondola shadow & body
-    roundRect(ctx, unit.x + 2, 38, 128, 74, 9);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.08)';
+    // Gondola shadow
+    roundRect(ctx, unit.x + 3, 39, 128, 74, 10);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.11)';
     ctx.fill();
 
-    roundRect(ctx, unit.x, 34, 128, 74, 9);
-    ctx.fillStyle = '#78350f';
+    // Gondola frame
+    roundRect(ctx, unit.x, 34, 128, 74, 10);
+    ctx.fillStyle = unit.frame;
     ctx.fill();
-    roundRect(ctx, unit.x + 5, 39, 118, 64, 6);
-    ctx.fillStyle = '#fef3c7';
+    roundRect(ctx, unit.x + 5, 39, 118, 64, 7);
+    ctx.fillStyle = unit.inner;
     ctx.fill();
 
-    // Shelf divider line
-    ctx.fillStyle = '#d97706';
-    ctx.fillRect(unit.x + 5, 69, 118, 3);
+    // Shelf divider
+    ctx.fillStyle = unit.kind === 'fridge' ? '#7dd3fc' : '#d97706';
+    ctx.fillRect(unit.x + 5, 70, 118, 3);
 
-    // Draw individual product items (6 per shelf = 24 total)
+    // Draw individual themed items (6 per shelf = 24 total)
     unit.items.forEach((itemColor, iIdx) => {
-      const slotNumber = iIdx * 4 + sIdx; // interleave so all 4 shelves empty evenly
+      const slotNumber = iIdx * 4 + sIdx;
+      const col = iIdx % 3;
+      const row = Math.floor(iIdx / 3);
+      const ix = unit.x + 14 + col * 37;
+      const iy = 45 + row * 31;
+
       if (slotNumber < filledSlots) {
-        const col = iIdx % 3;
-        const row = Math.floor(iIdx / 3);
-        const ix = unit.x + 14 + col * 37;
-        const iy = 45 + row * 31;
-        roundRect(ctx, ix, iy, 27, 19, 4);
-        ctx.fillStyle = itemColor;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(15, 23, 42, 0.18)';
+        if (unit.kind === 'bottles') {
+          // 6-pack glossy bottle caps!
+          roundRect(ctx, ix, iy, 27, 19, 5);
+          ctx.fillStyle = '#e0f2fe';
+          ctx.fill();
+          for (let b = 0; b < 3; b++) {
+            ctx.beginPath();
+            ctx.arc(ix + 6 + b * 7.5, iy + 6, 3.2, 0, Math.PI * 2);
+            ctx.arc(ix + 6 + b * 7.5, iy + 13.5, 3.2, 0, Math.PI * 2);
+            ctx.fillStyle = itemColor;
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.beginPath();
+            ctx.arc(ix + 5 + b * 7.5, iy + 5, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (unit.kind === 'bags') {
+          // Playful tilted snack bags
+          ctx.save();
+          ctx.translate(ix + 13, iy + 9);
+          ctx.rotate(iIdx % 2 === 0 ? -0.07 : 0.07);
+          roundRect(ctx, -13, -9, 26, 18, 6);
+          ctx.fillStyle = itemColor;
+          ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,0.55)';
+          roundRect(ctx, -8, -4, 16, 7, 3);
+          ctx.fill();
+          ctx.restore();
+        } else if (unit.kind === 'fridge') {
+          // Cold milk cartons & yogurt packs
+          roundRect(ctx, ix + 1, iy, 25, 19, 4);
+          ctx.fillStyle = itemColor;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(3, 105, 161, 0.25)';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          ctx.fillStyle = '#0284c7';
+          ctx.fillRect(ix + 4, iy + 3, 19, 3.5);
+        } else {
+          // Cereal / abarrotes boxes with labels
+          roundRect(ctx, ix, iy, 27, 19, 4);
+          ctx.fillStyle = itemColor;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(15, 23, 42, 0.16)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255,255,255,0.6)';
+          roundRect(ctx, ix + 3, iy + 3, 21, 5, 2);
+          ctx.fill();
+        }
+      } else {
+        // Subtle empty-shelf ghost outline so empty spaces look clear
+        roundRect(ctx, ix + 2, iy + 2, 23, 15, 4);
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+        ctx.setLineDash([3, 3]);
         ctx.lineWidth = 1;
         ctx.stroke();
-        // Highlight bar on package
-        ctx.fillStyle = 'rgba(255,255,255,0.45)';
-        ctx.fillRect(ix + 3, iy + 3, 21, 4);
+        ctx.setLineDash([]);
       }
     });
 
+    // Glass shine streak on refrigerator
+    if (unit.kind === 'fridge') {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.beginPath();
+      ctx.moveTo(unit.x + 14, 39);
+      ctx.lineTo(unit.x + 32, 39);
+      ctx.lineTo(unit.x + 14, 103);
+      ctx.lineTo(unit.x + 5, 103);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     // Shelf label
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+    ctx.fillStyle = '#334155';
+    ctx.font = '800 11px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(unit.label, unit.x + 64, 127);
+    ctx.fillText(unit.label, unit.x + 64, 128);
   });
 
   if (lowStock) {
-    roundRect(ctx, 274, 12, 134, 22, 11);
+    roundRect(ctx, 260, 11, 162, 23, 11);
     ctx.fillStyle = '#dc2626';
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+    ctx.font = '800 11px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('¡RELLENAR ANAQUELES!', 341, 27);
+    ctx.fillText('📦 ¡RELLENAR ANAQUELES!', 341, 26);
   }
 
-  // 3. Supplier Receiving Door (Right side)
+  // 3. Supplier Receiving Dock (Right side)
   const supActive = state.supplier.active;
-  roundRect(ctx, 668, 76, 114, 148, 14);
-  ctx.fillStyle = supActive ? `rgba(254, 243, 199, ${0.7 + pulse * 0.25})` : '#f1f5f9';
+  roundRect(ctx, 666, 76, 118, 154, 15);
+  ctx.fillStyle = supActive ? `rgba(254, 243, 199, ${0.76 + pulse * 0.24})` : '#f1f5f9';
   ctx.fill();
   ctx.strokeStyle = supActive ? '#f59e0b' : '#cbd5e1';
   ctx.lineWidth = supActive ? 3 : 1.5;
   ctx.stroke();
 
-  ctx.fillStyle = supActive ? '#b45309' : '#64748b';
-  ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('PROVEEDORES', 725, 96);
+  // Dock floor hazard accent strip
+  ctx.save();
+  roundRect(ctx, 768, 104, 12, 98, 4);
+  ctx.fillStyle = supActive ? '#f59e0b' : '#cbd5e1';
+  ctx.fill();
+  ctx.restore();
 
-  // Loading bay door stripes
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillRect(772, 108, 10, 92);
+  ctx.fillStyle = supActive ? '#b45309' : '#64748b';
+  ctx.font = '800 10px "DM Sans", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('PROVEEDORES', 722, 96);
 
   if (supActive) {
-    // Delivery boxes & rep icon
-    roundRect(ctx, 718, 126, 26, 22, 4);
+    // Cute top-down delivery van rear + crates + rep
+    roundRect(ctx, 744, 114, 36, 62, 6);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(746, 126, 32, 8);
+
+    // Stacked cardboard crates
+    roundRect(ctx, 712, 122, 26, 22, 4);
     ctx.fillStyle = '#b45309';
     ctx.fill();
-    roundRect(ctx, 738, 144, 24, 20, 4);
+    ctx.fillStyle = '#fde68a';
+    ctx.fillRect(722, 122, 5, 22);
+
+    roundRect(ctx, 716, 146, 24, 20, 4);
     ctx.fillStyle = '#d97706';
     ctx.fill();
-    // Delivery person circle
+    ctx.fillStyle = '#fef3c7';
+    ctx.fillRect(725, 146, 5, 20);
+
+    // Pulsing delivery rep
     ctx.beginPath();
-    ctx.arc(726, 168, 13, 0, Math.PI * 2);
-    ctx.fillStyle = '#f59e0b';
+    ctx.arc(704, 174, 14 + pulse * 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(704, 174, 12, 0, Math.PI * 2);
+    ctx.fillStyle = '#ea580c';
     ctx.fill();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(726, 166, 6, 0, Math.PI * 2);
+    ctx.arc(704, 172, 6, 0, Math.PI * 2);
     ctx.fillStyle = '#fde68a';
     ctx.fill();
 
-    // Countdown arc or receiving progress bar
+    // Countdown / receiving progress bar
     const ratio = clamp01(state.supplier.timeLeft / state.supplier.maxTime);
-    ctx.fillStyle = '#78350f';
-    ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
-    ctx.fillText(`${Math.ceil(state.supplier.timeLeft)}s · ¡Recibir!`, 725, 200);
+    ctx.fillStyle = '#92400e';
+    ctx.font = '800 10.5px "DM Sans", system-ui, sans-serif';
+    ctx.fillText(
+      state.supplier.progress > 0
+        ? 'Recibiendo…'
+        : `${Math.ceil(state.supplier.timeLeft)}s · ¡Toca!`,
+      722,
+      204,
+    );
 
-    roundRect(ctx, 682, 207, 86, 8, 4);
+    roundRect(ctx, 680, 211, 88, 9, 4.5);
     ctx.fillStyle = '#fde68a';
     ctx.fill();
     roundRect(
       ctx,
-      682,
-      207,
-      86 * (state.supplier.progress > 0 ? state.supplier.progress : ratio),
-      8,
-      4,
+      680,
+      211,
+      88 * (state.supplier.progress > 0 ? state.supplier.progress : ratio),
+      9,
+      4.5,
     );
     ctx.fillStyle = state.supplier.progress > 0 ? '#10b981' : '#f59e0b';
     ctx.fill();
   } else {
     ctx.fillStyle = '#94a3b8';
-    ctx.font = '500 10px "DM Sans", system-ui, sans-serif';
-    ctx.fillText('Puerta cerrada', 725, 154);
+    ctx.font = '600 10px "DM Sans", system-ui, sans-serif';
+    ctx.fillText('Puerta cerrada', 722, 156);
   }
 
-  // 4. Floor Messes (Spills, tracks, wrappers)
+  // 4. Floor Messes (Glossy spills, footprints, wrappers + soap bubbles when scrubbing!)
   for (const m of state.messes) {
     ctx.save();
     ctx.translate(m.x, m.y);
     const shrink = 1 - m.progress * 0.55;
     ctx.scale(shrink, shrink);
     if (m.kind === 'spill') {
-      ctx.fillStyle = `${m.color}cc`;
+      ctx.fillStyle = `${m.color}d8`;
       ctx.beginPath();
       ctx.ellipse(0, 0, m.size, m.size * 0.72, 0.25, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(m.size * 0.75, -m.size * 0.3, m.size * 0.35, 0, Math.PI * 2);
+      ctx.arc(m.size * 0.75, -m.size * 0.3, m.size * 0.36, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.45)';
       ctx.beginPath();
-      ctx.ellipse(-m.size * 0.3, -m.size * 0.2, m.size * 0.3, m.size * 0.16, -0.3, 0, Math.PI * 2);
+      ctx.arc(-m.size * 0.65, m.size * 0.45, m.size * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(
+        -m.size * 0.28,
+        -m.size * 0.2,
+        m.size * 0.32,
+        m.size * 0.16,
+        -0.3,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     } else if (m.kind === 'tracks') {
-      ctx.fillStyle = '#78716ccc';
+      ctx.fillStyle = '#78716cd8';
       ctx.beginPath();
-      ctx.ellipse(-6, -3, 6, 3.5, 0.4, 0, Math.PI * 2);
-      ctx.ellipse(6, 4, 6, 3.5, 0.4, 0, Math.PI * 2);
+      ctx.ellipse(-7, -4, 6.5, 3.8, 0.4, 0, Math.PI * 2);
+      ctx.ellipse(7, 4, 6.5, 3.8, 0.4, 0, Math.PI * 2);
       ctx.fill();
     } else {
       ctx.fillStyle = m.color;
-      roundRect(ctx, -8, -6, 16, 12, 3);
+      roundRect(ctx, -9, -6, 18, 12, 3);
       ctx.fill();
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
     }
     ctx.restore();
 
-    // Cleaning progress ring
+    // Animated soap bubbles + progress ring while cleaning
     if (m.progress > 0) {
       ctx.beginPath();
       ctx.arc(m.x, m.y, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * m.progress);
       ctx.strokeStyle = '#0284c7';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3.5;
       ctx.stroke();
+
+      for (let b = 0; b < 3; b++) {
+        const ang = state.elapsed * 5 + b * 2.1;
+        const bx = m.x + Math.cos(ang) * 14;
+        const by = m.y + Math.sin(ang) * 12;
+        ctx.beginPath();
+        ctx.arc(bx, by, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
   }
 
-  // 5. Checkout Counters (3 Cajas)
+  // 5. Illustrated Checkout Counters (3 Cajas)
   REGISTER_XS.forEach((rx, idx) => {
     const cashier = getCashierAtRegister(state, idx);
     const active = !!cashier && !cashier.moving;
-    const queueCount = state.customers.filter(
-      (c) => c.state === 'queueing' && c.registerIndex === idx,
-    ).length;
+    const queue = getRegisterQueue(state, idx);
+    const queueCount = queue.length;
+    const scanning = active && queueCount > 0 && queue[0].checkoutProgress > 0;
 
-    // Queue lane mat
-    roundRect(ctx, rx - 30, 224, 60, 148, 12);
-    ctx.fillStyle = active ? 'rgba(16, 185, 129, 0.08)' : 'rgba(148, 163, 184, 0.09)';
+    // Queue lane carpet
+    roundRect(ctx, rx - 31, 214, 62, 152, 14);
+    ctx.fillStyle = active ? 'rgba(16, 185, 129, 0.085)' : 'rgba(148, 163, 184, 0.09)';
     ctx.fill();
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = active ? 'rgba(16, 185, 129, 0.35)' : '#cbd5e1';
+    ctx.strokeStyle = active ? 'rgba(16, 185, 129, 0.36)' : '#cbd5e1';
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Counter shadow
-    roundRect(ctx, rx - 66, COUNTER_Y - 16, 132, 42, 10);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.09)';
+    // Counter drop shadow
+    roundRect(ctx, rx - 66, COUNTER_Y - 15, 134, 42, 11);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.11)';
     ctx.fill();
 
     // Counter body
-    roundRect(ctx, rx - 68, COUNTER_Y - 20, 136, 40, 10);
+    roundRect(ctx, rx - 68, COUNTER_Y - 20, 136, 40, 11);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
     ctx.strokeStyle = active ? accentColor : queueCount > 0 ? '#f59e0b' : '#cbd5e1';
     ctx.lineWidth = active || queueCount > 0 ? 2.5 : 1.5;
     ctx.stroke();
 
-    // Conveyor belt (left side of counter)
+    // Conveyor belt (animated stripes when scanning!)
     roundRect(ctx, rx - 58, COUNTER_Y - 12, 54, 24, 5);
-    ctx.fillStyle = '#334155';
-    ctx.fill();
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1;
-    for (let bx = rx - 48; bx < rx - 8; bx += 12) {
-      ctx.beginPath();
-      ctx.moveTo(bx, COUNTER_Y - 10);
-      ctx.lineTo(bx, COUNTER_Y + 10);
-      ctx.stroke();
-    }
-
-    // POS Monitor & cash drawer (right side of counter)
-    roundRect(ctx, rx + 8, COUNTER_Y - 13, 28, 22, 4);
     ctx.fillStyle = '#1e293b';
     ctx.fill();
+    const beltShift = scanning ? (state.elapsed * 32) % 12 : 0;
+    ctx.save();
+    roundRect(ctx, rx - 58, COUNTER_Y - 12, 54, 24, 5);
+    ctx.clip();
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1.5;
+    for (let bx = rx - 58 + beltShift; bx < rx - 2; bx += 12) {
+      ctx.beginPath();
+      ctx.moveTo(bx, COUNTER_Y - 12);
+      ctx.lineTo(bx, COUNTER_Y + 12);
+      ctx.stroke();
+    }
+    // Red barcode scanner laser beam & item on belt when scanning!
+    if (scanning) {
+      roundRect(ctx, rx - 38, COUNTER_Y - 6, 14, 12, 3);
+      ctx.fillStyle = '#f97316';
+      ctx.fill();
+      if (Math.sin(state.elapsed * 22) > -0.2) {
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(rx - 31, COUNTER_Y - 12);
+        ctx.lineTo(rx - 31, COUNTER_Y + 12);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // POS Monitor & cash drawer
+    roundRect(ctx, rx + 8, COUNTER_Y - 13, 28, 22, 4);
+    ctx.fillStyle = '#0f172a';
+    ctx.fill();
     roundRect(ctx, rx + 12, COUNTER_Y - 9, 20, 12, 2);
-    ctx.fillStyle = active ? '#34d399' : '#64748b';
+    ctx.fillStyle = scanning ? '#6ee7b7' : active ? '#34d399' : '#64748b';
     ctx.fill();
 
-    // Status LED & Caja number badge
+    // Status LED
     ctx.beginPath();
     ctx.arc(rx + 52, COUNTER_Y - 2, 6, 0, Math.PI * 2);
     ctx.fillStyle = active ? '#10b981' : queueCount > 0 ? '#f59e0b' : '#94a3b8';
     ctx.fill();
+    ctx.beginPath();
+    ctx.arc(rx + 50, COUNTER_Y - 4, 2, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fill();
 
-    // Caja label pill cleanly mounted on the bottom edge of the counter (zero overlap with queues or cashiers)
+    // Caja label pill cleanly mounted on the bottom edge of the counter
     roundRect(ctx, rx - 28, COUNTER_Y + 11, 56, 17, 8);
     ctx.fillStyle = active ? accentColor : '#475569';
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 10.5px "DM Sans", system-ui, sans-serif';
+    ctx.font = '800 10.5px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`Caja ${idx + 1}`, rx, COUNTER_Y + 23);
 
-    // If unattended with waiting customers, pulse a subtle alert tag below Caja badge
+    // Unattended alert pill when customers wait with no cashier
     if (!cashier && queueCount > 0) {
-      roundRect(ctx, rx - 44, COUNTER_Y + 34, 88, 18, 9);
-      ctx.fillStyle = `rgba(245, 158, 11, ${0.82 + pulse * 0.18})`;
+      roundRect(ctx, rx - 46, COUNTER_Y + 34, 92, 19, 9.5);
+      ctx.fillStyle = `rgba(245, 158, 11, ${0.84 + pulse * 0.16})`;
       ctx.fill();
       ctx.fillStyle = '#ffffff';
-      ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
+      ctx.font = '800 10px "DM Sans", system-ui, sans-serif';
       ctx.fillText('¡Sin cajero!', rx, COUNTER_Y + 47);
     }
   });
 
-  // 6. Customers
+  // 6. Expressive Customers
   for (const cust of state.customers) {
+    const pRatio = clamp01(cust.patience / cust.maxPatience);
+    const shaking =
+      cust.state === 'queueing' && pRatio < 0.28 ? Math.sin(state.elapsed * 38 + cust.id) * 1.8 : 0;
+    const walkBob =
+      cust.state === 'browsing' || cust.state === 'leaving_happy' || cust.state === 'leaving_angry'
+        ? Math.sin(state.elapsed * 12 + cust.id) * 1.5
+        : 0;
+
     ctx.save();
-    ctx.translate(cust.x, cust.y);
+    ctx.translate(cust.x + shaking, cust.y + walkBob);
 
     // Shopping cart prop for 'cart' customer
     if (cust.kind === 'cart') {
-      roundRect(ctx, -12, 13, 24, 15, 3);
-      ctx.fillStyle = '#cbd5e1';
+      roundRect(ctx, -13, 13, 26, 16, 4);
+      ctx.fillStyle = '#e2e8f0';
       ctx.fill();
       ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.6;
       ctx.stroke();
       ctx.fillStyle = '#f97316';
-      ctx.fillRect(-8, 16, 7, 6);
+      ctx.fillRect(-9, 16, 8, 6);
       ctx.fillStyle = '#10b981';
-      ctx.fillRect(1, 16, 7, 6);
+      ctx.fillRect(1, 16, 8, 6);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(-4, 21, 9, 5);
+    } else if (cust.kind === 'normal' && cust.state === 'queueing') {
+      // Cute hand basket
+      roundRect(ctx, 12, 3, 11, 9, 2.5);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+      ctx.strokeStyle = '#065f46';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
 
     // Shadow
     ctx.beginPath();
-    ctx.ellipse(0, 5, 14, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 6, 15, 10, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(15, 23, 42, 0.14)';
     ctx.fill();
 
     // Shoulders / shirt
     ctx.beginPath();
-    ctx.ellipse(0, 1, 15, 11, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 1, 15.5, 11.5, 0, 0, Math.PI * 2);
     ctx.fillStyle = cust.shirtColor;
     ctx.fill();
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.2;
     ctx.stroke();
 
     // Head
     ctx.beginPath();
-    ctx.arc(0, -1, 8, 0, Math.PI * 2);
+    ctx.arc(0, -1, 8.5, 0, Math.PI * 2);
     ctx.fillStyle = '#fed7aa';
     ctx.fill();
 
-    // Hair / cap detail
+    // Varied hair
+    const hair = cust.kind === 'rushed' ? '#7f1d1d' : HAIR_PALETTE[cust.id % HAIR_PALETTE.length];
     ctx.beginPath();
-    ctx.arc(0, -3.5, 7, Math.PI, Math.PI * 2);
-    ctx.fillStyle = cust.kind === 'rushed' ? '#7f1d1d' : '#334155';
+    ctx.arc(0, -3.5, 7.5, Math.PI, Math.PI * 2);
+    ctx.fillStyle = hair;
     ctx.fill();
 
-    // Type mini-icon
+    // Archetype mini-badge
     if (cust.kind === 'rushed') {
-      ctx.fillStyle = '#ef4444';
-      ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+      ctx.font = '700 12px "DM Sans", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('⚡', 15, -6);
+      ctx.fillText('⚡', 16, -6);
     } else if (cust.kind === 'messy') {
-      ctx.fillStyle = '#d97706';
       ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('💧', 15, -6);
+      ctx.fillText('💧', 16, -6);
     }
 
-    // Patience bar when queueing
+    // Patience bar + reason badge when queueing
     if (cust.state === 'queueing') {
-      const pRatio = clamp01(cust.patience / cust.maxPatience);
-      roundRect(ctx, -18, -22, 36, 6, 3);
+      roundRect(ctx, -19, -23, 38, 6.5, 3.25);
       ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
       ctx.fill();
-      roundRect(ctx, -18, -22, 36 * pRatio, 6, 3);
+      roundRect(ctx, -19, -23, 38 * pRatio, 6.5, 3.25);
       ctx.fillStyle = pRatio > 0.5 ? '#10b981' : pRatio > 0.25 ? '#f59e0b' : '#ef4444';
       ctx.fill();
 
-      // Show why customer is getting impatient when store is empty or dirty
+      // Show why customer is getting impatient
       if (pRatio < 0.65 && (state.stock < 35 || state.cleanliness < 40)) {
         ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(state.stock < 35 ? '📦' : '🧹', -22, -14);
+        ctx.fillText(state.stock < 35 ? '📦' : '🧹', -24, -14);
       }
 
       // Active checkout scan bar
       if (cust.checkoutProgress > 0) {
-        roundRect(ctx, -18, 16, 36, 5, 2.5);
+        roundRect(ctx, -19, 16, 38, 5.5, 2.75);
         ctx.fillStyle = '#e2e8f0';
         ctx.fill();
-        roundRect(ctx, -18, 16, 36 * clamp01(cust.checkoutProgress), 5, 2.5);
+        roundRect(ctx, -19, 16, 38 * clamp01(cust.checkoutProgress), 5.5, 2.75);
         ctx.fillStyle = accentColor;
         ctx.fill();
       }
@@ -770,21 +987,21 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
     ctx.restore();
   }
 
-  // 7. Cashiers (The 3 playable team members!)
+  // 7. Illustrated Cashiers (Sofía, Mateo, Valeria)
   for (const c of state.cashiers) {
-    // Draw subtle destination line while cashier is walking to a new station
+    // Dashed destination line while walking
     if (c.moving && state.status === 'playing') {
       ctx.save();
       ctx.setLineDash([4, 4]);
       ctx.strokeStyle = `${c.color}88`;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
       ctx.moveTo(c.x, c.y);
       ctx.lineTo(c.targetX, c.targetY);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.arc(c.targetX, c.targetY, 5, 0, Math.PI * 2);
+      ctx.arc(c.targetX, c.targetY, 5.5, 0, Math.PI * 2);
       ctx.fillStyle = `${c.color}66`;
       ctx.fill();
       ctx.restore();
@@ -796,94 +1013,110 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
     ctx.save();
     ctx.translate(c.x, c.y + bob);
 
-    // Selection ring
+    // Selection glow halo
     if (selected) {
       ctx.beginPath();
-      ctx.arc(0, 0, 24 + pulse * 2.5, 0, Math.PI * 2);
+      ctx.arc(0, 0, 25 + pulse * 2.5, 0, Math.PI * 2);
       ctx.strokeStyle = c.color;
       ctx.lineWidth = 3;
       ctx.stroke();
-      ctx.fillStyle = `${c.color}1c`;
+      ctx.fillStyle = `${c.color}20`;
       ctx.fill();
     }
 
-    // Tool prop depending on task
+    // Animated task prop
     if (c.task === 'clean') {
-      const swing = Math.sin(c.workAnim * 1.6) * 0.45;
+      const swing = Math.sin(c.workAnim * 1.8) * 0.48;
       ctx.save();
       ctx.rotate(swing);
       ctx.strokeStyle = '#92400e';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(10, 4);
-      ctx.lineTo(24, -14);
+      ctx.lineTo(25, -15);
       ctx.stroke();
-      roundRect(ctx, 18, -21, 14, 9, 4);
+      roundRect(ctx, 18, -22, 15, 9, 4.5);
       ctx.fillStyle = '#38bdf8';
       ctx.fill();
       ctx.restore();
     } else if (c.task === 'restock') {
-      roundRect(ctx, -11, -24, 22, 14, 3);
+      roundRect(ctx, -12, -25, 24, 15, 3.5);
       ctx.fillStyle = '#d97706';
       ctx.fill();
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(-2, -25, 4, 15);
       ctx.strokeStyle = '#92400e';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
     } else if (c.task === 'supplier') {
-      roundRect(ctx, 13, -10, 12, 16, 2);
-      ctx.fillStyle = '#f8fafc';
+      roundRect(ctx, 13, -10, 12, 16, 2.5);
+      ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 1.5;
       ctx.stroke();
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(16, -12, 6, 3.5);
     }
 
     // Shadow
     ctx.beginPath();
-    ctx.ellipse(0, 6, 16, 11, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 7, 17, 11, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(15, 23, 42, 0.16)';
     ctx.fill();
 
     // Uniform shoulders
     ctx.beginPath();
-    ctx.ellipse(0, 1, 17, 13, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 1, 17.5, 13.5, 0, 0, Math.PI * 2);
     ctx.fillStyle = c.color;
     ctx.fill();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2.5;
     ctx.stroke();
 
-    // Apron accent
+    // Apron / vest accent
     ctx.beginPath();
-    ctx.arc(0, 4, 9, 0, Math.PI);
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.arc(0, 4, 9.5, 0, Math.PI);
+    ctx.fillStyle = 'rgba(255,255,255,0.32)';
     ctx.fill();
 
     // Head
     ctx.beginPath();
-    ctx.arc(0, -2, 9, 0, Math.PI * 2);
+    ctx.arc(0, -2, 9.2, 0, Math.PI * 2);
     ctx.fillStyle = '#fde68a';
     ctx.fill();
 
-    // Hair
+    // Distinct cashier hair / cap
     ctx.beginPath();
-    ctx.arc(0, -4.5, 8, Math.PI, Math.PI * 2);
-    ctx.fillStyle = '#1e293b';
+    ctx.arc(0, -4.5, 8.2, Math.PI, Math.PI * 2);
+    ctx.fillStyle = c.id === 1 ? '#451a03' : '#1e293b';
     ctx.fill();
+    if (c.id === 0) {
+      // Sofía's visor accent
+      roundRect(ctx, -7, -11, 14, 3.5, 2);
+      ctx.fillStyle = '#14b8a6';
+      ctx.fill();
+    } else if (c.id === 2) {
+      // Valeria's hair bun
+      ctx.beginPath();
+      ctx.arc(0, -12, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#1e293b';
+      ctx.fill();
+    }
 
     // Name pill
-    roundRect(ctx, -23, 15, 46, 16, 8);
-    ctx.fillStyle = selected ? c.color : '#1e293b';
+    roundRect(ctx, -25, 15, 50, 17, 8.5);
+    ctx.fillStyle = selected ? c.color : '#0f172a';
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
+    ctx.font = '800 10px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(c.name, 0, 26);
+    ctx.fillText(c.name, 0, 26.5);
 
     ctx.restore();
   }
 
-  // 8. Sparkle particles
+  // 8. Sparkles & Confetti particles
   for (const sp of state.sparkles) {
     const alpha = clamp01(sp.life / sp.maxLife);
     ctx.save();
@@ -900,26 +1133,22 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
     const alpha = clamp01(ft.life / ft.maxLife);
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = '800 13px "DM Sans", system-ui, sans-serif';
+    ctx.font = '800 13.5px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.lineWidth = 3.5;
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
     ctx.strokeText(ft.text, ft.x, ft.y);
     ctx.fillStyle = ft.color;
     ctx.fillText(ft.text, ft.x, ft.y);
     ctx.restore();
   }
 
-  // 10. Rush hour edge glow
+  // 10. Rush hour warm glow frame
   if (state.rushTimeLeft > 0) {
-    ctx.strokeStyle = `rgba(249, 115, 22, ${0.35 + pulse * 0.45})`;
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, WORLD_W - 8, WORLD_H - 8);
+    ctx.strokeStyle = `rgba(249, 115, 22, ${0.38 + pulse * 0.45})`;
+    ctx.lineWidth = 9;
+    ctx.strokeRect(4.5, 4.5, WORLD_W - 9, WORLD_H - 9);
   }
-}
-
-function clamp01(n: number) {
-  return Math.max(0, Math.min(1, n));
 }
 
 export default function Minigame({
@@ -1055,7 +1284,6 @@ export default function Minigame({
           rank: res.personal?.rank ?? null,
         });
       } catch (err) {
-        // Keep in offline queue so score is never lost on flaky connection
         const current = readQueuedScores();
         if (!current.some((item) => item.id === payload.id)) {
           writeQueuedScores([...current, payload]);
@@ -1069,7 +1297,7 @@ export default function Minigame({
     [branchId, online],
   );
 
-  // Main animation loop (60fps render + smooth simulation)
+  // Main 60fps loop
   useEffect(() => {
     let rafId = 0;
     let lastTs = performance.now();
@@ -1167,7 +1395,7 @@ export default function Minigame({
     setHud(snapshotHud(gameRef.current));
   }, []);
 
-  // Keyboard shortcuts (1/2/3 select cashier, Q/W/E/R assign task, Space pauses)
+  // Keyboard shortcuts for desktop players
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -1209,33 +1437,46 @@ export default function Minigame({
     return 'Proveedor';
   };
 
+  // Next rival motivator on finish screen ("¡Te faltaron solo X pts para superar a Y!")
+  const nextRival =
+    hud.status === 'finished' && board?.leaderboard?.length
+      ? [...board.leaderboard]
+          .reverse()
+          .find((row) => row.user_id !== user.id && row.score > hud.score)
+      : null;
+
+  const activeCashier = hud.cashiers[hud.selectedCashier] ?? hud.cashiers[0];
   const pendingOfflineCount = readQueuedScores().filter((q) => q.branch_id === branchId).length;
+  const overlayOpen = hud.status === 'idle' || hud.status === 'finished';
 
   return (
     <div className="minigame-layout">
       <div className="minigame-stage">
-        {/* Compact HUD bar */}
-        <div className="mg-hud">
+        {/* Compact Arcade HUD bar */}
+        <div className={`mg-hud ${hud.rushActive ? 'rush-active' : ''}`}>
           <div className="mg-hud-group">
             {hud.mode === 'shift' ? (
               <div className={`mg-pill ${hud.rushActive ? 'rush' : ''}`}>
-                <Clock size={15} />
+                <Clock size={14} />
                 <span>
-                  {hud.shiftPeriod === 'morning' ? 'Mañana' : 'Tarde'} {hud.shiftClock} ·{' '}
+                  <span className="mg-hide-sm">
+                    {hud.shiftPeriod === 'morning' ? 'Mañana' : 'Tarde'} {hud.shiftClock} ·{' '}
+                  </span>
                   <strong>{formatTimer(hud.timeLeft)}</strong>
                 </span>
               </div>
             ) : (
               <div className={`mg-pill ${hud.rushActive ? 'rush' : ''}`}>
-                <Flame size={15} />
+                <Flame size={14} />
                 <span>
-                  Oleada <strong>{hud.wave}</strong>
+                  <span className="mg-hide-sm">Oleada </span>
+                  <strong>O{hud.wave}</strong>
                 </span>
                 <span className="mg-hearts" aria-label={`${hud.lives} vidas restantes`}>
                   {Array.from({ length: hud.maxLives }, (_, i) => (
                     <Heart
                       key={i}
-                      size={14}
+                      size={13}
                       fill={i < hud.lives ? '#ef4444' : 'none'}
                       color={i < hud.lives ? '#ef4444' : '#cbd5e1'}
                     />
@@ -1245,10 +1486,10 @@ export default function Minigame({
             )}
 
             <div
-              className="mg-pill score"
+              className={`mg-pill score ${hud.combo >= 3 ? 'hot' : ''}`}
               title="Mantén surtido y limpieza ≥ 60% para subir la racha hasta x5"
             >
-              <Trophy size={15} />
+              <Trophy size={14} />
               <strong>{hud.score.toLocaleString('es-MX')}</strong>
               <small>pts</small>
               {hud.combo > 1 && <span className="mg-combo">x{hud.combo}</span>}
@@ -1256,12 +1497,12 @@ export default function Minigame({
 
             {hud.rushActive && hud.status === 'playing' && (
               <div className="mg-pill rush">
-                <Flame size={14} />
+                <Flame size={13} />
                 <strong>Hora Pico {hud.rushSecondsLeft}s</strong>
               </div>
             )}
 
-            <div className="mg-pill subtle">
+            <div className="mg-pill subtle mg-hide-sm">
               <span>{money(BigInt(hud.salesCents))}</span>
             </div>
           </div>
@@ -1302,7 +1543,7 @@ export default function Minigame({
               aria-label={muted ? 'Activar sonido' : 'Silenciar sonido'}
               onClick={() => setMuted((m) => !m)}
             >
-              {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
             </button>
             {(hud.status === 'playing' || hud.status === 'paused') && (
               <>
@@ -1313,7 +1554,7 @@ export default function Minigame({
                   aria-label={hud.status === 'paused' ? 'Reanudar' : 'Pausar'}
                   onClick={togglePause}
                 >
-                  {hud.status === 'paused' ? <Play size={16} /> : <Pause size={16} />}
+                  {hud.status === 'paused' ? <Play size={15} /> : <Pause size={15} />}
                 </button>
                 <button
                   type="button"
@@ -1322,15 +1563,15 @@ export default function Minigame({
                   aria-label="Reiniciar partida"
                   onClick={() => startGame(hud.mode, hud.shiftPeriod)}
                 >
-                  <RotateCcw size={16} />
+                  <RotateCcw size={15} />
                 </button>
               </>
             )}
           </div>
         </div>
 
-        {/* Aerial Top-Down Store Canvas */}
-        <div className="mg-canvas-wrap">
+        {/* Aerial Store Canvas + Smart Mobile Overlays */}
+        <div className={`mg-canvas-wrap ${overlayOpen ? 'has-overlay' : ''}`}>
           <canvas
             ref={canvasRef}
             className="mg-canvas"
@@ -1342,7 +1583,7 @@ export default function Minigame({
             <div className={`mg-banner ${hud.banner.tone}`}>{hud.banner.text}</div>
           )}
 
-          {/* Start Screen Overlay */}
+          {/* Start Screen Overlay — simple, juicy, 3-second understanding */}
           {hud.status === 'idle' && (
             <div className="mg-overlay">
               <div className="mg-overlay-card">
@@ -1352,10 +1593,22 @@ export default function Minigame({
                   </div>
                   <div>
                     <h2>Hora Pico en Mostrador</h2>
-                    <p>
-                      Coordina a Sofía, Mateo y Valeria entre las 3 cajas, los anaqueles y la
-                      limpieza.
-                    </p>
+                    <p>¡Atiende a todos antes de que se vacíe o ensucie la tienda!</p>
+                  </div>
+                </div>
+
+                <div className="mg-howto">
+                  <div>
+                    <strong>1. Elige cajero</strong>
+                    <span>Sofía 🏪 · Mateo 📦 · Valeria 🧹</span>
+                  </div>
+                  <div>
+                    <strong>2. Mándalo a trabajar</strong>
+                    <span>Caja, Rellenar, Limpiar o Proveedor</span>
+                  </div>
+                  <div>
+                    <strong>3. Mantén la racha</strong>
+                    <span>Surtido y limpieza ≥ 60% dan hasta x5</span>
                   </div>
                 </div>
 
@@ -1368,11 +1621,11 @@ export default function Minigame({
                       setBoardMode('shift');
                     }}
                   >
-                    <Clock size={18} />
-                    <strong>Turno Completo</strong>
-                    <small>
-                      2 min 30 s · Sobrevive el turno y saca calificación S en tu corte.
-                    </small>
+                    <div className="mg-mode-head">
+                      <Clock size={17} />
+                      <strong>Turno Completo</strong>
+                    </div>
+                    <small>2 min 30 s · Saca nota S en tu corte.</small>
                   </button>
                   <button
                     type="button"
@@ -1382,38 +1635,33 @@ export default function Minigame({
                       setBoardMode('endless');
                     }}
                   >
-                    <Flame size={18} />
-                    <strong>Hora Pico Infinita</strong>
-                    <small>5 vidas · Oleadas cada vez más intensas hasta romper el récord.</small>
+                    <div className="mg-mode-head">
+                      <Flame size={17} />
+                      <strong>Hora Pico Infinita</strong>
+                    </div>
+                    <small>5 vidas · Oleadas sin fin por el #1.</small>
                   </button>
                 </div>
 
                 {selectedMode === 'shift' && (
                   <div className="mg-shift-toggle">
-                    <span>Horario del turno:</span>
+                    <span>Turno:</span>
                     <button
                       type="button"
                       className={shiftPeriod === 'morning' ? 'selected' : 'secondary'}
                       onClick={() => setShiftPeriod('morning')}
                     >
-                      Mañana (07:30–15:00)
+                      ☀️ Mañana
                     </button>
                     <button
                       type="button"
                       className={shiftPeriod === 'afternoon' ? 'selected' : 'secondary'}
                       onClick={() => setShiftPeriod('afternoon')}
                     >
-                      Tarde (15:00–21:30)
+                      🌙 Tarde
                     </button>
                   </div>
                 )}
-
-                <div className="mg-tips">
-                  <span>🛒 Carrito lleno: paga doble, vacía más anaquel</span>
-                  <span>⚡ Apurado: poca paciencia, abre caja rápido</span>
-                  <span>💧 Descuidado: deja derrames, mándalo limpiar</span>
-                  <span>🚚 Proveedor: recíbelo a tiempo para +38% surtido</span>
-                </div>
 
                 <button
                   type="button"
@@ -1421,7 +1669,7 @@ export default function Minigame({
                   onClick={() => startGame(selectedMode, shiftPeriod)}
                 >
                   <Play size={18} />
-                  Abrir la tienda
+                  ¡Abrir la tienda!
                 </button>
               </div>
             </div>
@@ -1432,9 +1680,7 @@ export default function Minigame({
             <div className="mg-overlay">
               <div className="mg-overlay-card compact">
                 <h3>Turno en pausa</h3>
-                <p>
-                  Atiende el mostrador real con calma; tu partida sigue exactamente donde quedó.
-                </p>
+                <p>Atiende el mostrador real con calma; tu partida sigue donde quedó.</p>
                 <div className="mg-overlay-actions">
                   <button type="button" className="primary" onClick={togglePause}>
                     <Play size={16} />
@@ -1489,7 +1735,7 @@ export default function Minigame({
                       )}
                       {saveState.kind === 'offline' && (
                         <span className="mg-record-badge warn">
-                          <WifiOff size={13} /> Guardado en este equipo; se subirá al conectar.
+                          <WifiOff size={13} /> Guardado local; se subirá al conectar.
                         </span>
                       )}
                       {saveState.kind === 'error' && (
@@ -1499,25 +1745,36 @@ export default function Minigame({
                   </div>
                 </div>
 
+                {nextRival && (
+                  <div className="mg-rival-banner">
+                    <Flame size={15} />
+                    <span>
+                      ¡Te faltaron solo{' '}
+                      <strong>{(nextRival.score - hud.score).toLocaleString('es-MX')} pts</strong>{' '}
+                      para superar a <strong>{nextRival.user_name}</strong> (#{nextRival.rank})!
+                    </span>
+                  </div>
+                )}
+
                 <div className="mg-summary-grid">
                   <div>
-                    <span>Clientes atendidos</span>
+                    <span>Atendidos</span>
                     <strong>{hud.customersServed}</strong>
                   </div>
                   <div>
-                    <span>Clientes perdidos</span>
+                    <span>Perdidos</span>
                     <strong>{hud.customersLost}</strong>
                   </div>
                   <div>
-                    <span>Venta simulada</span>
+                    <span>Venta</span>
                     <strong>{money(BigInt(hud.salesCents))}</strong>
                   </div>
                   <div>
-                    <span>Racha máxima</span>
+                    <span>Racha máx.</span>
                     <strong>x{hud.maxCombo}</strong>
                   </div>
                   <div>
-                    <span>Manchas limpiadas</span>
+                    <span>Limpiezas</span>
                     <strong>{hud.messesCleaned}</strong>
                   </div>
                   <div>
@@ -1529,11 +1786,11 @@ export default function Minigame({
                 <div className="mg-overlay-actions">
                   <button
                     type="button"
-                    className="primary"
+                    className="primary mg-replay-btn"
                     onClick={() => startGame(hud.mode, hud.shiftPeriod)}
                   >
                     <RotateCcw size={16} />
-                    Jugar otra vez
+                    ¡Jugar otra vez!
                   </button>
                   <button
                     type="button"
@@ -1546,7 +1803,7 @@ export default function Minigame({
                       setHud(snapshotHud(gameRef.current));
                     }}
                   >
-                    Cambiar a {hud.mode === 'shift' ? 'Hora Pico Infinita' : 'Turno Completo'}
+                    Probar {hud.mode === 'shift' ? 'Infinito' : 'Turno'}
                   </button>
                 </div>
               </div>
@@ -1554,7 +1811,83 @@ export default function Minigame({
           )}
         </div>
 
-        {/* Cashier Quick-Control Dock */}
+        {/* MOBILE THUMB ARCADE PAD — zero scrolling, big tactile buttons */}
+        {(hud.status === 'playing' || hud.status === 'paused') && (
+          <div className="mg-mobile-pad" aria-label="Controles táctiles">
+            {hud.supplierActive && hud.status === 'playing' && (
+              <button
+                type="button"
+                className="mg-mobile-supplier"
+                onClick={() => sendCashier(activeCashier.id, 'supplier')}
+              >
+                <Truck size={16} />
+                <span>
+                  ¡Llegó proveedor! Toca para recibir con {activeCashier.name} (
+                  {hud.supplierTimeLeft}
+                  s)
+                </span>
+              </button>
+            )}
+
+            <div className="mg-mobile-cashiers">
+              {hud.cashiers.map((c) => {
+                const isSelected = hud.selectedCashier === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`mg-m-cashier ${isSelected ? 'selected' : ''}`}
+                    style={isSelected ? { borderColor: c.color } : undefined}
+                    onClick={() => selectCashier(c.id)}
+                  >
+                    <span className="mg-m-cashier-top">
+                      <span className="mg-cashier-dot" style={{ background: c.color }} />
+                      <strong>{c.name}</strong>
+                      <span>{SPECIALTY_EMOJI[c.specialty]}</span>
+                    </span>
+                    <small>{taskSummary(c)}</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mg-mobile-actions">
+              <button
+                type="button"
+                className={`mg-m-action ${activeCashier.task === 'register' ? 'active' : ''}`}
+                disabled={hud.status !== 'playing'}
+                onClick={() => sendCashier(activeCashier.id, 'register')}
+              >
+                <Store size={17} />
+                <span>Caja</span>
+              </button>
+              <button
+                type="button"
+                className={`mg-m-action ${activeCashier.task === 'restock' ? 'active' : ''} ${
+                  hud.stock < 35 ? 'urgent' : ''
+                }`}
+                disabled={hud.status !== 'playing'}
+                onClick={() => sendCashier(activeCashier.id, 'restock')}
+              >
+                <Package size={17} />
+                <span>Rellenar</span>
+              </button>
+              <button
+                type="button"
+                className={`mg-m-action ${activeCashier.task === 'clean' ? 'active' : ''} ${
+                  hud.cleanliness < 40 || hud.messCount >= 4 ? 'urgent' : ''
+                }`}
+                disabled={hud.status !== 'playing'}
+                onClick={() => sendCashier(activeCashier.id, 'clean')}
+              >
+                <Sparkles size={17} />
+                <span>Limpiar</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* DESKTOP 3-COLUMN CASHIER DOCK */}
         <div className="mg-dock">
           {hud.cashiers.map((c, idx) => {
             const isSelected = hud.selectedCashier === c.id;
@@ -1568,7 +1901,7 @@ export default function Minigame({
                   <span className="mg-cashier-dot" style={{ background: c.color }} />
                   <div className="mg-cashier-meta">
                     <strong>
-                      {idx + 1}. {c.name}
+                      {idx + 1}. {c.name} {SPECIALTY_EMOJI[c.specialty]}
                     </strong>
                     <small>{SPECIALTY_LABELS[c.specialty]}</small>
                   </div>
@@ -1585,7 +1918,9 @@ export default function Minigame({
                   </button>
                   <button
                     type="button"
-                    className={`mg-task-btn ${c.task === 'restock' ? 'active' : ''}`}
+                    className={`mg-task-btn ${c.task === 'restock' ? 'active' : ''} ${
+                      hud.stock < 35 ? 'urgent' : ''
+                    }`}
                     disabled={hud.status !== 'playing'}
                     onClick={() => sendCashier(c.id, 'restock')}
                   >
@@ -1593,7 +1928,9 @@ export default function Minigame({
                   </button>
                   <button
                     type="button"
-                    className={`mg-task-btn ${c.task === 'clean' ? 'active' : ''}`}
+                    className={`mg-task-btn ${c.task === 'clean' ? 'active' : ''} ${
+                      hud.cleanliness < 40 || hud.messCount >= 4 ? 'urgent' : ''
+                    }`}
                     disabled={hud.status !== 'playing'}
                     onClick={() => sendCashier(c.id, 'clean')}
                   >
@@ -1615,10 +1952,9 @@ export default function Minigame({
           })}
         </div>
         <p className="mg-shortcut-hint">
-          Consejo: también puedes tocar directamente una caja, los anaqueles, una mancha o la puerta
-          de proveedores en el mapa. En PC: teclas <strong>1-2-3</strong> (cajero),{' '}
-          <strong>Q</strong> Caja, <strong>W</strong> Rellenar, <strong>E</strong> Limpiar,{' '}
-          <strong>R</strong> Proveedor, <strong>Espacio</strong> Pausa.
+          También puedes tocar directo una caja, los anaqueles, una mancha o la puerta de
+          proveedores en el mapa. En PC: <strong>1-2-3</strong> cajero · <strong>Q/W/E/R</strong>{' '}
+          acción · <strong>Espacio</strong> pausa.
         </p>
       </div>
 
