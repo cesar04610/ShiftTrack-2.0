@@ -20,10 +20,10 @@ export const WORLD_H = 500;
 export const SHIFT_DURATION_SEC = 150;
 export const ENDLESS_MAX_LIVES = 5;
 export const REGISTER_XS = [185, 385, 585] as const;
-export const COUNTER_Y = 398;
-export const CASHIER_Y = 440;
-export const QUEUE_START_Y = 352;
-export const QUEUE_STEP_Y = 44;
+export const COUNTER_Y = 390;
+export const CASHIER_Y = 448;
+export const QUEUE_START_Y = 344;
+export const QUEUE_STEP_Y = 42;
 export const RESTOCK_SPOTS = [
   { x: 145, y: 148 },
   { x: 315, y: 148 },
@@ -135,6 +135,7 @@ export type GameState = {
   streak: number;
   combo: number;
   maxCombo: number;
+  perfectBonusCounter: number;
   lives: number;
   maxLives: number;
   stock: number; // 0..100
@@ -246,6 +247,7 @@ export function createInitialState(
     streak: 0,
     combo: 1,
     maxCombo: 1,
+    perfectBonusCounter: 0,
     lives: ENDLESS_MAX_LIVES,
     maxLives: ENDLESS_MAX_LIVES,
     stock: 86,
@@ -574,11 +576,38 @@ export function computeGrade(state: GameState): 'S' | 'A' | 'B' | 'C' | 'D' {
   const avgClean = state.elapsed > 0 ? state.cleanIntegral / state.elapsed : state.cleanliness;
   const upkeep = (avgStock + avgClean) / 2;
 
-  if (state.score >= 5500 && satisfaction >= 0.9 && upkeep >= 68) return 'S';
-  if (state.score >= 3800 && satisfaction >= 0.8 && upkeep >= 55) return 'A';
-  if (state.score >= 2200 && satisfaction >= 0.65) return 'B';
-  if (state.score >= 1000 || state.customersServed >= 8) return 'C';
+  if (state.score >= 28000 && satisfaction >= 0.9 && upkeep >= 68) return 'S';
+  if (state.score >= 19000 && satisfaction >= 0.8 && upkeep >= 55) return 'A';
+  if (state.score >= 11000 && satisfaction >= 0.65 && upkeep >= 42) return 'B';
+  if (state.score >= 4500 && satisfaction >= 0.45) return 'C';
   return 'D';
+}
+
+function loseCustomer(
+  state: GameState,
+  cust: Customer,
+  reason: 'stock' | 'dirt' | 'wait',
+  msg: string,
+) {
+  cust.state = 'leaving_angry';
+  cust.targetX = ENTRANCE_POS.x - 30;
+  cust.targetY = ENTRANCE_POS.y;
+  cust.reason = reason;
+  state.customersLost += 1;
+  state.streak = 0;
+  state.combo = 1;
+  state.perfectBonusCounter = 0;
+  addFloatingText(state, cust.x, cust.y - 24, msg, '#dc2626');
+  state.soundQueue.push('angry');
+
+  if (state.mode === 'endless' && state.status === 'playing') {
+    state.lives = Math.max(0, state.lives - 1);
+    if (state.lives <= 0) {
+      state.status = 'finished';
+      state.grade = computeGrade(state);
+      state.soundQueue.push('finish');
+    }
+  }
 }
 
 export function formatShiftClock(state: GameState): string {
@@ -803,6 +832,20 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
       } else {
         cust.browseTimer += dt;
         if (cust.browseTimer >= cust.browseDuration) {
+          // If shelves are practically empty, customers leave empty-handed!
+          if (state.stock <= 8 || (state.stock < 22 && rng() < 0.52)) {
+            loseCustomer(state, cust, 'stock', '¡Estante vacío!');
+            continue;
+          }
+          // If the store floor is filthy, customers walk out disgusted!
+          if (
+            state.cleanliness <= 12 ||
+            (state.cleanliness < 28 && state.messes.length >= 5 && rng() < 0.48)
+          ) {
+            loseCustomer(state, cust, 'dirt', '¡Piso muy sucio!');
+            continue;
+          }
+
           // Customer takes products from shelves & dirties the store!
           state.stock = clamp(state.stock - cust.stockDrain, 0, 100);
           state.cleanliness = clamp(state.cleanliness - cust.dirtAmount, 0, 100);
@@ -829,9 +872,9 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
   }
 
   // Process register queues & checkouts
-  const stockPenalty = state.stock <= 5 ? 2.15 : state.stock < 35 ? 1.45 : 1;
+  const stockPenalty = state.stock <= 10 ? 2.6 : state.stock < 35 ? 1.55 : 1;
   const dirtPenalty =
-    state.cleanliness <= 10 ? 2.05 : state.cleanliness < 40 || state.messes.length >= 4 ? 1.45 : 1;
+    state.cleanliness <= 15 ? 2.6 : state.cleanliness < 40 || state.messes.length >= 4 ? 1.55 : 1;
   const envPatienceMult = Math.max(stockPenalty, dirtPenalty);
 
   for (let reg = 0; reg < 3; reg++) {
@@ -878,7 +921,7 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
       if (atFront && cashierReady && cashier) {
         const speedMult = cashier.specialty === 'checkout' ? 1.28 : 1;
         // Very low stock slows checkout slightly ("checking if we have it")
-        const stockSlow = state.stock <= 10 ? 0.72 : 1;
+        const stockSlow = state.stock <= 15 ? 0.72 : 1;
         cust.checkoutProgress += (dt * speedMult * stockSlow) / cust.checkoutDuration;
         // Patience drains much slower while actively being served
         cust.patience -= dt * 0.25 * envPatienceMult;
@@ -896,6 +939,25 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
           const newCombo = clamp(1 + Math.floor(state.streak / 3), 1, 5);
           state.combo = newCombo;
           if (newCombo > state.maxCombo) state.maxCombo = newCombo;
+
+          // Endless comeback reward: every 18 happy customers with a healthy store restores 1 heart!
+          if (state.mode === 'endless' && storeHealthy) {
+            state.perfectBonusCounter += 1;
+            if (state.perfectBonusCounter >= 18) {
+              state.perfectBonusCounter = 0;
+              if (state.lives < state.maxLives) {
+                state.lives += 1;
+                addFloatingText(
+                  state,
+                  REGISTER_XS[reg],
+                  COUNTER_Y - 52,
+                  '+1 ♥ Buen servicio',
+                  '#e11d48',
+                );
+                spawnSparkles(state, REGISTER_XS[reg], COUNTER_Y - 24, '#fb7185', 10, rng);
+              }
+            }
+          }
 
           const patienceRatio = cust.patience / cust.maxPatience;
           const speedBonus = patienceRatio > 0.65 ? 35 : patienceRatio > 0.35 ? 15 : 0;
@@ -919,35 +981,19 @@ export function stepGame(state: GameState, rawDt: number, rng: () => number = Ma
       }
 
       if (cust.patience <= 0 && cust.state === 'queueing') {
-        cust.state = 'leaving_angry';
-        cust.targetX = ENTRANCE_POS.x - 30;
-        cust.targetY = ENTRANCE_POS.y;
-        cust.reason =
+        const reason =
           stockPenalty > 1 && stockPenalty >= dirtPenalty
             ? 'stock'
             : dirtPenalty > 1
               ? 'dirt'
               : 'wait';
-        state.customersLost += 1;
-        state.streak = 0;
-        state.combo = 1;
         const msg =
-          cust.reason === 'stock'
+          reason === 'stock'
             ? '¡Sin surtido!'
-            : cust.reason === 'dirt'
+            : reason === 'dirt'
               ? '¡Muy sucio!'
               : '¡Mucha espera!';
-        addFloatingText(state, cust.x, cust.y - 24, msg, '#dc2626');
-        state.soundQueue.push('angry');
-
-        if (state.mode === 'endless') {
-          state.lives = Math.max(0, state.lives - 1);
-          if (state.lives <= 0) {
-            state.status = 'finished';
-            state.grade = computeGrade(state);
-            state.soundQueue.push('finish');
-          }
-        }
+        loseCustomer(state, cust, reason, msg);
       }
     });
   }
