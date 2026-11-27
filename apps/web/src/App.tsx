@@ -27,6 +27,7 @@ import {
   UserX,
   ChevronRight,
   ChevronDown,
+  Gamepad2,
 } from 'lucide-react';
 import {
   money,
@@ -43,6 +44,7 @@ import SupplierImport from './SupplierImport';
 import SearchSelect from './SearchSelect';
 import Reports from './Reports';
 import Metrics from './Metrics';
+import Minigame from './Minigame';
 import SalesScreen, { ProductsAdmin, TurnSales, turnSales } from './Sales';
 import UserBoard from './UserBoard';
 import TaskBoard, { setupLabel } from './TaskBoard';
@@ -1300,6 +1302,7 @@ export default function App() {
     Configuración: 'Sucursales, cajas y accesos preparados.',
     Reportes: 'Elige un periodo y entra al tema que quieras revisar.',
     Métricas: 'Tendencias de la sucursal comparadas con el periodo anterior.',
+    Minijuego: 'Hora Pico: atiende las 3 cajas, rellena anaqueles y mantén limpia la tienda.',
   };
   const supplierForm = (
     <Form
@@ -1400,6 +1403,20 @@ export default function App() {
               )}
             </>
           )}
+          <p className="nav-caption">DESCANSO</p>
+          <nav aria-label="Minijuego">
+            <button
+              className={page === 'Minijuego' ? 'selected' : ''}
+              onClick={() => {
+                setPage('Minijuego');
+                setMobile(false);
+                setMessage('');
+              }}
+            >
+              <Gamepad2 size={18} />
+              Minijuego
+            </button>
+          </nav>
         </div>
         <div className="sidebar-bottom">
           <button onClick={() => setPage('Contraseña')}>
@@ -1696,7 +1713,7 @@ export default function App() {
               <p>No incluye claves de acceso. Conserva también los datos de este navegador.</p>
             </details>
           )}
-          {!registerChosen ? (
+          {!registerChosen && page !== 'Minijuego' ? (
             <Card title="Caja de trabajo">
               <p>
                 {online
@@ -1743,7 +1760,9 @@ export default function App() {
                 }}
               />
             </Card>
-          ) : (!data || data.branch.id !== branchId) && page !== 'Configuración' ? (
+          ) : (!data || data.branch.id !== branchId) &&
+            page !== 'Configuración' &&
+            page !== 'Minijuego' ? (
             <Card title="Preparando datos">
               <p>Conecta para descargar la información de tu sucursal.</p>
             </Card>
@@ -2828,6 +2847,17 @@ export default function App() {
                   branchName={b.name}
                   today={date}
                   owner={user.role === 'superadmin'}
+                />
+              )}
+              {page === 'Minijuego' && (
+                <Minigame
+                  key={branchId}
+                  user={user}
+                  branchId={branchId}
+                  branchName={
+                    b?.name || branches.find((x) => x.id === branchId)?.name || 'Sucursal'
+                  }
+                  online={online}
                 />
               )}
               {page === 'Notificaciones' && (
