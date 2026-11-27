@@ -38,6 +38,7 @@ import { closeAbandonedClocks } from './attendance.js';
 import { alertsReady } from './alerts.js';
 import { assignSetupTasks, setupReady, taskSetup } from './task-setup.js';
 import { prepareMediaStorage } from './storage.js';
+import { minigame } from './minigame.js';
 export const app = express();
 app.use(
   helmet({
@@ -1262,6 +1263,7 @@ async function employee(db: any, branch: string, id: string) {
 }
 app.use('/api/v1/suppliers/import', supplierImport);
 app.use('/api/v1', sales);
+app.use('/api/v1', minigame);
 app.use('/api/v1', reports);
 app.use('/api/v1', metrics);
 app.use('/api/v1', modules);
