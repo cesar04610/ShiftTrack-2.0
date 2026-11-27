@@ -95,6 +95,7 @@ La API de Railway rechazó `volumeInstanceBackupScheduleUpdate` con «Not Author
 | 017       | Borra `alerts`, `alert_settings` y `notification_outbox` solo si están vacías; con datos, las conserva.                        |
 | 018       | Ventas de respaldo: catálogo de productos (`products`, `product_catalogs`) y ventas (`sales`, `sale_items`).                   |
 | 019       | Notificaciones leídas (`alert_log.read_at`); los avisos existentes se conservan y quedan sin leer.                             |
+| 020       | Puntuaciones del minijuego Hora Pico (`minigame_scores`), aisladas por sucursal con RLS.                                       |
 
 **Permisos de tablas nuevas:** `provision.js` aplica `infra/runtime-role.sql` después de migrar, pero el pre-deploy automático (`migrate.js`) no lo hace. Una migración que cree tablas debe otorgar sus permisos a `shifttrack_app` con el bloque condicional de las migraciones 006, 010 y 014 (`IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='shifttrack_app')`). La 016 otorga además `DELETE` sobre `tasks`. Si la tabla necesita `DELETE`, agrégala también a `infra/runtime-role.sql` y a la lista local de `scripts/migrate.ts`.
 
