@@ -4339,19 +4339,20 @@ main > * {
   white-space: nowrap;
 }
 .mg-cashier-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
 }
 .mg-task-btn {
-  flex: 1 1 auto;
-  padding: 7px 9px;
-  font-size: 12px;
+  padding: 7px 5px;
+  font-size: 11.5px;
   font-weight: 600;
+  gap: 4px;
   border-radius: 9px;
   background: var(--bg);
   color: #334155;
   border: 1px solid var(--line);
+  white-space: nowrap;
 }
 .mg-task-btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -4362,7 +4363,7 @@ main > * {
   border-color: var(--accent);
 }
 .mg-task-btn.supplier {
-  flex-basis: 100%;
+  grid-column: 1 / -1;
   background: #fef3c7;
   color: #92400e;
   border-color: #f59e0b;

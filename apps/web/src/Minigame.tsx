@@ -642,11 +642,14 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
     ctx.fillStyle = active ? '#10b981' : queueCount > 0 ? '#f59e0b' : '#94a3b8';
     ctx.fill();
 
-    // Caja label below counter
-    ctx.fillStyle = '#334155';
-    ctx.font = '700 12px "DM Sans", system-ui, sans-serif';
+    // Caja label pill cleanly at the top of the lane (never overlapped by cashier)
+    roundRect(ctx, rx - 30, 206, 60, 19, 9);
+    ctx.fillStyle = active ? accentColor : '#475569';
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`Caja ${idx + 1}`, rx, COUNTER_Y + 78);
+    ctx.fillText(`Caja ${idx + 1}`, rx, 219);
 
     // If unattended with waiting customers, pulse a subtle alert tag
     if (!cashier && queueCount > 0) {
