@@ -109,6 +109,7 @@ type HudSnapshot = {
   messesCleaned: number;
   combo: number;
   maxCombo: number;
+  streak: number;
   lives: number;
   maxLives: number;
   stock: number;
@@ -119,6 +120,7 @@ type HudSnapshot = {
   shiftClock: string;
   wave: number;
   rushActive: boolean;
+  rushSecondsLeft: number;
   supplierActive: boolean;
   supplierCompany: string;
   supplierTimeLeft: number;
@@ -216,6 +218,7 @@ function snapshotHud(s: GameState): HudSnapshot {
     messesCleaned: s.messesCleaned,
     combo: s.combo,
     maxCombo: s.maxCombo,
+    streak: s.streak,
     lives: s.lives,
     maxLives: s.maxLives,
     stock: Math.round(s.stock),
@@ -226,6 +229,7 @@ function snapshotHud(s: GameState): HudSnapshot {
     shiftClock: formatShiftClock(s),
     wave: s.wave,
     rushActive: s.rushTimeLeft > 0,
+    rushSecondsLeft: Math.ceil(s.rushTimeLeft),
     supplierActive: s.supplier.active,
     supplierCompany: s.supplier.company,
     supplierTimeLeft: Math.ceil(s.supplier.timeLeft),
@@ -381,11 +385,25 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
   ctx.lineWidth = 10;
   ctx.strokeRect(5, 5, WORLD_W - 10, WORLD_H - 10);
 
-  // Subtle floor zone labels (helpful visual cues for direct clicking)
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '600 10px "DM Sans", system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('PASILLO · TOCA PARA LIMPIAR', 355, 174);
+  // Subtle floor zone hint during opening seconds, or dirty-floor warning pill
+  const dirtyFloor = state.cleanliness < 40 || state.messes.length >= 4;
+  if (dirtyFloor) {
+    roundRect(ctx, 290, 166, 130, 21, 10);
+    ctx.fillStyle = `rgba(220, 38, 38, ${0.82 + pulse * 0.18})`;
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 10.5px "DM Sans", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('¡PISO MUY SUCIO!', 355, 180);
+  } else if (state.elapsed < 7) {
+    ctx.save();
+    ctx.globalAlpha = clamp01(1 - Math.max(0, state.elapsed - 4.5) / 2.5);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '600 10px "DM Sans", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('PASILLO · TOCA PARA LIMPIAR', 355, 186);
+    ctx.restore();
+  }
 
   // Left entrance mat
   roundRect(ctx, 10, ENTRANCE_POS.y - 36, 46, 72, 8);
@@ -642,23 +660,23 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
     ctx.fillStyle = active ? '#10b981' : queueCount > 0 ? '#f59e0b' : '#94a3b8';
     ctx.fill();
 
-    // Caja label pill cleanly at the top of the lane (never overlapped by cashier)
-    roundRect(ctx, rx - 30, 206, 60, 19, 9);
+    // Caja label pill cleanly mounted on the bottom edge of the counter (zero overlap with queues or cashiers)
+    roundRect(ctx, rx - 28, COUNTER_Y + 11, 56, 17, 8);
     ctx.fillStyle = active ? accentColor : '#475569';
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+    ctx.font = '700 10.5px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`Caja ${idx + 1}`, rx, 219);
+    ctx.fillText(`Caja ${idx + 1}`, rx, COUNTER_Y + 23);
 
-    // If unattended with waiting customers, pulse a subtle alert tag
+    // If unattended with waiting customers, pulse a subtle alert tag below Caja badge
     if (!cashier && queueCount > 0) {
-      roundRect(ctx, rx - 44, COUNTER_Y + 25, 88, 18, 9);
-      ctx.fillStyle = `rgba(245, 158, 11, ${0.8 + pulse * 0.2})`;
+      roundRect(ctx, rx - 44, COUNTER_Y + 34, 88, 18, 9);
+      ctx.fillStyle = `rgba(245, 158, 11, ${0.82 + pulse * 0.18})`;
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = '700 10px "DM Sans", system-ui, sans-serif';
-      ctx.fillText('¡Sin cajero!', rx, COUNTER_Y + 38);
+      ctx.fillText('¡Sin cajero!', rx, COUNTER_Y + 47);
     }
   });
 
@@ -731,6 +749,13 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
       ctx.fillStyle = pRatio > 0.5 ? '#10b981' : pRatio > 0.25 ? '#f59e0b' : '#ef4444';
       ctx.fill();
 
+      // Show why customer is getting impatient when store is empty or dirty
+      if (pRatio < 0.65 && (state.stock < 35 || state.cleanliness < 40)) {
+        ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(state.stock < 35 ? '📦' : '🧹', -22, -14);
+      }
+
       // Active checkout scan bar
       if (cust.checkoutProgress > 0) {
         roundRect(ctx, -18, 16, 36, 5, 2.5);
@@ -747,6 +772,24 @@ function drawStore(ctx: CanvasRenderingContext2D, state: GameState, accentColor:
 
   // 7. Cashiers (The 3 playable team members!)
   for (const c of state.cashiers) {
+    // Draw subtle destination line while cashier is walking to a new station
+    if (c.moving && state.status === 'playing') {
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = `${c.color}88`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(c.targetX, c.targetY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(c.targetX, c.targetY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = `${c.color}66`;
+      ctx.fill();
+      ctx.restore();
+    }
+
     const selected = state.selectedCashier === c.id && state.status === 'playing';
     const bob = c.moving ? Math.sin(c.workAnim) * 2.5 : 0;
 
@@ -1201,12 +1244,22 @@ export default function Minigame({
               </div>
             )}
 
-            <div className="mg-pill score">
+            <div
+              className="mg-pill score"
+              title="Mantén surtido y limpieza ≥ 60% para subir la racha hasta x5"
+            >
               <Trophy size={15} />
               <strong>{hud.score.toLocaleString('es-MX')}</strong>
               <small>pts</small>
               {hud.combo > 1 && <span className="mg-combo">x{hud.combo}</span>}
             </div>
+
+            {hud.rushActive && hud.status === 'playing' && (
+              <div className="mg-pill rush">
+                <Flame size={14} />
+                <strong>Hora Pico {hud.rushSecondsLeft}s</strong>
+              </div>
+            )}
 
             <div className="mg-pill subtle">
               <span>{money(BigInt(hud.salesCents))}</span>
@@ -1611,6 +1664,15 @@ export default function Minigame({
           </button>
         </div>
 
+        {!branchId && (
+          <div className="mg-lb-notice">
+            <Store size={14} />
+            <span>
+              Crea o selecciona una sucursal en <strong>Configuración</strong> para guardar y ver
+              los récords del equipo.
+            </span>
+          </div>
+        )}
         {!online && (
           <div className="mg-lb-notice">
             <WifiOff size={14} />

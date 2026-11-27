@@ -192,8 +192,8 @@ test('motor del minijuego: modo Turno termina al cumplir tiempo y modo Infinito 
   // Shift mode ends at SHIFT_DURATION_SEC
   const shift = createInitialState('shift', 'afternoon', 'playing');
   shift.elapsed = SHIFT_DURATION_SEC - 0.1;
-  shift.score = 4200;
-  shift.customersServed = 25;
+  shift.score = 21500;
+  shift.customersServed = 42;
   shift.customersLost = 2;
   shift.stockIntegral = 75 * shift.elapsed;
   shift.cleanIntegral = 80 * shift.elapsed;
@@ -201,6 +201,12 @@ test('motor del minijuego: modo Turno termina al cumplir tiempo y modo Infinito 
   stepGame(shift, 0.08, rng);
   a.equal(shift.status, 'finished');
   a.equal(shift.grade, 'A');
+
+  // Empty shelves cause browsing customers to walk out empty-handed
+  const emptyStore = createInitialState('shift', 'morning', 'playing');
+  emptyStore.stock = 4;
+  for (let i = 0; i < 120; i++) stepGame(emptyStore, 0.05, rng);
+  a.ok(emptyStore.customersLost >= 1, 'Los clientes deben irse si los anaqueles están vacíos');
 
   // Endless mode ends when 5 customers run out of patience
   const endless = createInitialState('endless', 'morning', 'playing');
